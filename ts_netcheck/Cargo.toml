@@ -19,6 +19,7 @@ ts_transport_derp.workspace = true
 # Unconditionally required depdendencies.
 bytes.workspace = true
 dashmap = "6.1"
+socket2 = { version = "0.6", features = ["all"] }
 stun-rs = "0.1"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "io-util", "time"] }
