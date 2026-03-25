@@ -4349,6 +4349,7 @@ dependencies = [
  "dashmap",
  "reqwest",
  "serde_json",
+ "socket2",
  "stun-rs",
  "thiserror",
  "tokio",
