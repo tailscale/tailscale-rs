@@ -13,8 +13,11 @@ use netstack::{CreateSocket, netcore::Channel};
 
 #[cfg(feature = "axum")]
 pub mod axum;
+mod config;
 mod error;
+pub mod statefile;
 
+pub use config::Config;
 pub use error::Error;
 
 /// A tailscale device.
@@ -24,6 +27,35 @@ pub struct Device {
 }
 
 impl Device {
+    /// Spawn a device from the given [`Config`].
+    ///
+    /// This is a convenience wrapper around [`Device::new`].
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let dev = tailscale::Device::from_config(&tailscale::Config {
+    ///     auth_key: Some("MY_AUTH_KEY".to_string()),
+    ///     statefile: "mystate.json".into(),
+    ///     ..Default::default()
+    /// }).await?;
+    /// # }
+    /// ```
+    pub async fn from_config(config: &Config) -> Result<Self, Error> {
+        Self::new(
+            config.control_config(),
+            config.auth_key.clone(),
+            config
+                .load_statefile()
+                .await
+                .inspect_err(|e| tracing::error!(error = %e, "loading statefile"))?
+                .keys,
+        )
+        .await
+    }
+
     /// Spawn a new device with the given config, auth key, and keys.
     pub async fn new(
         config: ts_control::Config,

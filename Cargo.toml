@@ -196,10 +196,13 @@ ts_netstack_smoltcp = { workspace = true, features = ["tokio"] }
 ts_keys.workspace = true
 
 axum = { version = "0.8", optional = true }
-tokio.workspace = true
-tracing.workspace = true
 rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+tracing.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 # Dependencies for examples

@@ -48,3 +48,9 @@ impl From<netcore::Error> for Error {
         }
     }
 }
+
+impl From<crate::statefile::Error> for Error {
+    fn from(_: crate::statefile::Error) -> Self {
+        Error::InternalFailure
+    }
+}

@@ -25,7 +25,7 @@ static GLOBAL_ALLOC: tracy_client::ProfiledAllocator<std::alloc::System> =
 pub struct CommonArgs {
     /// The path of the config file to save to.
     #[arg(short, long, default_value = "config.json")]
-    pub config_path: std::path::PathBuf,
+    pub statefile: std::path::PathBuf,
 
     /// The auth key to connect with.
     ///
@@ -37,7 +37,7 @@ pub struct CommonArgs {
 impl CommonArgs {
     /// Load or init the config using the config path from the args.
     pub async fn load_or_init_config(&self) -> std::io::Result<Config> {
-        Config::load_or_init(&self.config_path).await
+        Config::load_or_init(&self.statefile).await
     }
 
     /// Load or init the config, then connect to the configured control server.

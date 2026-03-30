@@ -3594,6 +3594,8 @@ dependencies = [
  "include_dir",
  "mime_guess",
  "rand 0.10.1",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3602,6 +3604,7 @@ dependencies = [
  "ts_keys",
  "ts_netstack_smoltcp",
  "ts_runtime",
+ "url",
 ]
 
 [[package]]

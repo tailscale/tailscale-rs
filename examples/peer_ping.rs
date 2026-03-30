@@ -23,13 +23,12 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     ts_cli_util::init_tracing();
 
     let args = Args::parse();
-    let config = args.common.load_or_init_config().await?;
 
-    let dev = tailscale::Device::new(
-        config.control_config(),
-        args.common.auth_key,
-        config.key_state,
-    )
+    let dev = tailscale::Device::from_config(&tailscale::Config {
+        auth_key: args.common.auth_key,
+        statefile: args.common.statefile,
+        ..Default::default()
+    })
     .await?;
 
     let sock = dev.udp_bind((dev.ipv4().await?, 1234).into()).await?;
