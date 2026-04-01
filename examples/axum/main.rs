@@ -12,6 +12,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::Parser;
+use tracing::level_filters::LevelFilter;
 
 static WWW: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/examples/axum/www");
 
@@ -44,24 +45,43 @@ async fn count(count: State<Arc<AtomicUsize>>) -> impl IntoResponse {
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Args {
-    #[clap(flatten)]
-    common: ts_cli_util::CommonArgs,
+    /// Path to a statefile to use. Will be created if it doesn't exist.
+    #[arg(short, long, default_value = "tsrs_state.json")]
+    statefile: std::path::PathBuf,
+
+    /// The auth key to connect with.
+    ///
+    /// Can be omitted if the statefile is already authenticated.
+    #[arg(short = 'k', long)]
+    auth_key: Option<String>,
+
+    /// Port to bind to.
+    #[arg(short, long, default_value_t = 80)]
+    port: u16,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn core::error::Error>> {
-    ts_cli_util::init_tracing();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
 
     let args = Args::parse();
 
     let dev = tailscale::Device::from_config(&tailscale::Config {
-        auth_key: args.common.auth_key,
-        statefile: args.common.statefile,
+        auth_key: args.auth_key,
+        statefile: args.statefile,
         ..Default::default()
     })
     .await?;
 
-    let listener = dev.tcp_listen((dev.ipv4().await?, 80).into()).await?;
+    let listener = dev
+        .tcp_listen((dev.ipv4().await?, args.port).into())
+        .await?;
 
     let router = Router::new()
         .route("/count", post(count))

@@ -211,8 +211,8 @@ include_dir = "0.7"
 mime_guess = "2.0"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-ts_cli_util.workspace = true
 ts_keys.workspace = true
 
 [lints]

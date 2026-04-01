@@ -1,32 +1,47 @@
-#![allow(missing_docs)]
+//! Send UDP messages to a peer on a configurable interval.
 
 use core::{net::SocketAddr, time::Duration};
 
 use clap::Parser;
+use tracing_subscriber::filter::LevelFilter;
 
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Args {
-    #[clap(flatten)]
-    common: ts_cli_util::CommonArgs,
+    /// Path to a statefile to use. Will be created if it doesn't exist.
+    #[arg(short, long, default_value = "tsrs_state.json")]
+    statefile: std::path::PathBuf,
 
-    /// Peer to send pings to.
+    /// The auth key to connect with.
+    ///
+    /// Can be omitted if the statefile is already authenticated.
+    #[arg(short = 'k', long)]
+    auth_key: Option<String>,
+
+    /// Peer to send messages to.
     #[clap(short, long)]
     peer: SocketAddr,
 
+    /// How often to send messages.
     #[clap(short = 'i', long, default_value_t = 1.0)]
     ping_interval_secs: f64,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn core::error::Error>> {
-    ts_cli_util::init_tracing();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
 
     let args = Args::parse();
 
     let dev = tailscale::Device::from_config(&tailscale::Config {
-        auth_key: args.common.auth_key,
-        statefile: args.common.statefile,
+        auth_key: args.auth_key,
+        statefile: args.statefile,
         ..Default::default()
     })
     .await?;

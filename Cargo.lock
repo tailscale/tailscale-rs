@@ -3599,7 +3599,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "ts_cli_util",
+ "tracing-subscriber",
  "ts_control",
  "ts_keys",
  "ts_netstack_smoltcp",
