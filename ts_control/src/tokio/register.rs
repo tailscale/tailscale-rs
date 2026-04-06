@@ -89,6 +89,12 @@ pub async fn register(
     tracing::debug!(%status, "received registration response");
 
     if !status.is_success() {
+        // Attempt to collect the body to log the error, truncating to prevent spamming the logs.
+        let mut body = response.collect_bytes().await.unwrap_or_default();
+        body.truncate(512);
+        let body = core::str::from_utf8(&body).unwrap_or("<invalid utf8>");
+        tracing::error!(%body, %status, "registration failed");
+
         return Err(RegistrationError::RegistrationFailed(status.as_u16()));
     }
 
