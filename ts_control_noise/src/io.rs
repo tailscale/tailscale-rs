@@ -99,7 +99,7 @@ impl<Conn: AsyncRead> AsyncRead for NoiseIo<Conn> {
                     // reached EOF, or the ReadBuf had a capacity of 0 - in either case, forward
                     // the result to the caller to handle.
                     if *bytes_read == 0 {
-                        tracing::warn!("ReadHeader: got EOF when reading packet header");
+                        tracing::warn!("poll_read: ReadHeader: got EOF when reading packet header");
                         return Poll::Ready(Ok(()));
                     }
 
@@ -128,7 +128,9 @@ impl<Conn: AsyncRead> AsyncRead for NoiseIo<Conn> {
                     // reached EOF, or the ReadBuf had a capacity of 0 - in either case, forward
                     // the result to the caller to handle.
                     if bytes_read == 0 {
-                        tracing::warn!("poll_read: ReadHeader: got EOF when reading packet body");
+                        tracing::warn!(
+                            "poll_read: ReadBody({ty:?}): got EOF when reading packet body"
+                        );
                         return Poll::Ready(Ok(()));
                     }
 
@@ -157,11 +159,10 @@ impl<Conn: AsyncRead> AsyncRead for NoiseIo<Conn> {
                                 Ok(plaintext_len) => {
                                     let packet = body.split_to(plaintext_len);
                                     tracing::trace!(
-                                        "poll_read: ReadBody({ty:?}): received {plaintext_len} bytes from control"
-                                    );
-                                    tracing::trace!(
+                                        bytes_received = plaintext_len,
                                         "poll_read: ReadBody({ty:?}): received packet:\n{}",
-                                        body.iter()
+                                        packet
+                                            .iter()
                                             .hexdump(Case::Lower)
                                             .flatten()
                                             .collect::<String>()
