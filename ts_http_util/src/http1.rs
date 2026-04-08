@@ -145,7 +145,8 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
         version: Some(1),
         headers,
         ..
-    } = req else {
+    } = req
+    else {
         tracing::trace!("invalid http request");
         return Err(Error::InvalidParam);
     };
