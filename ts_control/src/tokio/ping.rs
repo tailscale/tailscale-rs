@@ -73,7 +73,10 @@ pub async fn handle_ping(
             continue;
         }
 
-        let ping_request_body = ping_request.payload.as_ref().ok_or(PingError::MissingPayload)?;
+        let ping_request_body = ping_request
+            .payload
+            .as_ref()
+            .ok_or(PingError::MissingPayload)?;
         let c2n_request = match parse_c2n_ping(ping_request_body) {
             Ok(c2n_request) => {
                 tracing::trace!(?c2n_request, "parsed c2n ping");
@@ -97,7 +100,9 @@ pub async fn handle_ping(
             }
         };
 
-        let ping_response_url = control_url.join(ping_request.url.path()).map_err(|_| PingError::MissingPayload)?;
+        let ping_response_url = control_url
+            .join(ping_request.url.path())
+            .map_err(|_| PingError::MissingPayload)?;
         tracing::trace!(%ping_response_url, ?c2n_response, "posting c2n response");
         let response = http2_client
             .post(&ping_response_url, None, c2n_response.into())

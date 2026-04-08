@@ -1,19 +1,19 @@
 //! HTTP/1.1 client implementation, and utilities to establish an HTTP/1.1 connection over TCP or
 //! TLS.
 
+use std::{
+    fmt::{Debug, Formatter},
+    str::FromStr,
+    sync::Arc,
+};
+
 use bytes::Bytes;
-use http::request::Parts;
-use http::{HeaderMap, HeaderName, HeaderValue, Request, Response};
+use http::{HeaderMap, HeaderName, HeaderValue, Request, Response, request::Parts};
 use hyper::{
     body::{Body, Incoming},
     client::conn::http1::{self, SendRequest},
 };
 use hyper_util::rt::tokio::WithHyperIo;
-use std::str::FromStr;
-use std::{
-    fmt::{Debug, Formatter},
-    sync::Arc,
-};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::Mutex,

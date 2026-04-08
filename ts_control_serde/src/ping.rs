@@ -1,6 +1,5 @@
 use alloc::{string::String, vec::Vec};
-use core::fmt;
-use core::net::IpAddr;
+use core::{fmt, net::IpAddr};
 
 use serde::{Deserialize, Serialize};
 use url::Url;

@@ -99,7 +99,9 @@ impl<Conn: AsyncRead> AsyncRead for NoiseIo<Conn> {
                     // reached EOF, or the ReadBuf had a capacity of 0 - in either case, forward
                     // the result to the caller to handle.
                     if *bytes_read == 0 {
-                        tracing::trace!("poll_read: ReadHeader: got EOF when reading packet header");
+                        tracing::trace!(
+                            "poll_read: ReadHeader: got EOF when reading packet header"
+                        );
                         return Poll::Ready(Ok(()));
                     }
 
