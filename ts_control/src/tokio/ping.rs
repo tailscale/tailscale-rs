@@ -7,8 +7,14 @@ use url::Url;
 
 use crate::StateUpdate;
 
+/// Path requested in HTTP GET via a Control-to-Node (C2N) [`ts_control_serde::PingRequest`] to
+/// invoke the C2N echo handler.
 const C2N_PATH_ECHO: &str = "/echo";
+/// HTTP 400 Bad Request response sent for all unimplemented C2N methods/paths.
 const C2N_PATH_UNKNOWN: &str = "HTTP/1.1 400 Bad Request\r\n\r\nunknown c2n path";
+/// The start of an HTTP/1.1 200 response with no headers, just missing the body. Intended for use
+/// with C2N echo responses, which can append the request body.
+const C2N_RESPONSE_ECHO_PREAMBLE: &str = "HTTP/1.1 200 OK\r\n\r\n";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PingError {
@@ -35,9 +41,9 @@ fn parse_c2n_ping(payload: &str) -> Result<Request<String>, PingError> {
 }
 
 /// Handles [`ts_control_serde::PingRequest`]s from the control plane to this Tailscale node.
-/// Currently only handles Control-to-Node (C2N) echo requests; non-C2N requests will be skipped
-/// with a warning, while C2N requests that aren't for the "/echo" path will return a "400 Bad
-/// Request" to the control plane.
+/// Currently only handles Control-to-Node (C2N) echo requests; non-C2N requests are skipped with a
+/// warning, while C2N requests for an unhandled path return a "400 Bad Request" to the control
+/// plane.
 ///
 /// ## C2N Mechanism
 ///
@@ -53,10 +59,8 @@ fn parse_c2n_ping(payload: &str) -> Result<Request<String>, PingError> {
 /// The handler must return a full HTTP response to the request containing the requested data and/or
 /// status - for example, "HTTP/1.1 200 OK <body>" or "HTTP/1.1 400 Bad Request".
 ///
-/// `tailscale-rs` doesn't currently implement handlers for most of the C2N methods/paths, and
-/// likely never will implement some paths (such as /debug/goroutines...we don't have goroutines).
-/// For all unimplemented handlers, we return an HTTP 400 Bad Request status with an error message
-/// to the control plane.
+/// `tailscale-rs` returns an HTTP 400 Bad Request status with an error message to the control
+/// plane for any unimplemented C2N methods/paths.
 pub async fn handle_ping(
     state: &StateUpdate,
     control_url: &Url,
@@ -92,7 +96,7 @@ pub async fn handle_ping(
         let c2n_response = match c2n_request_path {
             C2N_PATH_ECHO => {
                 tracing::trace!(c2n_request_path, "handling c2n echo");
-                format!("HTTP/1.1 200 OK\r\n\r\n{}", c2n_request.body())
+                format!("{}{}", C2N_RESPONSE_ECHO_PREAMBLE, c2n_request.body())
             }
             _ => {
                 tracing::debug!(c2n_request_path, "no handler for c2n path");

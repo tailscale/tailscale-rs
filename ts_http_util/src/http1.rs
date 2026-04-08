@@ -1,5 +1,5 @@
-//! HTTP/1.1 client implementation, and utilities to establish an HTTP/1.1 connection over TCP or
-//! TLS.
+//! HTTP/1.1 client implementation, utilities to establish an HTTP/1.1 connection over TCP or
+//! TLS, and utilities to parse HTTP/1.1 requests.
 
 use std::{
     fmt::{Debug, Formatter},
@@ -140,10 +140,9 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
     }
 
     let version = match req.version {
-        Some(0) => http::Version::HTTP_10,
         Some(1) => http::Version::HTTP_11,
         _ => {
-            tracing::trace!(version = req.version, "invalid http version");
+            tracing::trace!(version = req.version, "invalid/unsupported http version");
             return Err(Error::InvalidParam);
         }
     };
@@ -175,7 +174,8 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
     Ok((parts, res.unwrap()))
 }
 
-/// Parses the given `body` of an HTTP/1 request, transparently handling chunked transfer encoding.
+/// Parses the given `body` of an HTTP/1.1 request, transparently handling chunked transfer
+/// encoding.
 ///
 /// `body` must contain the full request body before parsing, and only the request body - not the
 /// full HTTP request. Transfer encodings other than "chunked", such as "compress", "deflate", or
@@ -183,34 +183,33 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
 fn parse_body(headers: &HeaderMap, body: &[u8]) -> Result<Bytes, Error> {
     match headers.get("transfer-encoding") {
         None => Ok(Bytes::copy_from_slice(body)),
-        Some(encoding) => {
-            if encoding != ENCODING_CHUNKED {
-                tracing::trace!(?encoding, "unsupported transfer encoding");
-                Err(Error::InvalidParam)
-            } else {
-                let mut idx = 0;
-                let mut bytes = bytes::BytesMut::new();
-                while let Ok(httparse::Status::Complete((start_offset, chunk_size))) =
-                    httparse::parse_chunk_size(&body[idx..])
-                {
-                    let start_idx = idx + start_offset;
-                    let end_idx = start_idx + chunk_size as usize;
-                    let chunk = &body[start_idx..end_idx];
-                    tracing::trace!(start_idx, end_idx, ?chunk, "parsed chunk");
-                    bytes.extend_from_slice(chunk);
-                    idx += start_offset + chunk_size as usize;
-                }
-                Ok(bytes.freeze())
+        Some(encoding) if encoding == ENCODING_CHUNKED => {
+            let mut idx = 0;
+            let mut bytes = bytes::BytesMut::new();
+            while let Ok(httparse::Status::Complete((start_offset, chunk_size))) =
+                httparse::parse_chunk_size(&body[idx..])
+            {
+                let start_idx = idx + start_offset;
+                let end_idx = start_idx + chunk_size as usize;
+                let chunk = &body[start_idx..end_idx];
+                tracing::trace!(start_idx, end_idx, ?chunk, "parsed chunk");
+                bytes.extend_from_slice(chunk);
+                idx += start_offset + chunk_size as usize;
             }
+            Ok(bytes.freeze())
+        }
+        Some(encoding) => {
+            tracing::trace!(?encoding, "unsupported transfer encoding");
+            Err(Error::InvalidParam)
         }
     }
 }
 
-/// Parses the given byte slice into an HTTP/1.0 or HTTP/1.1 request with a [`String`] body, or
-/// returns an error.
+/// Parses the given byte slice into an HTTP/1.1 request with a [`String`] body, or returns an
+/// error.
 ///
-/// This function only supports HTTP requests, and does not support HTTP/0.9, HTTP/2, or HTTP/3
-/// requests. `buf` must contain the full request, including body, before parsing.
+/// This function only supports HTTP requests, and does not support HTTP/0.9, HTTP/1.0, HTTP/2, or
+/// HTTP/3 requests. `buf` must contain the full request, including body, before parsing.
 pub fn parse_request(buf: &[u8]) -> Result<Request<String>, Error> {
     let (parts, offset) = parse_request_parts(buf)?;
     let bytes = parse_body(&parts.headers, &buf[offset..])?;
