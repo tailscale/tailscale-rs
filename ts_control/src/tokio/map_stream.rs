@@ -97,7 +97,7 @@ pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpd
             .ok()?;
 
         let mut buf = PacketMut::new(msg_len as usize);
-        tracing::debug!(?msg_len, "reading mapresponse");
+        tracing::debug!(?msg_len, "reading netmap");
 
         reader
             .read_exact(buf.as_mut())

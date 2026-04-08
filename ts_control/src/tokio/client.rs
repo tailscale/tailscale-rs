@@ -200,10 +200,10 @@ pub async fn run(
         {
             // TODO(npry): netmap stream resumption on reconnect
             Ok(()) => {
-                tracing::warn!("netmap stream ended without error");
+                tracing::warn!("netmap stream ended without error, attempting restart");
             }
             Err(e) => {
-                tracing::error!(error = %e, "netmap stream failed");
+                tracing::error!(error = %e, "netmap stream failed, attempting restart");
                 tokio::time::sleep(core::time::Duration::from_millis(500)).await;
             }
         }
@@ -249,6 +249,7 @@ pub async fn run_once(
         .map_err(ConnectionError::MapStreamStartFailed)?;
 
     let mut stream = core::pin::pin!(map_stream(reader));
+    tracing::info!("netmap stream started");
 
     loop {
         tokio::select! {
