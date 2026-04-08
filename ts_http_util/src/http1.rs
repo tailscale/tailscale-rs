@@ -134,25 +134,28 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
         tracing::trace!(error = %err, "error parsing http request");
         Error::InvalidParam
     })?;
-    if res.is_partial() || req.method.is_none() || req.path.is_none() {
+    if res.is_partial() {
         tracing::trace!(request = ?req, "incomplete http request");
         return Err(Error::InvalidParam);
     }
 
-    let version = match req.version {
-        Some(1) => http::Version::HTTP_11,
-        _ => {
-            tracing::trace!(version = req.version, "invalid/unsupported http version");
-            return Err(Error::InvalidParam);
-        }
+    let httparse::Request {
+        method: Some(method),
+        path: Some(uri),
+        version: Some(1),
+        headers,
+        ..
+    } = req else {
+        tracing::trace!("invalid http request");
+        return Err(Error::InvalidParam);
     };
 
     // We verified req.{method/path} are both Some(_) above - it's okay to unwrap here.
     let mut builder = Request::builder()
-        .version(version)
-        .method(req.method.unwrap())
-        .uri(req.path.unwrap());
-    for hdr in req.headers {
+        .version(http::Version::HTTP_11)
+        .method(method)
+        .uri(uri);
+    for hdr in headers {
         let name = HeaderName::from_str(hdr.name).map_err(|err| {
             tracing::trace!(error = %err, "error parsing http header name");
             Error::InvalidParam
