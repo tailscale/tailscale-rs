@@ -1,4 +1,5 @@
 use alloc::{string::String, vec::Vec};
+use core::fmt;
 use core::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,7 @@ pub enum PingType {
 /// A [`PingRequest`] with populated [`PingRequest::ip`] and [`PingRequest::types`] fields will
 /// send a ping to the IP and send a `POST` request containing a [`PingResponse`] to the URL
 /// containing results.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PingRequest {
     /// The URL to reply to the [`PingRequest`] to.
@@ -78,6 +79,19 @@ pub struct PingRequest {
     /// request.
     #[serde(deserialize_with = "deserialize_base64_string", default)]
     pub payload: Option<String>,
+}
+
+impl fmt::Debug for PingRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PingRequest")
+            .field("url", &self.url.as_str())
+            .field("url_is_noise", &self.url_is_noise)
+            .field("log", &self.log)
+            .field("types", &self.types)
+            .field("ip", &self.ip)
+            .field("payload", &self.payload)
+            .finish()
+    }
 }
 
 /// Response to a [`PingRequest`].
