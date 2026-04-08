@@ -70,9 +70,12 @@ impl MACSender {
     /// Write packet MACs to the final 32 bytes of pkt.
     ///
     /// Returns the computed mac1 value.
+    ///
+    /// # Panics
+    ///
+    /// If pkt is smaller than 32 bytes.
     pub fn write_macs(&self, pkt: &mut [u8]) -> Mac {
-        let (data, trailer) =
-            Mac1Trailer::try_mut_from_suffix(pkt).expect("packet too small for MACs");
+        let (data, trailer) = Mac1Trailer::try_mut_from_suffix(pkt).unwrap();
         let mut m: CookieMac = blake2::digest::Mac::new(&self.mac1_key.into());
         blake2::digest::Mac::update(&mut m, data);
         m.finalize_into(trailer.mac1.as_mut_bytes().into());
@@ -81,8 +84,7 @@ impl MACSender {
         if let Some(mac2) = &self.cookie
             && mac2.expiry > Instant::now()
         {
-            let (data, trailer) =
-                Mac2Trailer::try_mut_from_suffix(pkt).expect("packet too small for MACs");
+            let (data, trailer) = Mac2Trailer::try_mut_from_suffix(pkt).unwrap();
             // Have to use new_from_slice, because new only accepts keys exactly 32 bytes long,
             // whereas new_from_slice accepts keys <32 bytes and pads them in the correct way
             // internally.

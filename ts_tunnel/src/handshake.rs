@@ -42,16 +42,17 @@ struct Handshake {
 /// # Panics
 /// Panics if the key isn't exactly 32 bytes.
 fn must_cipher(key: &[u8]) -> ChaCha20Poly1305 {
-    ChaCha20Poly1305::new_from_slice(key).expect("ChaCha20Poly1305 key should be 32 bytes")
+    assert_eq!(key.len(), 32);
+    ChaCha20Poly1305::new_from_slice(key).unwrap()
 }
 
 /// Use HKDF to derive two 32-byte values.
 fn must_hkdf2(chaining_key: &[u8; 32], key: &[u8]) -> ([u8; 32], [u8; 32]) {
     let kdf = SimpleHkdf::<Blake2s256>::new(Some(chaining_key), key);
     let mut expanded = [0; 64];
-    kdf.expand(&[], &mut expanded)
-        .expect("64 should be a valid HKDF output length");
-    // Unwrap is fine, the inputs are statically the right size.
+    // Expansion only fails if you request more bytes than the KDF can provide. This KDF can always
+    // provide 64 bytes.
+    kdf.expand(&[], &mut expanded).unwrap();
     (
         expanded[..32].try_into().unwrap(),
         expanded[32..].try_into().unwrap(),
@@ -62,9 +63,9 @@ fn must_hkdf2(chaining_key: &[u8; 32], key: &[u8]) -> ([u8; 32], [u8; 32]) {
 fn must_hkdf3(chaining_key: &[u8; 32], key: &[u8]) -> ([u8; 32], [u8; 32], [u8; 32]) {
     let kdf = SimpleHkdf::<Blake2s256>::new(Some(chaining_key), key);
     let mut expanded = [0; 96];
-    kdf.expand(&[], &mut expanded)
-        .expect("96 should be a valid HKDF output length");
-    // Unwrap is fine, the inputs are statically the right size.
+    // Expansion only fails if you request more bytes than the KDF can provide. This KDF can always
+    // provide 96 bytes.
+    kdf.expand(&[], &mut expanded).unwrap();
     (
         expanded[..32].try_into().unwrap(),
         expanded[32..64].try_into().unwrap(),
@@ -146,12 +147,9 @@ impl Handshake {
         assert_eq!(
             dst.len(),
             cleartext.len() + 16,
-            "output slice provided to encrypt should be 16 bytes longer than the input"
+            "output slice provided to encrypt must be 16 bytes longer than the input"
         );
-        let cipher = self
-            .cipher
-            .take()
-            .expect("encrypt should only be called at points in the handshake where an AEAD key is available");
+        let cipher = self.cipher.take().unwrap();
         // The cipher API here is awkward: we can either encrypt into a fresh Vec (causing an alloc), or we
         // can encrypt in place. The operation we want, encrypting into a provided slice of the right size,
         // isn't available.
@@ -161,9 +159,11 @@ impl Handshake {
         // slice plays much nicer with zerocopy's transmutations.
         cleartext.write_to_prefix(dst).unwrap(); // destination size verified by assert above
         let nonce = [0; 12];
+        // ChaCha20Poly1305 only fails if you try to encrypt more than ~274GiB in a single call.
+        // If you're from the future with 300GiB MTUs and debugging a panic here: hello!
         let tag = cipher
             .encrypt_in_place_detached(&nonce.into(), &self.hash, &mut dst[..cleartext.len()])
-            .expect("ChaCha20Poly1305 encryption should not fail");
+            .unwrap();
         tag.write_to_suffix(dst).unwrap(); // destination size verified by assert above
         self.mix_hash(dst)
     }
@@ -179,12 +179,9 @@ impl Handshake {
         assert_eq!(
             dst.len(),
             ciphertext.len() - 16,
-            "output slice provided to decrypt should be 16 bytes shorter than the input"
+            "output slice provided to decrypt must be 16 bytes shorter than the input"
         );
-        let cipher = self
-            .cipher
-            .take()
-            .expect("decrypt should only be called at points in the handshake where an AEAD key is available");
+        let cipher = self.cipher.take().unwrap();
         // Awkward API, see the longer comment in encrypt() for details.
         ciphertext[..dst.len()].write_to(dst).unwrap(); // destination size verified by assert above
         let nonce = [0; 12];
@@ -288,9 +285,8 @@ impl ReceivedHandshake {
         let send = TransmitSession::new(session_keys.responder_to_initiator, self.send_id, now);
         let recv = ReceiveSession::new(session_keys.initiator_to_responder, session_id, now);
         let mut pkt = PacketMut::new(size_of::<HandshakeResponse>());
-        response
-            .write_to(pkt.as_mut())
-            .expect("ret is wrong size for a handshake response");
+        // Packet is allocated above with the correct size.
+        response.write_to(pkt.as_mut()).unwrap();
         macs.write_macs(pkt.as_mut());
         (SessionPair { send, recv }, pkt)
     }
@@ -531,11 +527,11 @@ mod tests {
 
         // Peer B receives it and responds
         let init_pkt = HandshakeInitiation::try_ref_from_bytes(init_pkt.as_ref())
-            .expect("init_pkt is a valid handshake initiation message");
+            .expect("init_pkt should be a valid handshake initiation message");
         let b_mac_send = MACSender::new(&a_static.public);
         let b_mac_recv = MACReceiver::new(&b_static.public);
         let b_handshake = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
-            .expect("peer B can successfully process A's handshake initiation");
+            .expect("peer B should successfully process A's handshake initiation");
         assert_eq!(b_handshake.peer_static, a_static.public);
         assert_eq!(b_handshake.timestamp, a_init_time);
         let b_session = SessionId::random(); // B wants to receive at this ID
@@ -544,7 +540,7 @@ mod tests {
 
         // Peer A receives response
         let response_pkt = HandshakeResponse::try_ref_from_bytes(response_pkt.as_ref())
-            .expect("response_pkt is a valid handshake response message");
+            .expect("response_pkt should be a valid handshake response message");
         let Some(a_session) = a_handshake.finish(response_pkt, &psk, &a_mac_recv, Instant::now())
         else {
             panic!("failed to process handshake response from peer B");

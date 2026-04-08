@@ -259,9 +259,7 @@ impl IdMap {
     ///
     /// Panics if the session ID isn't currently in use.
     fn remove_session(&mut self, id: SessionId) {
-        self.sessions
-            .remove(&id)
-            .expect("IDMap::delete should only be called for allocated IDs");
+        self.sessions.remove(&id).unwrap();
     }
 
     fn remove_handshake_session(&mut self, handshake: &HandshakeState) {
@@ -274,9 +272,7 @@ impl IdMap {
     ///
     /// Panics if there is no peer currently using that key.
     fn remove_peer(&mut self, key: &NodePublicKey) {
-        self.node_keys
-            .remove(key)
-            .expect("IDMap::remove_peer should only be called for allocated peers");
+        self.node_keys.remove(key).unwrap();
     }
 }
 
@@ -838,7 +834,7 @@ mod tests {
         let packets = a_acts
             .to_peers
             .get(&a_peer)
-            .expect("no packets for A's peer");
+            .expect("should have packets for A's peer");
         assert_eq!(packets.len(), 1, "unexpected number of packets for peer");
 
         // A sends another packet. No further activity, but pkt2 gets queued as well.
@@ -857,7 +853,7 @@ mod tests {
         let packets = b_acts
             .to_peers
             .get(&b_peer)
-            .expect("no packets for B's peer");
+            .expect("should have packets for B's peer");
         assert_eq!(packets.len(), 1, "unexpected packet count for B's peer");
 
         // A processes the response, and sends the two queued packets.
@@ -871,7 +867,7 @@ mod tests {
         let packets = a_acts3
             .to_peers
             .get(&a_peer)
-            .expect("no packets for A's peer");
+            .expect("should have packets for A's peer");
         assert_eq!(packets.len(), 2, "wrong number of packets for A's peer");
 
         // B receives transport messages.
@@ -880,7 +876,7 @@ mod tests {
         let packets = b_acts
             .to_local
             .get(&b_peer)
-            .expect("no packets from B's peer");
+            .expect("should have packets from B's peer");
         assert_eq!(packets, &a_to_b_packets, "wrong packets received from A",);
         assert_eq!(b_acts.to_peers.len(), 0, "unexpected sent message");
 
@@ -896,7 +892,7 @@ mod tests {
         let packets = b_acts
             .to_peers
             .get(&b_peer)
-            .expect("no packets for B's peer");
+            .expect("should have packets for B's peer");
         assert_eq!(packets.len(), 1, "unexpected packet count for B's peer");
 
         // A receives
@@ -905,7 +901,7 @@ mod tests {
         let packets = a_acts
             .to_local
             .get(&a_peer)
-            .expect("no packets from A's peer");
+            .expect("should have packets from A's peer");
         assert_eq!(
             packets,
             &[b_to_a_packet],
