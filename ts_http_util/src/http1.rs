@@ -171,7 +171,7 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
     let (parts, _) = builder
         .body(())
         .map_err(|err| {
-            tracing::trace!(error = %err, "error constructing parts");
+            tracing::trace!(error = %err, "error building, invalid http request");
             Error::InvalidParam
         })?
         .into_parts();
