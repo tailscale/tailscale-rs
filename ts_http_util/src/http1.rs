@@ -182,7 +182,7 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
 /// "gzip", are not currently handled and will result in an error.
 fn parse_body(headers: &HeaderMap, body: &[u8]) -> Result<Bytes, Error> {
     match headers.get("transfer-encoding") {
-        None => Ok(Bytes::copy_from_slice(&body)),
+        None => Ok(Bytes::copy_from_slice(body)),
         Some(encoding) => {
             if encoding != ENCODING_CHUNKED {
                 tracing::trace!(?encoding, "unsupported transfer encoding");

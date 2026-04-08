@@ -97,7 +97,7 @@ pub async fn handle_ping(
             }
         };
 
-        let ping_response_url = control_url.join(&ping_request.url.path()).map_err(|_| PingError::MissingPayload)?;
+        let ping_response_url = control_url.join(ping_request.url.path()).map_err(|_| PingError::MissingPayload)?;
         tracing::trace!(%ping_response_url, ?c2n_response, "posting c2n response");
         let response = http2_client
             .post(&ping_response_url, None, c2n_response.into())
