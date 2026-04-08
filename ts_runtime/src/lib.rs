@@ -27,6 +27,7 @@ mod netstack_actor;
 mod packetfilter;
 mod peer_tracker;
 mod route_updater;
+mod src_filter;
 
 pub(crate) use env::Env;
 pub use error::Error;
@@ -60,6 +61,7 @@ impl Runtime {
 
         route_updater::RouteUpdater::spawn((multiderp.clone(), env.clone(), netstack_id));
         packetfilter::PacketfilterUpdater::spawn(env.clone());
+        src_filter::SourceFilterUpdater::spawn(env.clone());
         peer_tracker::PeerTracker::spawn(env.clone());
 
         let netstack =

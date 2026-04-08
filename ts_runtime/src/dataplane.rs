@@ -14,6 +14,7 @@ use crate::{
     env::Env,
     packetfilter::PacketFilterState,
     route_updater::{PeerRouteUpdate, SelfRouteUpdate},
+    src_filter::SourceFilterState,
 };
 
 /// Queue for packets sent from the overlay to the dataplane.
@@ -72,6 +73,7 @@ impl kameo::Actor for DataplaneActor {
         env.subscribe::<PeerRouteUpdate>(&slf).await?;
         env.subscribe::<SelfRouteUpdate>(&slf).await?;
         env.subscribe::<PacketFilterState>(&slf).await?;
+        env.subscribe::<SourceFilterState>(&slf).await?;
 
         let task_dataplane = dataplane.clone();
 
@@ -121,5 +123,18 @@ impl Message<PacketFilterState> for DataplaneActor {
         }
 
         tracing::trace!("applied new packet filter");
+    }
+}
+
+impl Message<SourceFilterState> for DataplaneActor {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: SourceFilterState, _ctx: &mut Context<Self, Self::Reply>) {
+        {
+            let dp = &mut *self.dataplane.inner().await;
+            dp.src_filter_in = msg.0;
+        }
+
+        tracing::trace!("applied new source filter");
     }
 }

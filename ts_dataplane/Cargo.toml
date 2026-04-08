@@ -20,6 +20,7 @@ ts_time.workspace = true
 ts_transport.workspace = true
 ts_underlay_router.workspace = true
 ts_tunnel.workspace = true
+ts_bart.workspace = true
 
 # Unconditionally required dependencies.
 etherparse = "0.19"

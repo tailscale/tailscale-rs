@@ -460,19 +460,44 @@ impl PacketMut {
         }
     }
 
+    fn get_ip_family(&self) -> Option<u8> {
+        match self.get(0)? >> 4 {
+            4 => Some(4),
+            6 => Some(6),
+            _ => None,
+        }
+    }
+
+    /// Returns the bytes at idx..idx+4 interpreted as a network-endian IPv4 address.
+    fn ipv4_at(&self, idx: usize) -> Option<IpAddr> {
+        let octets: [u8; 4] = self.get(idx..idx + 4)?.try_into().unwrap();
+        Some(IpAddr::from(octets))
+    }
+
+    /// Returns the bytes at idx..idx+16 interpreted as a network-endian IPv6 address.
+    fn ipv6_at(&self, idx: usize) -> Option<IpAddr> {
+        let octets: [u8; 16] = self.get(idx..idx + 16)?.try_into().unwrap();
+        Some(IpAddr::from(octets))
+    }
+
+    /// Returns the source IP address of the packet.
+    ///
+    /// Returns None if the packet structure doesn't match an IPv4 or IPv6 datagram.
+    pub fn get_src_addr(&self) -> Option<IpAddr> {
+        match self.get_ip_family() {
+            Some(4) => self.ipv4_at(12),
+            Some(6) => self.ipv6_at(8),
+            _ => None,
+        }
+    }
+
     /// Returns the destination IP address of the packet.
     ///
     /// Returns None if the packet structure doesn't match an IPv4 or IPv6 datagram.
     pub fn get_dst_addr(&self) -> Option<IpAddr> {
-        match self.get(0)? >> 4 {
-            4 => {
-                let octets: [u8; 4] = self.get(16..20)?.try_into().unwrap();
-                Some(IpAddr::from(octets))
-            }
-            6 => {
-                let octets: [u8; 16] = self.get(24..40)?.try_into().unwrap();
-                Some(IpAddr::from(octets))
-            }
+        match self.get_ip_family() {
+            Some(4) => self.ipv4_at(16),
+            Some(6) => self.ipv6_at(24),
             _ => None,
         }
     }

@@ -4241,6 +4241,7 @@ dependencies = [
  "etherparse",
  "tokio",
  "tracing",
+ "ts_bart",
  "ts_keys",
  "ts_overlay_router",
  "ts_packet",

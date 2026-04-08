@@ -7,6 +7,7 @@ pub mod async_tokio;
 
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
+use ts_bart::RoutingTable;
 use ts_keys::NodePublicKey;
 use ts_overlay_router as or;
 use ts_packet::old::PacketMut;
@@ -32,6 +33,8 @@ pub struct DataPlane {
     /// Outbound underlay router.
     pub ur_out: ur::outbound::Router,
 
+    /// Inbound source filter.
+    pub src_filter_in: Arc<ts_bart::Table<NodePublicKey>>,
     /// Inbound overlay router.
     pub or_in: or::inbound::Router,
 
@@ -52,6 +55,7 @@ impl DataPlane {
             wireguard: Endpoint::new(my_key),
             or_out: Default::default(),
             ur_out: Default::default(),
+            src_filter_in: Default::default(),
             or_in: Default::default(),
             events: Default::default(),
             packet_filter: Arc::new(ts_packetfilter::DropAllFilter),
@@ -115,6 +119,32 @@ impl DataPlane {
 
         let to_local = to_local
             .into_iter()
+            .map(|(peer_id, mut packets)| {
+                let span = tracing::trace_span!("src_filter_inbound", peer_id = ?peer_id, n_packet = packets.len(), peer_key = tracing::field::Empty).entered();
+
+                let Some(key) = self.wireguard.peer_key(peer_id) else {
+                    tracing::warn!("no nodekey for peer");
+                    return (peer_id, vec![]);
+                };
+
+                span.record("peer_key", tracing::field::display(key));
+
+                packets.retain(|packet| {
+                    let Some(src) = packet.get_src_addr() else {
+                        tracing::trace!("does not look like ip packet");
+                        return false;
+                    };
+                    let verdict = if let Some(allowed_key) = self.src_filter_in.lookup(src) {
+                        *allowed_key == key
+                    } else {
+                        false
+                    };
+                    tracing::trace!(?src, verdict);
+                    verdict
+                });
+
+                (peer_id, packets)
+            })
             .map(|(k, mut v)| {
                 let span = tracing::trace_span!("packet_filter_inbound", peer_id = ?k, n_packet = v.len(), peer_key = tracing::field::Empty).entered();
 
