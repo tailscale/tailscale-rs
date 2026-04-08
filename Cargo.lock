@@ -4247,8 +4247,8 @@ dependencies = [
  "ts_packetfilter",
  "ts_time",
  "ts_transport",
+ "ts_tunnel",
  "ts_underlay_router",
- "ts_wireguard",
 ]
 
 [[package]]
@@ -4589,16 +4589,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ts_underlay_router"
-version = "0.1.0"
-dependencies = [
- "ts_keys",
- "ts_packet",
- "ts_transport",
-]
-
-[[package]]
-name = "ts_wireguard"
+name = "ts_tunnel"
 version = "0.1.0"
 dependencies = [
  "aead",
@@ -4619,6 +4610,15 @@ dependencies = [
  "ts_time",
  "x25519-dalek 3.0.0-pre.6",
  "zerocopy",
+]
+
+[[package]]
+name = "ts_underlay_router"
+version = "0.1.0"
+dependencies = [
+ "ts_keys",
+ "ts_packet",
+ "ts_transport",
 ]
 
 [[package]]

@@ -40,7 +40,7 @@ members = [
     "ts_transport_derp",
     "ts_transport_tun",
     "ts_underlay_router",
-    "ts_wireguard",
+    "ts_tunnel",
 ]
 
 [workspace.package]
@@ -136,7 +136,7 @@ ts_transport = { path = "ts_transport" }
 ts_transport_derp = { path = "ts_transport_derp" }
 ts_transport_tun = { path = "ts_transport_tun" }
 ts_underlay_router = { path = "ts_underlay_router" }
-ts_wireguard = { path = "ts_wireguard" }
+ts_tunnel = { path = "ts_tunnel" }
 
 [workspace.lints.rust]
 closure_returning_async_block = "warn"

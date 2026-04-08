@@ -19,7 +19,7 @@ ts_packetfilter.workspace = true
 ts_time.workspace = true
 ts_transport.workspace = true
 ts_underlay_router.workspace = true
-ts_wireguard.workspace = true
+ts_tunnel.workspace = true
 
 # Unconditionally required dependencies.
 etherparse = "0.19"

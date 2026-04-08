@@ -16,7 +16,7 @@ use tokio::{
 use ts_keys::{NodePrivateKey, NodePublicKey};
 use ts_packet::old::PacketMut;
 use ts_time::TimeRange;
-use ts_wireguard::Endpoint;
+use ts_tunnel::Endpoint;
 use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
 // Minimal example config:
 //
@@ -85,7 +85,7 @@ async fn main() -> BoxResult<()> {
     let mut ep = Endpoint::new(privkey.into());
 
     let peer_id = ep
-        .add_peer(ts_wireguard::PeerConfig {
+        .add_peer(ts_tunnel::PeerConfig {
             key: peer_key,
             psk: [0; 32].into(),
         })
@@ -106,7 +106,7 @@ async fn main() -> BoxResult<()> {
                 let mut packet = PacketMut::new(0);
                 packet.put_slice(b"test test");
 
-                let ts_wireguard::SendResult { to_peers } = ep.send([(peer_id, vec![packet])]);
+                let ts_tunnel::SendResult { to_peers } = ep.send([(peer_id, vec![packet])]);
 
                 for (peer_id, packets) in to_peers {
                     eprintln!("sending {} packets to {peer_id:?}", packets.len());
@@ -122,7 +122,7 @@ async fn main() -> BoxResult<()> {
                 eprintln!("receive resp (len {n}, from {from})");
                 let buf = &buf[..n];
 
-                let ts_wireguard::RecvResult { to_peers, to_local } = ep.recv(vec![PacketMut::from(buf)]);
+                let ts_tunnel::RecvResult { to_peers, to_local } = ep.recv(vec![PacketMut::from(buf)]);
 
                 eprintln!(
                     "resp: {} packets to peers, {} to local",
@@ -148,7 +148,7 @@ async fn main() -> BoxResult<()> {
             }
 
             now = maybe_timeout(ep.next_event()) => {
-                let ts_wireguard::EventResult{to_peers} = ep.dispatch_events(now);
+                let ts_tunnel::EventResult{to_peers} = ep.dispatch_events(now);
 
                 for (peer, packets) in to_peers {
                     eprintln!("-> {peer:?} ({} packets)", packets.len());

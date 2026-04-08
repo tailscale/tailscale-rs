@@ -13,8 +13,8 @@ use ts_packet::old::PacketMut;
 use ts_packetfilter::{FilterExt, IpProto};
 use ts_time::{Handle, Scheduler};
 use ts_transport::{OverlayTransportId, UnderlayTransportId};
+use ts_tunnel::{Endpoint, NodeKeyPair, PeerConfig};
 use ts_underlay_router as ur;
-use ts_wireguard::{Endpoint, NodeKeyPair, PeerConfig};
 
 /// A data plane subsystem that can be the subject of timer events.
 pub enum Subsystem {
@@ -85,7 +85,7 @@ impl DataPlane {
             })
             .collect::<Vec<_>>();
 
-        let ts_wireguard::SendResult {
+        let ts_tunnel::SendResult {
             to_peers: encrypted,
         } = self.wireguard.send(to_wireguard);
 
@@ -111,7 +111,7 @@ impl DataPlane {
         &mut self,
         packets: impl IntoIterator<Item = PacketMut>,
     ) -> InboundResult {
-        let ts_wireguard::RecvResult { to_local, to_peers } = self.wireguard.recv(packets);
+        let ts_tunnel::RecvResult { to_local, to_peers } = self.wireguard.recv(packets);
 
         let to_local = to_local
             .into_iter()

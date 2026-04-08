@@ -6,7 +6,7 @@ use tokio::sync::{Mutex, mpsc};
 use ts_keys::NodePublicKey;
 use ts_packet::old::PacketMut;
 use ts_transport::{OverlayTransportId, UnderlayTransportId};
-use ts_wireguard::NodeKeyPair;
+use ts_tunnel::NodeKeyPair;
 
 use crate::{EventResult, InboundResult, OutboundResult};
 
@@ -217,7 +217,7 @@ impl DataPlane {
             }
             SelectResult::UnderlayUp(node_key, underlay_up) => {
                 if core.sync.wireguard.peer_id(node_key).is_none() {
-                    core.sync.wireguard.add_peer(ts_wireguard::PeerConfig {
+                    core.sync.wireguard.add_peer(ts_tunnel::PeerConfig {
                         key: node_key,
                         psk: [0u8; 32].into(),
                     });
