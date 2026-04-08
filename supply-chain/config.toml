@@ -1,3 +1,4 @@
+
 # cargo-vet config file
 
 [cargo-vet]
@@ -25,17 +26,9 @@ criteria = "safe-to-deploy"
 version = "1.1.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.alloca]]
-version = "0.4.0"
-criteria = "safe-to-run"
-
 [[exemptions.allocator-api2]]
 version = "0.2.21"
 criteria = "safe-to-deploy"
-
-[[exemptions.anes]]
-version = "0.1.6"
-criteria = "safe-to-run"
 
 [[exemptions.anstream]]
 version = "0.6.21"
@@ -199,7 +192,7 @@ criteria = "safe-to-run"
 
 [[exemptions.core-foundation]]
 version = "0.10.1"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.cpufeatures]]
 version = "0.2.17"
@@ -213,14 +206,6 @@ criteria = "safe-to-deploy"
 version = "1.5.0"
 criteria = "safe-to-run"
 
-[[exemptions.criterion]]
-version = "0.8.2"
-criteria = "safe-to-run"
-
-[[exemptions.criterion-plot]]
-version = "0.8.2"
-criteria = "safe-to-run"
-
 [[exemptions.crossbeam-deque]]
 version = "0.8.6"
 criteria = "safe-to-deploy"
@@ -232,10 +217,6 @@ criteria = "safe-to-deploy"
 [[exemptions.crossbeam-utils]]
 version = "0.8.21"
 criteria = "safe-to-deploy"
-
-[[exemptions.crunchy]]
-version = "0.2.4"
-criteria = "safe-to-run"
 
 [[exemptions.crypto-common]]
 version = "0.1.7"
@@ -345,14 +326,6 @@ criteria = "safe-to-run"
 version = "0.12.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.foreign-types]]
-version = "0.3.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.foreign-types-shared]]
-version = "0.1.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.futures]]
 version = "0.3.32"
 criteria = "safe-to-deploy"
@@ -433,10 +406,6 @@ criteria = "safe-to-deploy"
 version = "0.4.13"
 criteria = "safe-to-deploy"
 
-[[exemptions.half]]
-version = "2.7.1"
-criteria = "safe-to-run"
-
 [[exemptions.hash32]]
 version = "0.3.1"
 criteria = "safe-to-deploy"
@@ -497,10 +466,6 @@ criteria = "safe-to-run"
 version = "1.8.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.hyper-tls]]
-version = "0.6.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.hyper-util]]
 version = "0.1.20"
 criteria = "safe-to-deploy"
@@ -548,10 +513,6 @@ criteria = "safe-to-deploy"
 [[exemptions.is_terminal_polyfill]]
 version = "1.70.2"
 criteria = "safe-to-deploy"
-
-[[exemptions.itertools]]
-version = "0.13.0"
-criteria = "safe-to-run"
 
 [[exemptions.itertools]]
 version = "0.14.0"
@@ -633,10 +594,6 @@ criteria = "safe-to-run"
 version = "1.1.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.native-tls]]
-version = "0.2.18"
-criteria = "safe-to-deploy"
-
 [[exemptions.netconfig-rs]]
 version = "0.1.5"
 criteria = "safe-to-deploy"
@@ -701,20 +658,8 @@ criteria = "safe-to-deploy"
 version = "0.3.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.openssl]]
-version = "0.10.75"
-criteria = "safe-to-deploy"
-
 [[exemptions.openssl-probe]]
 version = "0.2.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.openssl-sys]]
-version = "0.9.111"
-criteria = "safe-to-deploy"
-
-[[exemptions.page_size]]
-version = "0.6.0"
 criteria = "safe-to-run"
 
 [[exemptions.parking]]
@@ -772,22 +717,6 @@ criteria = "safe-to-deploy"
 [[exemptions.piper]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
-
-[[exemptions.pkg-config]]
-version = "0.3.32"
-criteria = "safe-to-deploy"
-
-[[exemptions.plotters]]
-version = "0.3.7"
-criteria = "safe-to-run"
-
-[[exemptions.plotters-backend]]
-version = "0.3.7"
-criteria = "safe-to-run"
-
-[[exemptions.plotters-svg]]
-version = "0.3.7"
-criteria = "safe-to-run"
 
 [[exemptions.poly1305]]
 version = "0.8.0"
@@ -863,14 +792,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rand_xorshift]]
 version = "0.4.0"
-criteria = "safe-to-run"
-
-[[exemptions.rayon]]
-version = "1.11.0"
-criteria = "safe-to-run"
-
-[[exemptions.rayon-core]]
-version = "1.13.0"
 criteria = "safe-to-run"
 
 [[exemptions.redox_syscall]]
@@ -967,7 +888,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.schannel]]
 version = "0.1.29"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.schemars]]
 version = "0.9.0"
@@ -983,11 +904,11 @@ criteria = "safe-to-deploy"
 
 [[exemptions.security-framework]]
 version = "3.7.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.security-framework-sys]]
 version = "2.17.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.semver]]
 version = "1.0.27"
@@ -1091,7 +1012,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
 version = "3.27.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.terminal_size]]
 version = "0.4.3"
@@ -1135,10 +1056,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tokio-macros]]
 version = "2.6.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.tokio-native-tls]]
-version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio-rustls]]
@@ -1237,10 +1154,6 @@ criteria = "safe-to-deploy"
 version = "0.1.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.vcpkg]]
-version = "0.2.15"
-criteria = "safe-to-deploy"
-
 [[exemptions.version_check]]
 version = "0.9.5"
 criteria = "safe-to-deploy"
@@ -1313,17 +1226,9 @@ criteria = "safe-to-deploy"
 version = "1.2.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.winapi-i686-pc-windows-gnu]]
-version = "0.4.0"
-criteria = "safe-to-run"
-
 [[exemptions.winapi-util]]
 version = "0.1.11"
 criteria = "safe-to-deploy"
-
-[[exemptions.winapi-x86_64-pc-windows-gnu]]
-version = "0.4.0"
-criteria = "safe-to-run"
 
 [[exemptions.windows]]
 version = "0.61.3"
