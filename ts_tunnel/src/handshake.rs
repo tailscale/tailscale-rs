@@ -5,7 +5,7 @@ use blake2::{Blake2s256, Digest};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 use hkdf::SimpleHkdf;
 use ts_keys::{NodeKeyPair, NodePrivateKey, NodePublicKey};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_time::Handle;
 use zerocopy::{FromZeros, IntoBytes};
 

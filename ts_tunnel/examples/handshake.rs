@@ -14,7 +14,7 @@ use tokio::{
     time::{interval_at, sleep_until},
 };
 use ts_keys::{NodePrivateKey, NodePublicKey};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_time::TimeRange;
 use ts_tunnel::Endpoint;
 use zerocopy::{FromBytes, IntoBytes, TryFromBytes};

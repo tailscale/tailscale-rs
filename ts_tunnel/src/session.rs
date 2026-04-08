@@ -6,7 +6,7 @@ use std::{
 
 use aead::AeadInPlace;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
     little_endian::{U32, U64},

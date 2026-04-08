@@ -9,7 +9,7 @@ use tokio::{
 use tokio_util::codec::{FramedRead, FramedWrite};
 use ts_http_util::Client as _;
 use ts_keys::{NodeKeyPair, NodePublicKey};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_transport::UnderlayTransport;
 use url::Url;
 

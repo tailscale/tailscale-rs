@@ -1,495 +1,739 @@
 //! Types for processing network packets.
 
 #![no_std]
-mod basic;
-mod buf;
-pub mod old;
-pub mod raw;
 
 extern crate alloc;
 
-use alloc::collections::BTreeMap;
-use core::ops::Range;
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use core::{
+    fmt::{self, LowerHex, UpperHex},
+    net::IpAddr,
+    ops::{Index, IndexMut},
+    slice::{Iter, IterMut, SliceIndex},
+};
 
-pub use basic::BasicBatch;
-pub use buf::Buffer;
+use bytes::{Buf, BufMut, Bytes, BytesMut, buf::UninitSlice};
+use ts_hexdump::{AsHexExt, Case, hex_fmt};
 
-use crate::raw::RawBatch;
-
-/// Describes the boundaries of a packet within a Buffer.
-///
-/// |............|-----------------|----------------|------------------|.............|
-///  <- offset -> <- pre_padding -> <- packet_len -> <- post_padding ->
-#[derive(Clone, Debug)]
-pub struct PacketLayout {
-    /// Absolute start byte offset in Buffer.
-    pub offset: usize,
-    /// Currently in-use bytes of the packet.
-    pub packet_len: usize,
-    /// Unused but reserved bytes in front of packet_len.
-    pub pre_padding: usize,
-    /// Unused but reserved bytes behind packet_len.
-    pub post_padding: usize,
+/// An immutable, contiguous sequence of bytes, specialized for networking applications.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Packet {
+    contents: Bytes,
 }
 
-impl PacketLayout {
-    /// Make a layout starting at absolute byte offset `offset`, with `packet_len` bytes and
-    /// no padding.
-    pub fn new(offset: usize, packet_len: usize) -> PacketLayout {
-        Self::with_padding(offset, packet_len, 0, 0)
+impl Packet {
+    /// The empty packet.
+    pub const EMPTY: Packet = Packet {
+        contents: Bytes::from_static(&[]),
+    };
+
+    /// Returns `true` if this [`Packet`] has a length of 0.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::Packet;
+    /// let pkt = Packet::from(vec![]);
+    /// assert!(pkt.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.contents.is_empty()
     }
 
-    /// Make a layout starting at absolute byte offset `offset`, the given length and
-    /// pre/post padding.
-    pub fn with_padding(
-        offset: usize,
-        packet_len: usize,
-        pre_padding: usize,
-        post_padding: usize,
-    ) -> PacketLayout {
-        PacketLayout {
-            offset,
-            packet_len,
-            pre_padding,
-            post_padding,
+    /// Returns an iterator over the bytes in this [`Packet`]. The iterator yields all bytes in
+    /// order from start to end.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::Packet;
+    /// let pkt = Packet::from(vec![0xAA, 0xBB, 0xCC]);
+    /// let mut iter = pkt.iter();
+    /// assert_eq!(iter.next(), Some(&0xAA));
+    /// assert_eq!(iter.next(), Some(&0xBB));
+    /// assert_eq!(iter.next(), Some(&0xCC));
+    /// assert_eq!(iter.next(), None);
+    /// ```
+    pub fn iter(&'_ self) -> Iter<'_, u8> {
+        self.contents.iter()
+    }
+
+    /// Returns the number of bytes contained in this [`Packet`].
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::Packet;
+    /// let pkt = Packet::from(vec![1, 2, 3]);
+    /// assert_eq!(pkt.len(), 3);
+    /// ```
+    pub fn len(&self) -> usize {
+        self.contents.len()
+    }
+}
+
+impl fmt::Debug for Packet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:X}")
+    }
+}
+
+impl AsRef<[u8]> for Packet {
+    fn as_ref(&self) -> &[u8] {
+        self.contents.as_ref()
+    }
+}
+
+impl Buf for Packet {
+    fn remaining(&self) -> usize {
+        self.contents.remaining()
+    }
+
+    fn chunk(&self) -> &[u8] {
+        &self.contents
+    }
+
+    fn advance(&mut self, cnt: usize) {
+        self.contents.advance(cnt);
+    }
+}
+
+impl From<&[u8]> for Packet {
+    fn from(value: &[u8]) -> Self {
+        Self {
+            contents: Bytes::from(value.to_owned()),
         }
     }
-
-    /// Total number of bytes owned by this layout.
-    pub fn stride(&self) -> usize {
-        self.pre_padding + self.packet_len + self.post_padding
+}
+impl From<Bytes> for Packet {
+    fn from(value: Bytes) -> Self {
+        Self { contents: value }
     }
+}
 
-    /// First buffer index beyond this layout.
-    pub fn stride_end(&self) -> usize {
-        self.offset + self.stride()
-    }
-
-    /// Buffer range owned by this layout.
-    pub fn stride_range(&self) -> Range<usize> {
-        self.offset..self.stride_end()
-    }
-
-    /// Start of the packet_len range.
-    pub fn start(&self) -> usize {
-        self.offset + self.pre_padding
-    }
-
-    /// End of the packet_len range.
-    pub fn end(&self) -> usize {
-        self.start() + self.packet_len
-    }
-
-    /// Buffer range containing in-use packet bytes (defined by packet_len).
-    pub fn range(&self) -> Range<usize> {
-        self.start()..self.end()
-    }
-
-    /// Report whether all the layout's bytes are within range.
-    pub fn is_within(&self, range: Range<usize>) -> bool {
-        self.offset >= range.start && self.stride_end() <= range.end
-    }
-
-    /// Change packet_len by delta by changing the amount of post_padding.
-    ///
-    /// # Panics
-    ///
-    /// If delta would make packet_len or post_padding negative.
-    pub fn resize_back(&mut self, delta: isize) {
-        if delta < 0 {
-            let num_bytes = (-delta) as usize;
-            assert!(num_bytes <= self.packet_len);
-            self.packet_len -= num_bytes;
-            self.post_padding += num_bytes;
-        } else {
-            let num_bytes = delta as usize;
-            assert!(num_bytes <= self.post_padding);
-            self.post_padding -= num_bytes;
-            self.packet_len += num_bytes;
-        }
-    }
-
-    /// Change packet_len by delta by changing the amount of pre_padding.
-    ///
-    /// # Panics
-    ///
-    /// If delta would make packet_len or pre_padding negative.
-    pub fn resize_front(&mut self, num_bytes: isize) {
-        if num_bytes < 0 {
-            let num_bytes = (-num_bytes) as usize;
-            assert!(num_bytes <= self.packet_len);
-            self.packet_len -= num_bytes;
-            self.pre_padding += num_bytes;
-        } else {
-            let num_bytes = num_bytes as usize;
-            assert!(num_bytes <= self.pre_padding);
-            self.pre_padding -= num_bytes;
-            self.packet_len += num_bytes;
+impl From<BytesMut> for Packet {
+    fn from(value: BytesMut) -> Self {
+        Self {
+            contents: value.freeze(),
         }
     }
 }
 
-/// A read-only view of a [`Batch`]'s packet.
-#[derive(Clone)]
-pub struct Packet<'batch, Metadata: Clone> {
-    /// The packet's raw bytes.
-    ///
-    /// The slice does not include the packet's pre- or post-padding.
-    pub data: &'batch [u8],
-    /// The packet's metadata.
-    pub meta: Metadata,
-}
-
-/// A mutable view of a [`Batch`]'s packet.
-pub struct PacketMut<'batch, Metadata: Clone> {
-    /// The packet's raw bytes.
-    ///
-    /// The slice does not include the packet's pre- or post-padding.
-    pub data: &'batch mut [u8],
-    /// The packet's metadata.
-    pub meta: Metadata,
-    /// The layout of `self.data` in the underlying [`Buffer`]. Having access to the layout
-    /// allows the caller to reshape the packet. It's private so that the caller must use
-    /// `PacketMut`'s methods, which update `self.data` in addition to mutating the layout.
-    layout: &'batch mut PacketLayout,
-}
-
-impl<'batch, Metadata: Clone> PacketMut<'batch, Metadata> {
-    /// Return the packet's layout in the batch's underlying buffer.
-    pub fn layout(&self) -> &PacketLayout {
-        self.layout
-    }
-
-    /// Change packet_len by delta by changing the amount of post_padding.
-    ///
-    /// `self.data` is updated to reflect the layout change. The newly visible bytes have
-    /// arbitrary values.
-    ///
-    /// # Panics
-    ///
-    /// If delta would make packet_len or post_padding negative.
-    pub fn resize_back(&mut self, delta: isize) {
-        self.layout.resize_back(delta);
-        let len = self.layout.packet_len;
-        let ptr = self.data.as_mut_ptr();
-        unsafe {
-            // SAFETY: self.data is a view on the bytes described by self.layout.range(). resize_back
-            // changes only the end position of layout.range(), and ensures that the packet has
-            // unique ownership of the layout. resize_back does not move the underlying data, so the
-            // new self.data starts at the same position, and has an updated length.
-            self.data = core::slice::from_raw_parts_mut(ptr, len);
-        }
-    }
-
-    /// Change packet_len by delta by changing the amount of pre_padding.
-    ///
-    /// `self.data` is updated to reflect the layout change. The newly visible bytes have
-    /// arbitrary values.
-    ///
-    /// # Panics
-    ///
-    /// If delta would make packet_len or pre_padding negative.
-    pub fn resize_front(&mut self, delta: isize) {
-        self.layout.resize_front(delta);
-        let len = self.layout.packet_len;
-        let mut ptr = self.data.as_mut_ptr();
-        unsafe {
-            // SAFETY: `self.layout.resize_front()` ensures the requested `delta` remains in-bounds
-            // of the buffer range owned by this packet. The new ptr address matches the updated
-            // `self.layout.range().start` (earlier in memory for a grow, later for a shrink).
-            ptr = ptr.offset(-delta);
-            // SAFETY: `self.layout.resize_front()` does not move the underlying data, so the new
-            // slice still points to valid owned bytes. The new `ptr` and `len` match
-            // `self.layout.range()`, as adjusted by `self.layout.resize_front()` above.
-            self.data = core::slice::from_raw_parts_mut(ptr, len);
-        }
-    }
-
-    /// Append `bytes` to the packet, consuming `bytes.len()` bytes of post-padding.
-    ///
-    /// # Panics
-    ///
-    /// If insufficient post-padding is available.
-    pub fn append_bytes(&mut self, bytes: &[u8]) {
-        let old_len = self.data.len();
-        self.resize_back(bytes.len() as isize);
-        self.data[old_len..].copy_from_slice(bytes);
-    }
-
-    /// Prepend `bytes` to the packet, consuming `bytes.len()` bytes of pre-padding.
-    ///
-    /// # Panics
-    ///
-    /// If insufficient pre-padding is available.
-    pub fn prepend_bytes(&mut self, bytes: &[u8]) {
-        self.resize_front(bytes.len() as isize);
-        self.data[..bytes.len()].copy_from_slice(bytes);
+impl From<PacketMut> for Packet {
+    fn from(value: PacketMut) -> Self {
+        value.freeze()
     }
 }
 
-impl<'batch, Metadata: Clone> From<PacketMut<'batch, Metadata>> for Packet<'batch, Metadata> {
-    fn from(packet: PacketMut<'batch, Metadata>) -> Packet<'batch, Metadata> {
-        Packet {
-            data: packet.data,
-            meta: packet.meta,
+impl From<Vec<u8>> for Packet {
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            contents: value.into(),
         }
     }
 }
 
-/// A batch of packets, and operations on them.
-pub trait Batch: Sized + AsRef<RawBatch> + AsMut<RawBatch> {
-    /// The type for per-packet metadata.
-    type Metadata: Clone;
+impl<T> Index<T> for Packet
+where
+    // This instance is provided by implicit deref to [u8] on Bytes
+    [u8]: Index<T>,
+{
+    type Output = <[u8] as Index<T>>::Output;
 
-    /// Return metadata for the `ith` packet in the batch.
-    fn get_metadata(&self, i: usize) -> Option<Self::Metadata>;
+    #[inline]
+    fn index(&self, index: T) -> &Self::Output {
+        self.contents.index(index)
+    }
+}
 
-    /// Return a clone of `self` that can access no packets.
-    ///
-    /// Returned batches must be usable in [`Batch::batch_by_mut`].
-    fn empty_clone(&self) -> Self;
+impl LowerHex for Packet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.iter().hex(Case::Lower).flatten().collect::<String>()
+        )
+    }
+}
 
-    /// Split `self` into multiple output batches, controlled by `f`.
+impl UpperHex for Packet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.iter().hex(Case::Upper).flatten().collect::<String>()
+        )
+    }
+}
+
+/// A mutable, contiguous, growable sequence of bytes, specialized for networking applications.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PacketMut {
+    /// The backing buffer for this packet; effectively a pointer, length, and capacity of a
+    /// contiguous slice of memory. Supports dynamic resizing/reallocation when necessary.
+    contents: BytesMut,
+}
+
+impl PacketMut {
+    /// Constructs a new [PacketMut] and allocates an underlying buffer of the given `size` on the
+    /// heap. The newly-allocated underlying buffer is filled with zero bytes (`0u8`).
     ///
-    /// The provided `collection` owns the output batches. `f` receives each packet of `self` in
-    /// turn, and for each one can return `None` to discard the packet, or
-    /// `Some(batch_from_collection)` to move the packet into that batch.
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::new(5);
+    /// assert_eq!(pkt.len(), 5);
+    /// assert_eq!(pkt.as_ref(), &[0, 0, 0, 0, 0]);
+    /// pkt[4] = 42;
+    /// assert_eq!(pkt.as_ref(), &[0, 0, 0, 0, 42]);
+    /// ```
+    pub fn new(size: usize) -> Self {
+        Self {
+            contents: BytesMut::zeroed(size),
+        }
+    }
+
+    /// Constructs a new [PacketMut] with at least the specified capacity. The packet will be able
+    /// to hold at least `size` bytes without reallocating.
     ///
-    /// Batches returned by `f` must have been created using `self.empty_clone()`, either when
-    /// initializing `collection` prior to calling `group_by_mut`, or as needed within `f`.
+    /// Note that the packet will have at least the given *capacity*, but will have a *length* of
+    /// zero until bytes are added to it.
     ///
-    /// This method is a building block primitive for other Batch slicing functions like
-    /// [`Batch::group_by_mut`] and [`Batch::retain_mut`]. Prefer to use those simpler functions
-    /// when possible.
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::with_capacity(5);
+    /// assert_eq!(pkt.len(), 0);
+    /// assert_eq!(pkt.capacity(), 5);
+    /// ```
+    pub fn with_capacity(size: usize) -> Self {
+        Self {
+            contents: BytesMut::with_capacity(size),
+        }
+    }
+
+    /// Returns the number of contiguous bytes the underlying buffer can hold without reallocating.
     ///
-    /// # Panics
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::with_capacity(3);
+    /// assert_eq!(pkt.len(), 0);
+    /// assert_eq!(pkt.capacity(), 3);
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.contents.capacity()
+    }
+
+    /// Appends the given bytes to the end of this [`PacketMut`]. The underlying buffer is
+    /// resized if it does not have enough capacity.
     ///
-    /// If `f` returns a batch that was not obtained with `self.empty_clone()`.
-    fn batch_by_mut<F, C>(self, f: F, collection: C) -> C
+    /// # Examples
+    /// Extending within the underlying buffer's capacity increases the length, but not the
+    /// capacity:
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::with_capacity(3);
+    /// pkt.extend_from_slice(&[1, 2, 3]);
+    /// assert_eq!(pkt.len(), 3);
+    /// assert_eq!(pkt.capacity(), 3);
+    /// ```
+    ///
+    /// Extending *beyond* the backing buffer's capacity triggers a reallocation, changing both the
+    /// length and the capacity:
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::with_capacity(3);
+    /// pkt.extend_from_slice(&[1, 2, 3, 4]);
+    /// assert_eq!(pkt.len(), 4);
+    /// assert_eq!(pkt.capacity(), 8);
+    /// ```
+    pub fn extend_from_slice(&mut self, slice: &[u8]) {
+        self.contents.extend_from_slice(slice);
+    }
+
+    /// Add the given number of zero bytes to the front of this `[PacketMut]`. The underlying
+    /// buffer is resized if it does not have enough capacity.
+    pub fn grow_front(&mut self, len: usize) {
+        let existing_len = self.contents.len();
+        self.contents.resize(existing_len + len, 0);
+        self.contents.copy_within(..existing_len, len);
+        self.contents[..len].fill(0);
+    }
+
+    /// Prepends the given bytes to this [`PacketMut`]. The underlying buffer is resized if it
+    /// does not have enough capacity.
+    pub fn extend_front_from_slice(&mut self, slice: &[u8]) {
+        self.grow_front(slice.len());
+        self.contents[..slice.len()].copy_from_slice(slice);
+    }
+
+    /// Returns a reference to an element or subslice depending on the type of index.
+    ///
+    /// If given a position, returns a reference to the element at that position or None if out of bounds.
+    /// If given a range, returns the subslice corresponding to that range, or None if out of bounds.
+    pub fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
     where
-        F: for<'a> FnMut(usize, PacketMut<'_, Self::Metadata>, &'a mut C) -> Option<&'a mut Self>;
-
-    /// Return the number of packets in the batch.
-    fn len(&self) -> usize {
-        self.as_ref().len()
+        I: SliceIndex<[u8]>,
+    {
+        self.contents.get(index)
     }
 
-    /// Report whether the batch is empty.
-    fn is_empty(&self) -> bool {
+    /// Returns a mutable reference to an element or subslice depending on the type of index.
+    ///
+    /// If given a position, returns a reference to the element at that position or None if out of bounds.
+    /// If given a range, returns the subslice corresponding to that range, or None if out of bounds.
+    pub fn get_mut<I>(&mut self, index: I) -> Option<&mut <I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        self.contents.get_mut(index)
+    }
+
+    /// Converts `self` into an immutable [`Packet`]. This is a zero-cost type conversion simply to
+    /// indicate the returned packet won't be mutated anymore, allowing the packet to be cheaply
+    /// cloned and moved between execution contexts (threads/async tasks).
+    ///
+    /// # Examples
+    ///  ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt_mut = PacketMut::with_capacity(4);
+    /// pkt_mut.extend_from_slice(b"hello world");
+    /// let pkt1 = pkt_mut.freeze();
+    /// let pkt2 = pkt1.clone();
+    /// assert_eq!(pkt1, pkt2);
+    /// let th = std::thread::spawn(move || {
+    ///     assert_eq!(&pkt1[..], b"hello world");
+    /// });
+    /// assert_eq!(&pkt2[..], b"hello world");
+    /// th.join().unwrap();
+    /// ```
+    pub fn freeze(self) -> Packet {
+        Packet {
+            contents: self.contents.freeze(),
+        }
+    }
+
+    /// Returns `true` if this [`PacketMut`] has a length of 0.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let pkt = PacketMut::from(&[]);
+    /// assert!(pkt.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Get a reference to the `ith` packet in the batch.
-    fn get(&self, i: usize) -> Option<Packet<'_, Self::Metadata>> {
-        let meta = self.get_metadata(i)?;
-        let data = self.as_ref().get_data(i)?;
-        Some(Packet { data, meta })
+    /// Returns an iterator over the bytes in this [`PacketMut`]. The iterator yields all bytes in
+    /// order from start to end.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let pkt = PacketMut::from(&[0xAA, 0xBB, 0xCC]);
+    /// let mut iter = pkt.iter();
+    /// assert_eq!(iter.next(), Some(&0xAA));
+    /// assert_eq!(iter.next(), Some(&0xBB));
+    /// assert_eq!(iter.next(), Some(&0xCC));
+    /// assert_eq!(iter.next(), None);
+    /// ```
+    pub fn iter(&'_ self) -> Iter<'_, u8> {
+        self.contents.iter()
     }
 
-    /// Get a mutable reference to the `ith` packet in the batch.
-    fn get_mut(&mut self, i: usize) -> Option<PacketMut<'_, Self::Metadata>> {
-        let meta = self.get_metadata(i)?;
-        // SAFETY: the unsafe mutable layout reference is handed to PacketMut, which only allows
-        // layout mutations that don't change the range of bytes owned by the layout.
-        let (data, layout) = unsafe { self.as_mut().get_data_and_layout_mut(i)? };
-        Some(PacketMut { data, layout, meta })
+    /// Returns an iterator over the bytes in this [`PacketMut`] that allows modifying each value.
+    /// The iterator yields all bytes in order from start to end.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::from(&[0xAA, 0xBB, 0xCC]);
+    /// for byte in pkt.iter_mut() {
+    ///     *byte += 1;
+    /// }
+    /// assert_eq!(pkt.as_ref(), &[0xAB, 0xBC, 0xCD]);
+    /// ```
+    pub fn iter_mut(&'_ mut self) -> IterMut<'_, u8> {
+        self.contents.iter_mut()
     }
 
-    /// Get a reference to the `ith` packet in the batch.
+    /// Returns the number of bytes contained in this [`PacketMut`].
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let pkt = PacketMut::from(&[1, 2, 3]);
+    /// assert_eq!(pkt.len(), 3);
+    /// ```
+    pub fn len(&self) -> usize {
+        self.contents.len()
+    }
+
+    /// Removes the last `count` bytes from the end of this [`PacketMut`], leaving
+    /// `self.len() - count` bytes in the packet. Existing capacity is preserved and the backing
+    /// buffer is not changed.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::from(&[1, 2, 3, 4, 5]);
+    /// pkt.truncate(3);
+    /// assert_eq!(pkt, PacketMut::from(&[1, 2, 3]));
+    /// ```
+    pub fn truncate(&mut self, count: usize) {
+        self.contents.truncate(count);
+    }
+
+    /// Removes the first `count` bytes from the front of this [`PacketMut`], leaving
+    /// `self.len() - count` bytes in the packet. Existing capacity is preserved and the backing
+    /// buffer is not changed.
     ///
     /// # Panics
     ///
-    /// If `i >= self.len()`
-    fn index(&self, i: usize) -> Packet<'_, Self::Metadata> {
-        self.get(i).unwrap()
+    /// Panics if `at > self.len()`.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt = PacketMut::from(&[1, 2, 3, 4, 5]);
+    /// pkt.truncate_front(2);
+    /// assert_eq!(pkt, PacketMut::from(&[3, 4, 5]));
+    /// ```
+    pub fn truncate_front(&mut self, count: usize) {
+        self.contents.advance(count);
     }
 
-    /// Get a mutable reference to the `ith` packet in the batch.
+    /// Splits the [`PacketMut`] into two at the given index.
+    ///
+    /// After the call, `self` will contain the bytes `[0, at)`, and the returned [`PacketMut`]
+    /// will contain the bytes `[at, capacity)`. Existing capacity is preserved, the backing buffer
+    /// is not changed, and both `self` and the returned [`PacketMut`] share the same backing
+    /// buffer.
     ///
     /// # Panics
     ///
-    /// If `i >= self.len()`
-    fn index_mut(&mut self, i: usize) -> PacketMut<'_, Self::Metadata> {
-        self.get_mut(i).unwrap()
-    }
-
-    /// Return an iterator over the packets in the batch.
-    fn iter(&self) -> BatchIterator<'_, Self> {
-        BatchIterator::new(self)
-    }
-
-    /// Split `self` into multiple output batches, controlled by `f`.
+    /// Panics if `at > len`.
     ///
-    /// The provided `collection` owns the output batches. `f` receives each packet of `self` in
-    /// turn, and for each one can return `None` to discard the packet, or
-    /// `Some(batch_from_collection)` to move the packet into that batch.
+    /// # Complexity
     ///
-    /// Batches returned by `f` must have been created using `self.empty_clone()`, either when
-    /// initializing `collection` prior to calling `group_by_mut`, or as needed within `f`.
+    /// O(1). Indices are adjusted and reference counts are updated, but none of the backing
+    /// buffer is traversed or cloned.
     ///
-    /// This method is a building block primitive for other Batch slicing functions like
-    /// [`Batch::group_by_mut`] and [`Batch::retain_mut`]. Prefer to use those simpler functions
-    /// when possible.
+    /// # Examples
     ///
-    /// # Panics
-    ///
-    /// If `f` returns a batch that was not obtained with `self.empty_clone()`.
-    fn batch_by<F, C>(self, mut f: F, collection: C) -> C
-    where
-        F: for<'a> FnMut(usize, Packet<'_, Self::Metadata>, &'a mut C) -> Option<&'a mut Self>,
-    {
-        self.batch_by_mut(|i, packet, out| f(i, packet.into(), out), collection)
-    }
-
-    /// Call `f` on every packet in the batch.
-    ///
-    /// The standard Iterator trait cannot express the lifetime constraints that
-    /// RawBatch needs to safely hand out PacketMuts, so this method exists to
-    /// avoid the boilerplate of manually iterating and indexing packets.
-    ///
-    /// `f` receives the packet's index in the batch (the value you would pass to `packet_at_mut`),
-    /// and the packet itself.
-    fn for_each_mut<F>(&mut self, mut f: F)
-    where
-        F: FnMut(usize, PacketMut<'_, Self::Metadata>),
-    {
-        for i in 0..self.len() {
-            let packet = self.index_mut(i);
-            f(i, packet);
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt1 = PacketMut::from(&[1, 2, 3, 4, 5]);
+    /// let pkt2 = pkt1.split_off(2);
+    /// assert_eq!(pkt1, PacketMut::from(&[1, 2]));
+    /// assert_eq!(pkt2, PacketMut::from(&[3, 4, 5]));
+    /// ```
+    pub fn split_off(&mut self, at: usize) -> PacketMut {
+        Self {
+            contents: self.contents.split_off(at),
         }
     }
 
-    /// Split `self` into a map of keys mapped to batches of matching packets.
+    /// Splits the [`PacketMut`] into two at the given index.
     ///
-    /// `f` provides the key for each packet of `self`.
-    fn group_by_mut<K: Ord>(
-        self,
-        mut f: impl FnMut(usize, PacketMut<'_, Self::Metadata>) -> K,
-    ) -> BTreeMap<K, Self> {
-        let ret = BTreeMap::new();
-        let empty = self.empty_clone();
-        self.batch_by_mut(
-            |i, packet, ret| {
-                let k = f(i, packet);
-                Some(ret.entry(k).or_insert_with(|| empty.empty_clone()))
-            },
-            ret,
-        )
-    }
-
-    /// Split `self` into a map of keys mapped to batches of matching packets.
-    ///
-    /// `f` provides the key for each packet of `self`.
-    fn group_by<K: Ord>(
-        self,
-        mut f: impl FnMut(usize, Packet<'_, Self::Metadata>) -> K,
-    ) -> BTreeMap<K, Self> {
-        self.group_by_mut(|i, packet| f(i, packet.into()))
-    }
-
-    /// Return a batch containing only packets for which `f` returns true.
-    fn retain_mut(self, mut f: impl FnMut(usize, PacketMut<'_, Self::Metadata>) -> bool) -> Self {
-        let ret = self.empty_clone();
-        self.batch_by_mut(
-            |i, packet, out| if f(i, packet) { Some(out) } else { None },
-            ret,
-        )
-    }
-
-    /// Return a batch containing only packets for which `f` returns true.
-    fn retain(self, mut f: impl FnMut(usize, Packet<'_, Self::Metadata>) -> bool) -> Self {
-        self.retain_mut(|i, packet| f(i, packet.into()))
-    }
-
-    /// Split the batch in two at the specified index.
+    /// After the call, `self` will contain the bytes `[at, len)`, and the returned [`PacketMut`]
+    /// will contain the bytes `[0, at)`. Existing capacity is preserved, the backing buffer
+    /// is not changed, and both `self` and the returned [`PacketMut`] share the same backing
+    /// buffer.
     ///
     /// # Panics
     ///
-    /// If `idx > self.len()`.
-    fn split_at(self, idx: usize) -> (Self, Self) {
-        assert!(idx <= self.len());
-        let ret = (self.empty_clone(), self.empty_clone());
-        self.batch_by(
-            |i, _packet, out| Some(if i < idx { &mut out.0 } else { &mut out.1 }),
-            ret,
-        )
-    }
-
-    /// Split the batch in two.
+    /// Panics if `at > len`.
     ///
-    /// Returns a pair of batches: all the packets for which `f` returned `true`, and all the
-    /// packets for which it returned `false`.
-    fn partition_mut(
-        self,
-        mut f: impl FnMut(usize, PacketMut<'_, Self::Metadata>) -> bool,
-    ) -> (Self, Self) {
-        let ret = (self.empty_clone(), self.empty_clone());
-        self.batch_by_mut(
-            |i, packet, out| {
-                if f(i, packet) {
-                    Some(&mut out.0)
-                } else {
-                    Some(&mut out.1)
-                }
-            },
-            ret,
-        )
-    }
-
-    /// Split the batch in two.
+    /// # Complexity
     ///
-    /// Returns a pair of batches, all the packets for which `f` returned `true`, and all the
-    /// packets for which it returned `false`.
-    fn partition(
-        self,
-        mut f: impl FnMut(usize, Packet<'_, Self::Metadata>) -> bool,
-    ) -> (Self, Self) {
-        self.partition_mut(|i, packet| f(i, packet.into()))
+    /// O(1). Indices are adjusted and reference counts are updated, but none of the backing
+    /// buffer is traversed or cloned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ts_packet::PacketMut;
+    /// let mut pkt1 = PacketMut::from(&[1, 2, 3, 4, 5]);
+    /// let pkt2 = pkt1.split_to(2);
+    /// assert_eq!(pkt1, PacketMut::from(&[3, 4, 5]));
+    /// assert_eq!(pkt2, PacketMut::from(&[1, 2]));
+    /// ```
+    pub fn split_to(&mut self, at: usize) -> PacketMut {
+        Self {
+            contents: self.contents.split_to(at),
+        }
+    }
+
+    fn get_ip_family(&self) -> Option<u8> {
+        match self.get(0)? >> 4 {
+            4 => Some(4),
+            6 => Some(6),
+            _ => None,
+        }
+    }
+
+    /// Returns the bytes at idx..idx+4 interpreted as a network-endian IPv4 address.
+    fn ipv4_at(&self, idx: usize) -> Option<IpAddr> {
+        let octets: [u8; 4] = self.get(idx..idx + 4)?.try_into().unwrap();
+        Some(IpAddr::from(octets))
+    }
+
+    /// Returns the bytes at idx..idx+16 interpreted as a network-endian IPv6 address.
+    fn ipv6_at(&self, idx: usize) -> Option<IpAddr> {
+        let octets: [u8; 16] = self.get(idx..idx + 16)?.try_into().unwrap();
+        Some(IpAddr::from(octets))
+    }
+
+    /// Returns the source IP address of the packet.
+    ///
+    /// Returns None if the packet structure doesn't match an IPv4 or IPv6 datagram.
+    pub fn get_src_addr(&self) -> Option<IpAddr> {
+        match self.get_ip_family() {
+            Some(4) => self.ipv4_at(12),
+            Some(6) => self.ipv6_at(8),
+            _ => None,
+        }
+    }
+
+    /// Returns the destination IP address of the packet.
+    ///
+    /// Returns None if the packet structure doesn't match an IPv4 or IPv6 datagram.
+    pub fn get_dst_addr(&self) -> Option<IpAddr> {
+        match self.get_ip_family() {
+            Some(4) => self.ipv4_at(16),
+            Some(6) => self.ipv6_at(24),
+            _ => None,
+        }
     }
 }
 
-/// Iterator over a batch's packets.
-///
-/// Due to rust's orphan rule for trait implementations, we can't provide a blanket
-/// implementation of IntoIterator for all batch types. Batch types can implement IntoIterator
-/// trivially:
-///
-/// # Example
-///
-/// ```ignore
-/// struct MyPacket<'batch> { ... }
-///
-/// struct MyBatch { ... }
-///
-/// impl Batch for MyBatch { ... }
-///
-/// impl<'batch> IntoIterator for &'batch MyBatch {
-///     type Item = MyPacket<'batch>;
-///     type IntoIter = BatchIterator<'batch, RawBatch>;
-///
-///     fn into_iter(self) -> Self::IntoIter {
-///         BatchIterator::new(self)
-///     }
-/// }
-/// ```
-pub struct BatchIterator<'batch, B: Batch> {
-    batch: &'batch B,
-    position: usize,
-}
-
-impl<'batch, B: Batch> BatchIterator<'batch, B> {
-    /// Return an iterator for the given batch.
-    pub fn new(batch: &'batch B) -> BatchIterator<'batch, B> {
-        BatchIterator { batch, position: 0 }
+impl fmt::Debug for PacketMut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:X}")
     }
 }
 
-impl<'batch, B: Batch> Iterator for BatchIterator<'batch, B> {
-    type Item = Packet<'batch, B::Metadata>;
+impl AsMut<[u8]> for PacketMut {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.contents.as_mut()
+    }
+}
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.batch.get(self.position)?;
-        self.position += 1;
-        Some(result)
+impl AsRef<[u8]> for PacketMut {
+    fn as_ref(&self) -> &[u8] {
+        self.contents.as_ref()
+    }
+}
+
+impl Buf for PacketMut {
+    fn remaining(&self) -> usize {
+        self.contents.remaining_mut()
+    }
+
+    fn chunk(&self) -> &[u8] {
+        &self.contents
+    }
+
+    fn advance(&mut self, cnt: usize) {
+        self.contents.advance(cnt)
+    }
+}
+
+unsafe impl BufMut for PacketMut {
+    fn remaining_mut(&self) -> usize {
+        self.contents.remaining_mut()
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        unsafe {
+            self.contents.advance_mut(cnt);
+        }
+    }
+
+    fn chunk_mut(&mut self) -> &mut UninitSlice {
+        self.contents.chunk_mut()
+    }
+}
+
+impl crypto_box::aead::Buffer for PacketMut {
+    fn extend_from_slice(&mut self, other: &[u8]) -> crypto_box::aead::Result<()> {
+        self.contents.extend_from_slice(other);
+        Ok(())
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.truncate(len);
+    }
+}
+
+impl From<&[u8]> for PacketMut {
+    fn from(value: &[u8]) -> Self {
+        Self {
+            contents: BytesMut::from(value),
+        }
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for PacketMut {
+    fn from(value: &[u8; N]) -> Self {
+        Self {
+            contents: BytesMut::from(value.as_ref()),
+        }
+    }
+}
+
+impl From<Vec<u8>> for PacketMut {
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            contents: BytesMut::from(value.as_slice()),
+        }
+    }
+}
+
+impl From<BytesMut> for PacketMut {
+    fn from(value: BytesMut) -> Self {
+        Self { contents: value }
+    }
+}
+
+impl<T> Index<T> for PacketMut
+where
+    // This instance is provided by implicit deref to [u8] on BytesMut
+    [u8]: Index<T>,
+{
+    type Output = <[u8] as Index<T>>::Output;
+
+    #[inline]
+    fn index(&self, index: T) -> &Self::Output {
+        self.contents.index(index)
+    }
+}
+
+impl<T> IndexMut<T> for PacketMut
+where
+    [u8]: IndexMut<T>,
+{
+    #[inline]
+    fn index_mut(&mut self, index: T) -> &mut Self::Output {
+        self.contents.index_mut(index)
+    }
+}
+
+impl LowerHex for PacketMut {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        hex_fmt(self.iter(), Case::Lower, f)
+    }
+}
+
+impl UpperHex for PacketMut {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        hex_fmt(self.iter(), Case::Upper, f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::String;
+    use core::fmt::Write;
+
+    use super::*;
+
+    /// Simple byte sequence for testing hexdumps, etc.
+    const BYTE_SEQUENCE_1: &[u8] = &[
+        0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+        0x0F, 0x10, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+    ];
+
+    /// Resembles a 5-byte DERP KeepAlive frame; the 4-byte length field doesn't include the type/
+    /// length fields themselves, so is zero.
+    const BYTE_SEQUENCE_2: &[u8] = &[0x06, 0x00, 0x00, 0x00, 0x00];
+
+    #[test]
+    fn test_packet_mut_hexdump() {
+        let pkt = PacketMut::from(BYTE_SEQUENCE_1);
+
+        let mut buf = String::new();
+        write!(
+            buf,
+            "{}",
+            pkt.iter()
+                .hexdump(Case::Lower)
+                .flatten()
+                .collect::<String>()
+        )
+        .unwrap();
+        assert_eq!(
+            buf,
+            "00 01 02 03 04 05 06 07   08 09 0a 0b 0c 0d 0e 0f   ................\n10 aa bb cc dd ee ff                                .......\n"
+        );
+
+        buf.clear();
+        write!(
+            buf,
+            "{}",
+            pkt.iter()
+                .hexdump(Case::Upper)
+                .flatten()
+                .collect::<String>()
+        )
+        .unwrap();
+        assert_eq!(
+            buf,
+            "00 01 02 03 04 05 06 07   08 09 0A 0B 0C 0D 0E 0F   ................\n10 AA BB CC DD EE FF                                .......\n"
+        );
+    }
+
+    #[test]
+    fn test_packet_mut_iter() {
+        let pkt = PacketMut::from(BYTE_SEQUENCE_1);
+        for (idx, byte) in pkt.iter().enumerate() {
+            assert_eq!(
+                *byte, BYTE_SEQUENCE_1[idx],
+                "packet and original bytes should have identical values in same order"
+            );
+        }
+    }
+
+    #[test]
+    fn test_packet_mut_iter_mut() {
+        let mut pkt1 = PacketMut::from(BYTE_SEQUENCE_1);
+        let pkt2 = PacketMut::from(BYTE_SEQUENCE_1);
+        for byte in pkt1.iter_mut() {
+            *byte = byte.wrapping_sub(0xFF);
+        }
+
+        for (idx, byte) in pkt1.iter().enumerate() {
+            assert_eq!(
+                *byte,
+                BYTE_SEQUENCE_1[idx].wrapping_sub(0xFF),
+                "pkt1 and original bytes should have values offset by 0xFF"
+            );
+            assert_eq!(
+                pkt2[idx], BYTE_SEQUENCE_1[idx],
+                "pkt2 and original bytes should have identical values in same order"
+            );
+            assert_eq!(
+                pkt1[idx],
+                pkt2[idx].wrapping_sub(0xFF),
+                "pkt1 and pkt2 should have values offset by 0xFF"
+            );
+        }
+    }
+
+    #[test]
+    fn test_packet_mut_prepend() {
+        let mut pkt = PacketMut::from(BYTE_SEQUENCE_1);
+        pkt.grow_front(5);
+        assert_eq!(pkt.len(), BYTE_SEQUENCE_1.len() + 5);
+        assert_eq!(pkt[..5], [0; 5]);
+        assert_eq!(&pkt[5..], BYTE_SEQUENCE_1);
+
+        let mut pkt = PacketMut::from(BYTE_SEQUENCE_1);
+        pkt.extend_front_from_slice(BYTE_SEQUENCE_2);
+        assert_eq!(pkt.len(), BYTE_SEQUENCE_1.len() + BYTE_SEQUENCE_2.len());
+        assert_eq!(&pkt[..BYTE_SEQUENCE_2.len()], BYTE_SEQUENCE_2);
+        assert_eq!(&pkt[BYTE_SEQUENCE_2.len()..], BYTE_SEQUENCE_1);
     }
 }

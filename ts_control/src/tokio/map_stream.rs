@@ -8,7 +8,7 @@ use tokio::{
 };
 use ts_control_serde::{MapRequest, MapResponse, PingRequest};
 use ts_http_util::{BytesBody, ClientExt, Http2, ResponseExt};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_packetfilter as pf;
 use ts_packetfilter_state as pf_state;
 use url::Url;

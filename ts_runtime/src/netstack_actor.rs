@@ -9,7 +9,7 @@ use netstack::{
     netcore::{Channel, NetstackControl},
 };
 use tokio::task::JoinSet;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 
 use crate::{
     Error,

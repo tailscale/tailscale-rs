@@ -6,7 +6,7 @@ use ts_capabilityversion::CapabilityVersion;
 use ts_hexdump::{AsHexExt, Case};
 use ts_http_util::{BytesBody, ClientExt, EmptyBody, HeaderName, HeaderValue, Http2, ResponseExt};
 use ts_keys::{ChallengePublicKey, MachineKeyPair, MachinePublicKey};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use url::Url;
 use zerocopy::network_endian::U32;
 

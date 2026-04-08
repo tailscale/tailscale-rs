@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 
 use bytes::BytesMut;
 use ts_hexdump::{AsHexExt, Case};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::Error;

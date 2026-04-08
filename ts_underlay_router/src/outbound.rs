@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use ts_keys::NodePublicKey;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_transport::UnderlayTransportId;
 
 /// Routes packets that originate from the local device.

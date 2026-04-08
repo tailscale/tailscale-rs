@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use ts_bart::RoutingTable;
 use ts_keys::NodePublicKey;
 use ts_overlay_router as or;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_packetfilter::{FilterExt, IpProto};
 use ts_time::{Handle, Scheduler};
 use ts_transport::{OverlayTransportId, UnderlayTransportId};

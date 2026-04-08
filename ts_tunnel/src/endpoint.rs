@@ -7,7 +7,7 @@ use std::{
 
 use itertools::Itertools;
 use ts_keys::{NodeKeyPair, NodePublicKey};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_time::{Handle, Scheduler, TimeRange};
 use zerocopy::IntoBytes;
 

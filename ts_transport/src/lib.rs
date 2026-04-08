@@ -8,7 +8,7 @@ extern crate alloc;
 use core::error::Error;
 
 use ts_keys::NodePublicKey;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 
 /// The unique id of an overlay transport.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

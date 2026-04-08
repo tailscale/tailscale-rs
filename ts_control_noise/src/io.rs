@@ -8,7 +8,7 @@ use bytes::Buf;
 use noise_protocol::CipherState;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use ts_hexdump::{AsHexExt, Case};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use zerocopy::{IntoBytes, TryFromBytes};
 
 use crate::{

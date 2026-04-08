@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use ts_bart::{RoutingTable, Table};
 use ts_keys::NodePublicKey;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_transport::OverlayTransportId;
 
 /// An outbound routing action.

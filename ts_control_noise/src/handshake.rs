@@ -5,7 +5,7 @@ use noise_rust_crypto::{Blake2s, X25519, sensitive::Sensitive};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use ts_hexdump::{AsHexExt, Case};
 use ts_keys::{MachinePrivateKey, MachinePublicKey};
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use zerocopy::IntoBytes;
 use zeroize::Zeroizing;
 

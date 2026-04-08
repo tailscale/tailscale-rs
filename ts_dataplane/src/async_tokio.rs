@@ -4,7 +4,7 @@ use std::{collections::HashMap, convert::Infallible, ops::DerefMut, sync::atomic
 
 use tokio::sync::{Mutex, mpsc};
 use ts_keys::NodePublicKey;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_transport::{OverlayTransportId, UnderlayTransportId};
 use ts_tunnel::NodeKeyPair;
 

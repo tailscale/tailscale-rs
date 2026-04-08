@@ -6,7 +6,7 @@ use std::sync::Arc;
 use clap::Parser;
 use tokio::task::JoinSet;
 use ts_keys::NodePublicKey;
-use ts_packet::old::PacketMut;
+use ts_packet::PacketMut;
 use ts_transport::UnderlayTransport;
 
 /// Authenticate with control, load the derp map, and attempt to exchange derp pings with
