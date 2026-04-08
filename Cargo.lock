@@ -4318,6 +4318,7 @@ dependencies = [
  "futures",
  "http",
  "http-body-util",
+ "httparse",
  "hyper",
  "hyper-util",
  "thiserror 2.0.18",

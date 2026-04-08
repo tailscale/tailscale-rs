@@ -14,6 +14,7 @@ ts_tls_util.workspace = true
 bytes.workspace = true
 futures.workspace = true
 http.workspace = true
+httparse.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, features = ["tokio"] }

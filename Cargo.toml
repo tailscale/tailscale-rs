@@ -73,6 +73,7 @@ heapless = "0.9"
 hex = "0.4"
 hkdf = { version = "0.12", features = ["std"] }
 http = "1.4"
+httparse = "1"
 http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["http2"] }
 hyper-util = { version = "0.1", default-features = false, features = ["http1"] }
