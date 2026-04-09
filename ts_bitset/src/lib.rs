@@ -88,6 +88,8 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     pub const EMPTY: Self = Bitset([0u64; N_WORDS]);
     /// The bitset with all bits set.
     pub const FULL: Self = Bitset([u64::MAX; N_WORDS]);
+    /// The number of bits in the bitset.
+    pub const N_BITS: usize = N_WORDS * 64;
 
     /// Resize this bitset to a new one with `M` 64-bit words.
     ///
@@ -540,6 +542,191 @@ impl<const N_WORDS: usize> core::ops::Not for Bitset<N_WORDS> {
     }
 }
 
+impl<const N_WORDS: usize> Bitset<N_WORDS> {
+    /// In-place unbounded shift left. Updates `self` to be `self << rhs`, without bounding
+    /// the value of `rhs`.
+    ///
+    /// If `rhs` is larger or equal to `Self::N_BITS`, the entire value is shifted out, and
+    /// `Self::EMPTY` is returned.
+    ///
+    /// # Panics
+    ///
+    /// If the shift amount cannot fit in a `usize`. This should only be possible on targets where
+    /// `usize` is 16 bits, which the Rust specification allows but is extremely uncommon in
+    /// practice.
+    pub fn unbounded_shl_inplace(&mut self, rhs: u32) {
+        // We need a usize to index the word array.
+        // Per https://doc.rust-lang.org/reference/types/numeric.html, usize may be as small as
+        // 16 bits, even though it's more commonly 32 or 64 bits.
+        // For huge bitsets (hundreds of MiB), shift_words may be up to 26 bits. So, this
+        // conversion may fail in extreme edge cases.
+        let rhs: usize = rhs.try_into().unwrap();
+
+        if rhs >= Self::N_BITS {
+            *self = Self::EMPTY;
+            return;
+        }
+
+        let shift_words: usize = rhs / 64;
+        let shift_bits = rhs % 64;
+        let shift_bits_inv = (64 - shift_bits) as u32;
+
+        for tgt_idx in (shift_words..self.0.len()).rev() {
+            let src_idx = tgt_idx - shift_words;
+            let src_word1 = self.0[src_idx];
+            let src_word2 = if src_idx == 0 { 0 } else { self.0[src_idx - 1] };
+            self.0[tgt_idx] = (src_word1 << shift_bits) | (src_word2.unbounded_shr(shift_bits_inv));
+        }
+        self.0[..shift_words].fill(0);
+    }
+
+    /// Unbounded shift left. Computes `self << rhs`, without bounding the value of `rhs`.
+    ///
+    /// If `rhs` is larger or equal to `Self::N_BITS`, the entire value is shifted out, and
+    /// `Self::EMPTY` is returned.
+    ///
+    /// # Panics
+    ///
+    /// If the shift amount cannot fit in a `usize`. This should only be possible on targets where
+    /// `usize` is 16 bits, which the Rust specification allows but is extremely uncommon in
+    /// practice.
+    #[inline]
+    pub fn unbounded_shl(mut self, rhs: u32) -> Self {
+        self.unbounded_shl_inplace(rhs);
+        self
+    }
+
+    /// In-place unbounded shift right. Updates `self` to be `self >> rhs`, without bounding
+    /// the value of `rhs`.
+    ///
+    /// If `rhs` is larger or equal to `Self::N_BITS`, the entire value is shifted out, and
+    /// `Self::EMPTY` is returned.
+    ///
+    /// # Panics
+    ///
+    /// If the shift amount cannot fit in a `usize`. This should only be possible on targets where
+    /// `usize` is 16 bits, which the Rust specification allows but is extremely uncommon in
+    /// practice.
+    pub fn unbounded_shr_inplace(&mut self, rhs: u32) {
+        // We need a usize to index the word array.
+        // Per https://doc.rust-lang.org/reference/types/numeric.html, usize may be as small as
+        // 16 bits, even though it's more commonly 32 or 64 bits.
+        // For huge bitsets (hundreds of MiB), shift_words may be up to 26 bits. So, this
+        // conversion may fail in extreme edge cases.
+        let rhs: usize = rhs.try_into().unwrap();
+
+        if rhs >= Self::N_BITS {
+            *self = Self::EMPTY;
+            return;
+        }
+
+        let shift_words: usize = rhs / 64;
+        let shift_bits = rhs % 64;
+        let shift_bits_inv = (64 - shift_bits) as u32;
+
+        for tgt_idx in 0..N_WORDS - shift_words {
+            let src_idx = tgt_idx + shift_words;
+            let src_word1 = self.0[src_idx];
+            let src_word2 = self.0.get(src_idx + 1).map_or(0, |v| *v);
+            self.0[tgt_idx] = (src_word1 >> shift_bits) | (src_word2.unbounded_shl(shift_bits_inv));
+        }
+        self.0[N_WORDS - shift_words..].fill(0);
+    }
+
+    /// Unbounded shift right. Computes `self >> rhs`, without bounding the value of `rhs`.
+    ///
+    /// If `rhs` is larger or equal to `Self::N_BITS`, the entire value is shifted out, and
+    /// `Self::EMPTY` is returned.
+    ///
+    /// # Panics
+    ///
+    /// If the shift amount cannot fit in a `usize`. This should only be possible on targets where
+    /// `usize` is 16 bits, which the Rust specification allows but is extremely uncommon in
+    /// practice.
+    #[inline]
+    pub fn unbounded_shr(mut self, rhs: u32) -> Self {
+        self.unbounded_shr_inplace(rhs);
+        self
+    }
+}
+
+macro_rules! shift_impl {
+    ($t:ty) => {
+        impl<const N_WORDS: usize> core::ops::Shl<$t> for Bitset<N_WORDS> {
+            type Output = Self;
+
+            #[inline]
+            fn shl(mut self, rhs: $t) -> Self::Output {
+                self <<= rhs;
+                self
+            }
+        }
+
+        impl<const N_WORDS: usize> core::ops::ShlAssign<$t> for Bitset<N_WORDS> {
+            #[inline]
+            fn shl_assign(&mut self, rhs: $t) {
+                // This comparison is a no-op for unsigned $t, but required for signed $t.
+                #[allow(unused_comparisons)]
+                if rhs < 0 {
+                    panic!("negative shift");
+                }
+
+                // Cast may fail on 16b usize, see comment in unbounded_shl.
+                let rhs: usize = rhs.try_into().unwrap();
+                if rhs >= Self::N_BITS {
+                    panic!("attempt to shift left with overflow");
+                }
+
+                self.unbounded_shl_inplace(rhs.try_into().unwrap());
+            }
+        }
+
+        impl<const N_WORDS: usize> core::ops::Shr<$t> for Bitset<N_WORDS> {
+            type Output = Self;
+
+            #[inline]
+            fn shr(mut self, rhs: $t) -> Self::Output {
+                self >>= rhs;
+                self
+            }
+        }
+
+        impl<const N_WORDS: usize> core::ops::ShrAssign<$t> for Bitset<N_WORDS> {
+            #[inline]
+            fn shr_assign(&mut self, rhs: $t) {
+                // This comparison is a no-op for unsigned $t, but required for signed $t.
+                #[allow(unused_comparisons)]
+                if rhs < 0 {
+                    panic!("negative shift");
+                }
+
+                // Cast may fail on 16b usize, see comment in unbounded_shl.
+                let rhs: usize = rhs.try_into().unwrap();
+                if rhs >= Self::N_BITS {
+                    panic!("attempt to shift left with overflow");
+                }
+
+                self.unbounded_shr_inplace(rhs.try_into().unwrap());
+            }
+        }
+    };
+}
+
+shift_impl!(u8);
+shift_impl!(u16);
+shift_impl!(u32);
+shift_impl!(u64);
+shift_impl!(u128);
+
+shift_impl!(i8);
+shift_impl!(i16);
+shift_impl!(i32);
+shift_impl!(i64);
+shift_impl!(i128);
+
+shift_impl!(usize);
+shift_impl!(isize);
+
 impl<const N_WORDS: usize> From<[u64; N_WORDS]> for Bitset<N_WORDS> {
     #[inline]
     fn from(value: [u64; N_WORDS]) -> Self {
@@ -687,6 +874,60 @@ mod test {
     #[should_panic]
     fn with_bits_upto_overflow() {
         Bitset256::with_bits_upto(321);
+    }
+
+    #[test]
+    fn shl() {
+        // Exhaustive checking of every non-destructive left shift of a one-hot bitset,
+        // as well as a zero shift and the shift amount that loses the hot bit.
+        for i in 0..256 {
+            let destructive_shift_amt = 256 - i;
+            let bs = Bitset256::EMPTY.with_bit(i);
+            assert_eq!(bs << 0usize, bs);
+            for shift in 1..destructive_shift_amt {
+                let shifted = bs << shift;
+                assert_eq!(shifted.count_ones(), bs.count_ones());
+                assert_eq!(shifted.first_set(), Some(i + shift));
+            }
+            assert_eq!(
+                bs.unbounded_shl(destructive_shift_amt as u32),
+                Bitset256::EMPTY
+            );
+        }
+    }
+
+    #[test]
+    fn shr() {
+        // Exhaustive checking of every non-destructive right shift of a one-hot bitset,
+        // as well as a zero shift and the shift amount that loses the hot bit.
+        for i in 0..256 {
+            let destructive_shift_amt = 256 - i;
+            let bs = Bitset256::EMPTY.with_bit(255 - i);
+            assert_eq!(bs >> 0usize, bs);
+            for shift in 1..destructive_shift_amt {
+                let shifted = bs >> shift;
+                assert_eq!(shifted.count_ones(), bs.count_ones());
+                assert_eq!(shifted.first_set(), Some(255 - i - shift));
+            }
+            assert_eq!(
+                bs.unbounded_shr(destructive_shift_amt as u32),
+                Bitset256::EMPTY
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn shl_overflow() {
+        let bs = Bitset256::EMPTY.with_bit(0);
+        let _ = bs << 256;
+    }
+
+    #[test]
+    #[should_panic]
+    fn shr_overflow() {
+        let bs = Bitset256::EMPTY.with_bit(0);
+        let _ = bs >> 256;
     }
 
     proptest::prop_compose! {
@@ -851,6 +1092,23 @@ mod test {
             other.set(i as _);
 
             proptest::prop_assert_eq!(Some(i as usize), bits.intersection_top(&other));
+        }
+
+        #[test]
+        fn shifts(shift_amt in 0u32..257, bits in nonempty_bitvec()) {
+            let bs = Bitset256::from_iter(&bits);
+
+            let left = bs.unbounded_shl(shift_amt);
+            proptest::prop_assert!(left.count_ones() <= bs.count_ones());
+            let right = left.unbounded_shr(shift_amt);
+            proptest::prop_assert_eq!(right.count_ones(), left.count_ones());
+            proptest::prop_assert_eq!(bs | right, bs);
+
+            let right = bs.unbounded_shr(shift_amt);
+            proptest::prop_assert!(right.count_ones() <= bs.count_ones());
+            let left = right.unbounded_shl(shift_amt);
+            proptest::prop_assert_eq!(left.count_ones(), right.count_ones());
+            proptest::prop_assert_eq!(bs | left, bs);
         }
     }
 }
