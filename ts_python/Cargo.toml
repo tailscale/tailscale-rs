@@ -7,10 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-tailscale = { workspace = true }
-ts_cli_util = { workspace = true }
+tailscale.workspace = true
+ts_cli_util.workspace = true
 
-pyo3 = { version = "0.28", features = ["extension-module", "bytes", "abi3-py312"] }
+pyo3 = { version = "0.28", features = ["bytes", "abi3-py312"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime", "attributes"] }
 
 [lib]

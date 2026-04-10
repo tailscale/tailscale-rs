@@ -123,6 +123,8 @@
 
         cargoArtifacts = deps;
         cargoExtraArgs = "--workspace --all-targets --all-features";
+        env.PYO3_NO_PYTHON = 1;
+        env.PYO3_BUILD_EXTENSION_MODULE = 1;
 
         # don't run benches as part of check
         checkPhaseCargoCommand = "cargo test --profile release --all-features --workspace --examples --bins --lib --tests";
@@ -192,6 +194,9 @@
           pname = "tailscale-rs-wksp";
           version = "dev";
           src = rustsrc;
+
+          env.PYO3_NO_PYTHON = 1;
+          env.PYO3_BUILD_EXTENSION_MODULE = 1;
         };
 
       in {
