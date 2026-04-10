@@ -10,11 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-flume = { workspace = true }
-tracing = { workspace = true }
 bytes.workspace = true
-heapless_0_8 = { package = "heapless", version = "0.8" }
-thiserror = { workspace = true }
+flume.workspace = true
+heapless.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [dependencies.smoltcp]
 workspace = true
@@ -33,11 +33,11 @@ features = [
 ]
 
 [dev-dependencies]
-ts_cli_util.workspace = true
 tracing-panic = { version = "0.1", features = ["capture-backtrace"] }
+ts_cli_util.workspace = true
 
 [dev-dependencies.smoltcp]
-version = "0.12"
+version = "0.13"
 default-features = false
 features = [
     "alloc",

@@ -22,8 +22,12 @@ impl Netstack {
                 ip_version,
                 protocol,
             } => {
-                let sock =
-                    raw::Socket::new(ip_version, protocol, self.raw_buffer(), self.raw_buffer());
+                let sock = raw::Socket::new(
+                    Some(ip_version),
+                    Some(protocol),
+                    self.raw_buffer(),
+                    self.raw_buffer(),
+                );
                 let handle = self.socket_set.add(sock);
 
                 RawSocketResponse::Opened { handle }.into()
