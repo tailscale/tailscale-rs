@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use clap::Parser;
 use ts_netstack_smoltcp_socket::CreateSocket;
 
-#[path = "../examples/common.rs"]
+#[path = "../examples/common/mod.rs"]
 mod common;
 
 const BUF_SIZE: usize = 10 * 1400;

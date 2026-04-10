@@ -12,7 +12,7 @@ use axum::{
     routing::{get, post},
 };
 
-#[path = "../common.rs"]
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::netsock::CreateSocket;

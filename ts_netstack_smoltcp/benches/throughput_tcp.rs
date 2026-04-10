@@ -7,7 +7,7 @@ use clap::Parser;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use ts_netstack_smoltcp_socket::CreateSocket;
 
-#[path = "../examples/common.rs"]
+#[path = "../examples/common/mod.rs"]
 mod common;
 
 const KB: usize = 1024;
