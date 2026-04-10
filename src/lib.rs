@@ -1,5 +1,8 @@
 //! Tailscale SDK.
 //!
+//! See [ARCHITECTURE.md](https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md) for
+//! high-level architecture and crate descriptions.
+//!
 //! ## Example
 //!
 //! Example binding a UDP socket and sending periodic pings:

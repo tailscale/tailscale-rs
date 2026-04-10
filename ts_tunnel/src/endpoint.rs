@@ -797,7 +797,7 @@ mod tests {
     use crate::config::PeerConfig;
 
     #[test]
-    fn test_onepeer() {
+    fn test_one_peer() {
         let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
         let psk = rand::random();
 

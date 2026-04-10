@@ -1,5 +1,8 @@
 # Contributing
 
+This document covers development environment tooling, issue reporting, contribution guidelines, and coding standards.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level architecture and repository layout.
+
 ## Getting Started
 
 We use a few `cargo` components/plugins in our development workflow you should install first:
