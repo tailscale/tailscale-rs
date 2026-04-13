@@ -289,6 +289,7 @@ impl Netstack {
                         PollIngressSingleResult::SocketStateChanged => {
                             changed = true;
                             changed_this_iter = true;
+                            self.pump_tcp_accept();
 
                             tracing::trace!("socket state changed");
                         }
@@ -386,6 +387,7 @@ impl Netstack {
                 PollIngressSingleResult::PacketProcessed => {}
                 PollIngressSingleResult::SocketStateChanged => {
                     changed = true;
+                    self.pump_tcp_accept();
                     tracing::trace!("socket state changed");
                 }
             }
@@ -607,6 +609,7 @@ where
         }
 
         if progress_made {
+            stack.drain_tcp_closes();
             Poll::Ready(())
         } else {
             Poll::Pending
