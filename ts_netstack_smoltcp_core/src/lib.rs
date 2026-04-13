@@ -716,7 +716,7 @@ where
     }
 }
 
-fn set_loopback<const N: usize>(ips: &mut heapless_0_8::Vec<smoltcp::wire::IpCidr, N>) -> bool {
+fn set_loopback<const N: usize>(ips: &mut heapless::Vec<smoltcp::wire::IpCidr, N>) -> bool {
     if ips.capacity() < 2 {
         return false;
     }
