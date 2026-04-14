@@ -7,7 +7,7 @@ pub struct Config {
     /// This file represents this node's identity. The key file format is specific to
     /// tailscale-rs; key files are not interchangeable with those produced by other
     /// implementations of Tailscale, e.g. `tailscaled` or `tsnet`.
-    pub key_state: ts_keys::NodeState,
+    pub key_state: crate::NodeState,
 
     // TODO(npry): let clients also define an app name once the sdk-level name moves
     //  to a dedicated field
@@ -36,7 +36,7 @@ pub struct Config {
 pub async fn load_key_file(
     p: impl AsRef<Path>,
     bad_format: BadFormatBehavior,
-) -> Result<ts_keys::NodeState, crate::Error> {
+) -> Result<crate::NodeState, crate::Error> {
     let p = p.as_ref();
 
     tracing::trace!(key_file = %p.display(), "loading key file");
@@ -47,7 +47,7 @@ pub async fn load_key_file(
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct KeyFile {
-    key_state: ts_keys::NodeState,
+    key_state: crate::NodeState,
 }
 
 impl From<&Config> for ts_control::Config {

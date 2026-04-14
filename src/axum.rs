@@ -14,11 +14,12 @@
 //! ).await?;
 //!
 //! let listener = dev.tcp_listen((dev.ipv4_addr().await?, 80).into()).await?;
+//! let listener: tailscale::axum::Listener = listener.into();
 //!
 //! async fn index() -> &'static str { "Hello world!" }
 //! let router = axum::Router::new().route("/", axum::routing::get(index));
 //!
-//! axum::serve(tailscale::axum::Listener(listener), router).await?;
+//! axum::serve(listener, router).await?;
 //! #   Ok(())
 //! # }
 //! ```
@@ -29,11 +30,23 @@ use crate::{TcpListener, TcpStream};
 
 /// Wrapper type implementing [`axum::serve::Listener`] on [`TcpListener`].
 #[derive(Debug)]
-pub struct Listener(pub TcpListener);
+pub struct Listener(TcpListener);
 
 impl From<TcpListener> for Listener {
     fn from(listener: TcpListener) -> Self {
         Self(listener)
+    }
+}
+
+impl From<Listener> for TcpListener {
+    fn from(listener: Listener) -> Self {
+        listener.0
+    }
+}
+
+impl AsRef<TcpListener> for Listener {
+    fn as_ref(&self) -> &TcpListener {
+        &self.0
     }
 }
 
