@@ -87,6 +87,12 @@ important considerations:
 - We currently rely on DERP relays for all communication. Direct connections via NAT holepunching
   will be a seamless upgrade in the future, but for now, this puts a cap on data throughput.
 
+## Versioning, Releases, and Compatability
+
+We follow semver and aim to make a point release roughly monthly. Since we are pre-1.0, we make no
+backwards-compatability guarantees. We are aiming to have a stable 1.0 release as soon as we can, but
+we currently don't have a timeline.
+
 ## MSRV and Edition
 
 The current MSRV is 1.93.1. The current edition is Rust 2024.
