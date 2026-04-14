@@ -1,5 +1,8 @@
 # Tailscale
 
+[![docs.rs](https://img.shields.io/docsrs/tailscale-rs)](https://docs.rs/tailscale-rs)
+[![crates.io version](https://img.shields.io/crates/v/tailscale-rs)](https://crates.io/crates/tailscale-rs)
+
 https://tailscale.com
 
 This repository is an experimental, preview implementation of Tailscale components in Rust.

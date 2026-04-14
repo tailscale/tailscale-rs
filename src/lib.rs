@@ -1,4 +1,49 @@
 //! Tailscale SDK.
+//!
+//! ## Example
+//!
+//! Example binding a UDP socket and sending periodic pings:
+//!
+//! ```no_run
+//! # use std::{
+//! #     time::Duration,
+//! #     net::Ipv4Addr,
+//! #     error::Error,
+//! # };
+//! #
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn Error>> {
+//! // Open a new connection to tailscale
+//! let dev = tailscale::Device::new(
+//!     Default::default(), // control config
+//!     Some("YOUR_AUTH_KEY_HERE".to_owned()),
+//!     Default::default(), // key state: WARNING, this creates a throwaway node identity
+//! ).await?;
+//!
+//! // Bind a UDP socket on our tailnet IP, port 1234
+//! let sock = dev.udp_bind((dev.ipv4().await?, 1234).into()).await?;
+//!
+//! // Send a packet containing "ping" to 100.64.0.1:5678 once per second
+//! loop {
+//!     sock.send_to((Ipv4Addr::new(100, 64, 0, 1), 5678).into(), b"ping").await?;
+//!     tokio::time::sleep(Duration::from_secs(1)).await;
+//! }
+//! # }
+//! ```
+//!
+//! ## Caveats
+//!
+//! This software is still a work-in-progress! We are providing it in the open at this stage out of a
+//! belief in open-source and to see where the community runs with it, but please be aware of a few
+//! important considerations:
+//!
+//! - This implementation contains unaudited cryptography and hasn't undergone a comprehensive security
+//!   analysis. Conservatively, assume there could be a critical security hole meaning anything you send
+//!   or receive could be in the clear on the public Internet.
+//! - There are no compatibility guarantees at the moment. This is early-days software &mdash; we may
+//!   break dependent code in order to get things right.
+//! - We currently rely on DERP relays for all communication. Direct connections via NAT holepunching
+//!   will be a seamless upgrade in the future, but for now, this puts a cap on data throughput.
 
 extern crate ts_netstack_smoltcp as netstack;
 
@@ -15,6 +60,7 @@ use netstack::{CreateSocket, netcore::Channel};
 pub mod axum;
 mod error;
 
+#[doc(inline)]
 pub use error::Error;
 
 /// A tailscale device.
@@ -103,7 +149,7 @@ const ENV_MAGIC_VAR: &str = "TS_RS_EXPERIMENT";
 const ENV_MAGIC_VALUE: &str = "this_is_unstable_software";
 
 fn check_magic_env() -> Result<(), Error> {
-    let Ok(ENV_MAGIC_VALUE) = std::env::var(ENV_MAGIC_VAR).as_deref() else {
+    if std::env::var(ENV_MAGIC_VAR).as_deref() != Ok(ENV_MAGIC_VALUE) {
         let warning = format!(
             "
 check failed: set {ENV_MAGIC_VAR}={ENV_MAGIC_VALUE} to acknowledge that tailscale-rs is early-days
