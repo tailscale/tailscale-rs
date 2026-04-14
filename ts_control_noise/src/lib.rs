@@ -1,4 +1,4 @@
-//! Noise handshake and protocol used to communicate with the Tailscale control server.
+#![doc = include_str!("../README.md")]
 
 mod cipher;
 mod error;

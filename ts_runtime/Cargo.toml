@@ -1,10 +1,14 @@
 [package]
 name = "ts_runtime"
-version = "0.1.0"
+version.workspace = true
+description = "tailscale runtime"
+categories = ["network-programming"]
+keywords = ["tailscale", "runtime"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 
 [dependencies]
 # Our crates.

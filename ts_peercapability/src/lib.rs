@@ -1,5 +1,4 @@
-//! Shared definition for Tailscale peer capabilities.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;

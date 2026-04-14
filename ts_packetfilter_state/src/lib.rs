@@ -1,5 +1,4 @@
-//! Bridge between [`pf`] (packet filter implementation) and control types.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;

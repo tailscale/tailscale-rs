@@ -1,9 +1,13 @@
 [package]
 name = "ts_transport_derp"
-version = "0.1.0"
+version.workspace = true
+description = "tailscale derp client"
+categories = ["network-programming", "encoding", "asynchronous"]
+keywords = ["tailscale", "packet", "derp", "network", "transport"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
-publish.workspace = true
+license.workspace = true
 rust-version.workspace = true
 
 [dependencies]

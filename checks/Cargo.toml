@@ -1,9 +1,9 @@
 [package]
 name = "checks"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
-license-file.workspace = true
-publish.workspace = true
+license.workspace = true
+publish = false
 rust-version.workspace = true
 
 [dependencies]

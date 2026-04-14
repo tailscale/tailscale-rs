@@ -1,5 +1,4 @@
-//! Implementation of Tailscale's peer-to-peer discovery ("disco") protocol.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 #[cfg(any(feature = "alloc", test))]

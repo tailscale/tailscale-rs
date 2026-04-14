@@ -1,9 +1,13 @@
 [package]
 name = "ts_control_serde"
-version = "0.1.0"
+version.workspace = true
+description = "serde data types for tailscale control comms"
+categories = ["encoding", "api-bindings"]
+keywords = ["tailscale", "serde", "control"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
-publish.workspace = true
+license.workspace = true
 rust-version.workspace = true
 
 [dependencies]

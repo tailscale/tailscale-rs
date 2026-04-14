@@ -1,7 +1,4 @@
-//! Serde types relating to packet filters.
-//!
-//! Logical extension to `ts_control_serde`, split out because these types are self-contained.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 #![forbid(unsafe_code)]
 

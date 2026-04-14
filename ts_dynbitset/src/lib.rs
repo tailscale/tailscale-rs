@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! A dynamically-growable bitset built around a [`smallvec::SmallVec`] of [`ts_bitset`]s.
 
 #![no_std]

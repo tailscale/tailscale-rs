@@ -1,4 +1,4 @@
-//! Tailscale experimental python bindings.
+#![doc = include_str!("../README.md")]
 
 use core::str::FromStr;
 use std::{

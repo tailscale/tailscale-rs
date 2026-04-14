@@ -45,8 +45,10 @@ members = [
 
 [workspace.package]
 edition = "2024"
-license-file = "LICENSE"
-publish = false
+license = "BSD-3-Clause"
+publish = true
+version = "0.2.0"
+repository = "https://github.com/tailscale/tailscale-rs"
 
 # This disagrees with the README's stated MSRV. That's intentional: this field causes cargo to error
 # if the toolchain is too old, unconditionally failing the compile, while our policy is just that we
@@ -102,42 +104,42 @@ yoke = { version = "0.8", default-features = false }
 zerocopy = { version = "0.8", features = ["derive"] }
 
 # local workspace deps
-tailscale = { path = "." }
-ts_array256 = { path = "ts_array256" }
-ts_bart = { path = "ts_bart" }
-ts_bart_packetfilter = { path = "ts_bart_packetfilter" }
-ts_bitset = { path = "ts_bitset", default-features = false }
-ts_capabilityversion = { path = "ts_capabilityversion" }
-ts_cli_util = { path = "ts_cli_util" }
-ts_control = { path = "ts_control" }
-ts_control_noise = { path = "ts_control_noise" }
-ts_control_serde = { path = "ts_control_serde" }
-ts_dataplane = { path = "ts_dataplane" }
-ts_disco_protocol = { path = "ts_disco_protocol" }
-ts_dynbitset = { path = "ts_dynbitset" }
-ts_hexdump = { path = "ts_hexdump" }
-ts_keys = { path = "ts_keys" }
-ts_netcheck = { path = "ts_netcheck" }
-ts_netstack_smoltcp = { path = "ts_netstack_smoltcp" }
-ts_netstack_smoltcp_core = { path = "ts_netstack_smoltcp_core" }
-ts_netstack_smoltcp_socket = { path = "ts_netstack_smoltcp_socket" }
-ts_nodecapability = { path = "ts_nodecapability" }
-ts_overlay_router = { path = "ts_overlay_router" }
-ts_packet = { path = "ts_packet" }
-ts_packetfilter = { path = "ts_packetfilter" }
-ts_packetfilter_serde = { path = "ts_packetfilter_serde" }
-ts_packetfilter_state = { path = "ts_packetfilter_state" }
-ts_peercapability = { path = "ts_peercapability" }
-ts_http_util = { path = "ts_http_util" }
-ts_tls_util = { path = "ts_tls_util" }
-ts_runtime = { path = "ts_runtime" }
+tailscale = { path = ".", version = "0.2.0" }
+ts_array256 = { path = "ts_array256", version = "0.2.0" }
+ts_bart = { path = "ts_bart", version = "0.2.0" }
+ts_bart_packetfilter = { path = "ts_bart_packetfilter", version = "0.2.0" }
+ts_bitset = { path = "ts_bitset", default-features = false, version = "0.2.0" }
+ts_capabilityversion = { path = "ts_capabilityversion", version = "0.2.0" }
+ts_cli_util = { path = "ts_cli_util", version = "0.2.0" }
+ts_control = { path = "ts_control", version = "0.2.0" }
+ts_control_noise = { path = "ts_control_noise", version = "0.2.0" }
+ts_control_serde = { path = "ts_control_serde", version = "0.2.0" }
+ts_dataplane = { path = "ts_dataplane", version = "0.2.0" }
+ts_disco_protocol = { path = "ts_disco_protocol", version = "0.2.0" }
+ts_dynbitset = { path = "ts_dynbitset", version = "0.2.0" }
+ts_hexdump = { path = "ts_hexdump", version = "0.2.0" }
+ts_keys = { path = "ts_keys", version = "0.2.0" }
+ts_netcheck = { path = "ts_netcheck", version = "0.2.0" }
+ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.2.0" }
+ts_netstack_smoltcp_core = { path = "ts_netstack_smoltcp_core", version = "0.2.0" }
+ts_netstack_smoltcp_socket = { path = "ts_netstack_smoltcp_socket", version = "0.2.0" }
+ts_nodecapability = { path = "ts_nodecapability", version = "0.2.0" }
+ts_overlay_router = { path = "ts_overlay_router", version = "0.2.0" }
+ts_packet = { path = "ts_packet", version = "0.2.0" }
+ts_packetfilter = { path = "ts_packetfilter", version = "0.2.0" }
+ts_packetfilter_serde = { path = "ts_packetfilter_serde", version = "0.2.0" }
+ts_packetfilter_state = { path = "ts_packetfilter_state", version = "0.2.0" }
+ts_peercapability = { path = "ts_peercapability", version = "0.2.0" }
+ts_http_util = { path = "ts_http_util", version = "0.2.0" }
+ts_tls_util = { path = "ts_tls_util", version = "0.2.0" }
+ts_runtime = { path = "ts_runtime", version = "0.2.0" }
 ts_test_util = { path = "ts_test_util" }
-ts_time = { path = "ts_time" }
-ts_transport = { path = "ts_transport" }
-ts_transport_derp = { path = "ts_transport_derp" }
-ts_transport_tun = { path = "ts_transport_tun" }
-ts_underlay_router = { path = "ts_underlay_router" }
-ts_tunnel = { path = "ts_tunnel" }
+ts_time = { path = "ts_time", version = "0.2.0" }
+ts_transport = { path = "ts_transport", version = "0.2.0" }
+ts_transport_derp = { path = "ts_transport_derp", version = "0.2.0" }
+ts_transport_tun = { path = "ts_transport_tun", version = "0.2.0" }
+ts_underlay_router = { path = "ts_underlay_router", version = "0.2.0" }
+ts_tunnel = { path = "ts_tunnel", version = "0.2.0" }
 
 [workspace.lints.rust]
 closure_returning_async_block = "warn"
@@ -182,11 +184,15 @@ inherits = "release"
 
 [package]
 name = "tailscale"
-version = "0.1.0"
+version.workspace = true
+description = "experimental tailscale implementation in rust"
+categories = ["network-programming", "api-bindings", "authentication", "asynchronous"]
+keywords = ["tailscale", "networking"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 
 [dependencies]
 # Our crates.

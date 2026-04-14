@@ -1,4 +1,4 @@
-//! Shared definition for the Tailscale capability version.
+#![doc = include_str!("../README.md")]
 
 use core::fmt;
 

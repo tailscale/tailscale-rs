@@ -1,10 +1,14 @@
 [package]
 name = "ts_capabilityversion"
-version = "0.1.0"
+version.workspace = true
+description = "tailscale capability version definition"
+categories = ["no-std::no-alloc"]
+keywords = ["tailscale", "capability", "version"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 
 [dependencies]
 serde = { workspace = true, optional = true }

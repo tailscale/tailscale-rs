@@ -1,7 +1,4 @@
-//! The packet processing data plane.
-//!
-//! The core of the data plane is synchronous and non-blocking, so that it can be wrapped in
-//! the user's choice of sync/async runtimes.
+#![doc = include_str!("../README.md")]
 
 pub mod async_tokio;
 

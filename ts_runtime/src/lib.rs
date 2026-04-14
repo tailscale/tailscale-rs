@@ -1,4 +1,4 @@
-//! Tailscale runtime.
+#![doc = include_str!("../README.md")]
 
 extern crate ts_netstack_smoltcp as netstack;
 

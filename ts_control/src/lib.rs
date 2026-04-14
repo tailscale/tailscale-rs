@@ -1,4 +1,4 @@
-//! Client for the Tailscale control plane.
+#![doc = include_str!("../README.md")]
 
 extern crate alloc;
 

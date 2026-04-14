@@ -1,6 +1,4 @@
-//! Provides a facility for scheduling future events efficiently, with the required building blocks
-//! for wakeup coalescing.
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
 pub use std::time::{Duration, Instant};

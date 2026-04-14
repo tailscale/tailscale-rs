@@ -1,4 +1,4 @@
-//! Implementation of [`ts_transport::OverlayTransport`] for tun devices.
+#![doc = include_str!("../README.md")]
 
 mod async_tokio;
 mod config;

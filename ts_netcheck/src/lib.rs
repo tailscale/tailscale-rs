@@ -1,4 +1,4 @@
-//! Check network reachability, latency, and available connectivity options.
+#![doc = include_str!("../README.md")]
 
 mod derp_latency;
 pub mod https;

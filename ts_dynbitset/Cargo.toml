@@ -1,9 +1,13 @@
 [package]
 name = "ts_dynbitset"
-version = "0.1.0"
+version.workspace = true
+description = "dynamically-growable bitset based on ts_bitset"
+categories = ["data-structures", "no-std"]
+keywords = ["tailscale", "bitset"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
-publish.workspace = true
+license.workspace = true
 rust-version.workspace = true
 
 [dependencies]

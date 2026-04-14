@@ -1,4 +1,4 @@
-//! Tailscale bindings in erlang.
+#![doc = include_str!("../README.md")]
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},

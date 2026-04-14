@@ -1,5 +1,4 @@
-//! Type definitions for message serde with a Tailscale control server.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;

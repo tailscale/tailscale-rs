@@ -1,4 +1,4 @@
-//! Tailscale derp protocol and client.
+#![doc = include_str!("../README.md")]
 
 use core::{
     fmt::Formatter,

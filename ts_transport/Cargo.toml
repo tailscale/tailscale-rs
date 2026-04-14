@@ -1,9 +1,13 @@
 [package]
 name = "ts_transport"
-version = "0.1.0"
+version.workspace = true
+description = "packet transport traits and types for tailscale"
+categories = ["network-programming", "asynchronous"]
+keywords = ["tailscale", "packet", "network", "transport"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
-publish.workspace = true
+license.workspace = true
 rust-version.workspace = true
 
 [dependencies]

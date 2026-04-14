@@ -1,6 +1,4 @@
-//! Implementation of an accelerated [`ts_packetfilter::Filter`] based on [`ts_bart`]
-//! tables.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;

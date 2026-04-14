@@ -1,9 +1,4 @@
-//! Implements Tailscale packet filters.
-//!
-//! Filters are specified per-tailnet using the policy file's ACL and/or grants
-//! features. They are downloaded to each node on connection to a control
-//! server and when the rules or tailnet changes.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 #![forbid(unsafe_code)]
 

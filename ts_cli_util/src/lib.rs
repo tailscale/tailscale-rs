@@ -1,4 +1,4 @@
-//! Common utilities for writing command-line clients and examples with tailscale-rs.
+#![doc = include_str!("../README.md")]
 
 mod config;
 

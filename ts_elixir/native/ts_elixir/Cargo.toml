@@ -1,10 +1,14 @@
 [package]
 name = "ts_elixir"
-version = "0.1.0"
+version.workspace = true
+description = "rustler-based elixir bindings for tailscale"
+categories = ["api-bindings", "network-programming"]
+keywords = ["tailscale", "elixir", "bindings"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
 
 [dependencies]
 rustler = "0.37.2"

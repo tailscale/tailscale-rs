@@ -1,5 +1,4 @@
-//! Utilities for producing hexdumps from iterators over `u8`.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 #[cfg(feature = "alloc")]

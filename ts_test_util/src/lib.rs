@@ -1,4 +1,4 @@
-//! Generic utilities for unit and integration tests in `tailscale-rs`.
+#![doc = include_str!("../README.md")]
 
 /// Check whether an environment variable is truthy (case-insensitive: `1`, `on`, `true`,
 /// `yes`).

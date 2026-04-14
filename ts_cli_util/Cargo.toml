@@ -1,9 +1,13 @@
 [package]
 name = "ts_cli_util"
-version = "0.1.0"
+version.workspace = true
+description = "tailscale utilities for writing command-line tools"
+categories = ["command-line-interface"]
+keywords = ["tailscale", "cli", "util"]
+
+repository.workspace = true
 edition.workspace = true
-license-file.workspace = true
-publish.workspace = true
+license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
