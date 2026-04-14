@@ -81,7 +81,9 @@ pub struct Device {
 }
 
 impl Device {
-    /// Spawn a device from the given [`Config`] and auth key.
+    /// Create a device from the given [`Config`] and auth key.
+    ///
+    /// Internally, this will spawn mutltiple asynchronous actors onto a Tokio runtime.
     ///
     /// # Example
     ///
@@ -131,12 +133,12 @@ impl Device {
             .ok_or(Error::InternalFailure)
     }
 
-    /// Bind a UDP socket to `port` on the specified [`SocketAddr`].
+    /// Bind a UDP socket to the specified [`SocketAddr`].
     pub async fn udp_bind(&self, socket_addr: SocketAddr) -> Result<UdpSocket, Error> {
         self.channel.udp_bind(socket_addr).await.map_err(Into::into)
     }
 
-    /// Bind a TCP listener to `port` on the specified [`SocketAddr`].
+    /// Bind a TCP listener to the specified [`SocketAddr`].
     pub async fn tcp_listen(&self, socket_addr: SocketAddr) -> Result<TcpListener, Error> {
         self.channel
             .tcp_listen(socket_addr)
@@ -180,6 +182,8 @@ impl Device {
     ///
     /// Reports whether the device was fully shut down before the timeout. It is still shut
     /// down if it timed out, just more violently and with potential resource leaks.
+    ///
+    /// If `timeout` is `None`, then shutdown will never time-out.
     pub async fn shutdown(self, timeout: Option<Duration>) -> bool {
         self.runtime.graceful_shutdown(timeout).await
     }
