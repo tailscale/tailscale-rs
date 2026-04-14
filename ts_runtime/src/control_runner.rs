@@ -119,14 +119,14 @@ impl ControlRunner {
         &self,
         ctx: &mut Context<Self, DelegatedReply<Option<Ipv4Addr>>>,
     ) -> DelegatedReply<Option<Ipv4Addr>> {
-        let (deleg, replyer) = ctx.reply_sender();
+        let (deleg, replier) = ctx.reply_sender();
 
-        if let Some(replyer) = replyer {
+        if let Some(replier) = replier {
             let fut = self.with_self_node(|node| node.tailnet_address.ipv4.addr());
 
             tokio::spawn(async move {
                 let ip = fut.await;
-                replyer.send(ip);
+                replier.send(ip);
             });
         }
 
@@ -139,14 +139,14 @@ impl ControlRunner {
         &self,
         ctx: &mut Context<Self, DelegatedReply<Option<Ipv6Addr>>>,
     ) -> DelegatedReply<Option<Ipv6Addr>> {
-        let (deleg, replyer) = ctx.reply_sender();
+        let (deleg, replier) = ctx.reply_sender();
 
-        if let Some(replyer) = replyer {
+        if let Some(replier) = replier {
             let fut = self.with_self_node(|node| node.tailnet_address.ipv6.addr());
 
             tokio::spawn(async move {
                 let ip = fut.await;
-                replyer.send(ip);
+                replier.send(ip);
             });
         }
 
