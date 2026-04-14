@@ -18,6 +18,7 @@
 
         cc -o udp_ping_ udp_ping/*.c $CFLAGS
         cc -o tcp_echo_ tcp_echo/*.c $CFLAGS
+        cc -o lookup_peer_ lookup_peer/*.c $CFLAGS
 
         runHook postBuild
     '';
@@ -28,6 +29,7 @@
         mkdir -p "$out/bin"
         cp udp_ping_ "$out/bin/udp_ping"
         cp tcp_echo_ "$out/bin/tcp_echo"
+        cp lookup_peer_ "$out/bin/lookup_peer"
 
         runHook postInstall
     '';

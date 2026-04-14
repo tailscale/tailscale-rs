@@ -1,3 +1,4 @@
 /tailscale.h
 tcp_echo
 udp_ping
+lookup_peer
