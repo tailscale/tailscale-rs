@@ -59,7 +59,7 @@ impl CommonArgs {
         let config: tailscale::Config = self.config().await?;
 
         let (client, stream) = ts_control::AsyncControlClient::connect(
-            &config.control_config(),
+            &(&config).into(),
             &config.key_state,
             self.auth_key.as_deref(),
         )

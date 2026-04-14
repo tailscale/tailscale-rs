@@ -50,13 +50,12 @@ struct KeyFile {
     key_state: ts_keys::NodeState,
 }
 
-impl Config {
-    /// Construct a [`ts_control::Config`] from this config.
-    pub fn control_config(&self) -> ts_control::Config {
+impl From<&Config> for ts_control::Config {
+    fn from(value: &Config) -> ts_control::Config {
         ts_control::Config {
-            client_name: self.client_name.clone(),
-            hostname: self.requested_hostname.clone(),
-            server_url: self.control_server_url.clone(),
+            client_name: value.client_name.clone(),
+            hostname: value.requested_hostname.clone(),
+            server_url: value.control_server_url.clone(),
         }
     }
 }
