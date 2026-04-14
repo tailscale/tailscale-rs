@@ -52,25 +52,27 @@
 
 extern crate ts_netstack_smoltcp as netstack;
 
-use core::{
+use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 
 #[doc(inline)]
+pub use config::{BadFormatBehavior, Config, load_key_file};
+#[doc(inline)]
+pub use error::Error;
+#[doc(inline)]
 pub use netstack::netsock::{TcpListener, TcpStream, UdpSocket};
 use netstack::{CreateSocket, netcore::Channel};
+#[doc(inline)]
+pub use ts_keys::NodeState;
+#[doc(inline)]
+pub use ts_control::Node as NodeInfo;
 
 #[cfg(feature = "axum")]
 pub mod axum;
 mod config;
 mod error;
-
-pub use config::{BadFormatBehavior, Config, load_key_file};
-#[doc(inline)]
-pub use error::Error;
-#[doc(inline)]
-pub use ts_control::Node as NodeInfo;
 
 /// A tailscale device.
 pub struct Device {
