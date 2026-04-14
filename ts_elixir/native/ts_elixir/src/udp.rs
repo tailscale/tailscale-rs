@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use rustler::{Binary, Encoder, ResourceArc, Term};
 
-use crate::{Device, IpOrSelf, Result, atoms, erl_result, ip_from_erl, ip_to_erl, ok_arc};
+use crate::{
+    Device, IpOrSelf, Result, TOKIO_RUNTIME, atoms, erl_result, ip_from_erl, ip_to_erl, ok_arc,
+};
 
 pub struct UdpSocket {
     inner: Arc<tailscale::UdpSocket>,
@@ -16,7 +18,7 @@ fn udp_bind(env: rustler::Env, dev: ResourceArc<Device>, ip: Term, port: u16) ->
     let dev = dev.inner.clone();
     let ip = IpOrSelf::new(ip);
 
-    let sock = crate::block_on(async move {
+    let sock = TOKIO_RUNTIME.block_on(async move {
         let addr = ip.ok_or("invalid ip addr")?.resolve(&dev).await?;
         let sock = dev.udp_bind((addr, port).into()).await?;
 
@@ -40,7 +42,7 @@ fn udp_send<'env>(
     let msg = msg.to_vec();
     let sock = sock.inner.clone();
 
-    match crate::block_on(async move {
+    match TOKIO_RUNTIME.block_on(async move {
         let addr = addr.ok_or("invalid ip addr")?;
 
         sock.send_to((addr, port).into(), &msg).await?;

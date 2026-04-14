@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rustler::{Encoder, ResourceArc};
 
-use crate::{IpOrSelf, Result, atoms, erl_result, ip_from_erl, ok_arc};
+use crate::{IpOrSelf, Result, TOKIO_RUNTIME, atoms, erl_result, ip_from_erl, ok_arc};
 
 pub(crate) struct TcpListener {
     inner: Arc<tailscale::TcpListener>,
@@ -28,7 +28,7 @@ fn tcp_listen(
     let dev = dev.inner.clone();
     let ip = IpOrSelf::new(addr);
 
-    let sock = crate::block_on(async move {
+    let sock = TOKIO_RUNTIME.block_on(async move {
         let addr = ip.ok_or("invalid ip addr")?.resolve(&dev).await?;
         let sock = dev.tcp_listen((addr, port).into()).await?;
 
@@ -50,7 +50,7 @@ fn tcp_connect(
     let addr = ip_from_erl(addr);
     let dev = dev.inner.clone();
 
-    let sock = crate::block_on(async move {
+    let sock = TOKIO_RUNTIME.block_on(async move {
         let addr = addr.ok_or("invalid ip addr")?;
         let sock = dev.tcp_connect((addr, port).into()).await?;
 
@@ -66,7 +66,7 @@ fn tcp_connect(
 fn tcp_accept(env: rustler::Env<'_>, sock: ResourceArc<TcpListener>) -> impl Encoder {
     let inner = sock.inner.clone();
 
-    let sock = crate::block_on(async move {
+    let sock = TOKIO_RUNTIME.block_on(async move {
         let stream = inner.accept().await?;
 
         ok_arc(TcpStream {
@@ -81,7 +81,7 @@ fn tcp_accept(env: rustler::Env<'_>, sock: ResourceArc<TcpListener>) -> impl Enc
 fn tcp_send(env: rustler::Env, sock: ResourceArc<TcpStream>, msg: Vec<u8>) -> rustler::Term {
     let inner = sock.inner.clone();
 
-    match crate::block_on(async move { inner.send(&msg).await }) {
+    match TOKIO_RUNTIME.block_on(async move { inner.send(&msg).await }) {
         Ok(n) => (atoms::ok(), n).encode(env),
         Err(e) => (atoms::error(), e.to_string()).encode(env),
     }
@@ -91,7 +91,7 @@ fn tcp_send(env: rustler::Env, sock: ResourceArc<TcpStream>, msg: Vec<u8>) -> ru
 fn tcp_recv(env: rustler::Env, sock: ResourceArc<TcpStream>) -> impl Encoder {
     let inner = sock.inner.clone();
 
-    let buf = crate::block_on(async move {
+    let buf = TOKIO_RUNTIME.block_on(async move {
         let buf = inner.recv_bytes().await?;
         Result::<_>::Ok(buf.to_vec())
     });

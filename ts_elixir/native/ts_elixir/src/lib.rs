@@ -3,11 +3,10 @@
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str::FromStr,
-    sync::{Arc, RwLock},
+    sync::{Arc, LazyLock},
 };
 
 use rustler::{Encoder, ResourceArc, Term};
-use tokio::task::JoinHandle;
 
 mod tcp;
 mod udp;
@@ -34,7 +33,16 @@ type Result<T> = core::result::Result<T, Box<dyn core::error::Error + Send + Syn
 #[rustler::resource_impl]
 impl rustler::Resource for Device {}
 
-static TOKIO_RUNTIME: RwLock<Option<tokio::runtime::Runtime>> = RwLock::new(None);
+static TOKIO_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    tracing::debug!("started tokio runtime");
+
+    rt
+});
 
 fn erl_result(env: rustler::Env, r: Result<impl Encoder>) -> Term {
     match r {
@@ -52,7 +60,7 @@ where
 
 #[rustler::nif(schedule = "DirtyIo")]
 fn connect(env: rustler::Env, config_path: String, auth_key: Option<String>) -> impl Encoder {
-    let dev = block_on(async move {
+    let dev = TOKIO_RUNTIME.block_on(async move {
         let config = tailscale::Config {
             key_state: tailscale::load_key_file(config_path, Default::default()).await?,
             client_name: Some("ts_elixir".to_owned()),
@@ -80,7 +88,7 @@ fn start_tracing() -> impl Encoder {
 #[rustler::nif(schedule = "DirtyIo")]
 fn ipv4(env: rustler::Env, dev: ResourceArc<Device>) -> impl Encoder {
     let dev = dev.inner.clone();
-    let addr = block_on(async move { dev.ipv4().await });
+    let addr = TOKIO_RUNTIME.block_on(dev.ipv4());
 
     erl_result(env, addr.map(|ip| ip_to_erl(env, ip)).map_err(Into::into))
 }
@@ -89,7 +97,7 @@ fn ipv4(env: rustler::Env, dev: ResourceArc<Device>) -> impl Encoder {
 fn ipv6(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> impl Encoder {
     let dev = dev.inner.clone();
 
-    match block_on(async move { dev.ipv6().await }) {
+    match TOKIO_RUNTIME.block_on(dev.ipv6()) {
         Err(e) => (atoms::error(), e.to_string()).encode(env),
         Ok(ip) => (atoms::ok(), ip_to_erl(env, ip)).encode(env),
     }
@@ -175,17 +183,6 @@ fn ip_from_erl(ip: Term) -> Option<IpAddr> {
 }
 
 fn load(env: rustler::Env, _term: Term) -> bool {
-    {
-        let mut rt = TOKIO_RUNTIME.write().unwrap();
-        let _present = rt.insert(
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
-        );
-    }
-    tracing::debug!("started tokio runtime");
-
     let ret = env.register::<UdpSocket>().is_ok()
         && env.register::<Device>().is_ok()
         && env.register::<TcpStream>().is_ok()
@@ -195,32 +192,6 @@ fn load(env: rustler::Env, _term: Term) -> bool {
     }
 
     ret
-}
-
-fn block_on<F>(f: F) -> F::Output
-where
-    F: Future + Send + 'static,
-    F::Output: Send,
-{
-    let (tx, rx) = tokio::sync::oneshot::channel();
-
-    spawn(async move {
-        let ret = f.await;
-        let _result = tx.send(ret);
-    });
-
-    rx.blocking_recv().unwrap()
-}
-
-fn spawn<F>(f: F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send,
-{
-    let runtime = TOKIO_RUNTIME.read().unwrap();
-    let rt = runtime.as_ref().unwrap();
-
-    rt.spawn(f)
 }
 
 rustler::init!("Elixir.Tailscale.Native", load = load);
