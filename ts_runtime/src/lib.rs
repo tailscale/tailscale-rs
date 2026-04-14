@@ -73,7 +73,7 @@ impl Runtime {
 
         let control = ControlRunner::spawn(control_runner::Params {
             config,
-            auth_key: auth_key.map(|x| x.to_owned()),
+            auth_key,
             env: env.clone(),
         });
 
