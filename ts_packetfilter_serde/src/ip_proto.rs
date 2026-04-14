@@ -1,7 +1,5 @@
 use core::cmp::Ordering;
 
-use tap::Conv;
-
 /// An IP protocol number (in 0..=255), or a Tailscale-specific traffic kind (outside the `u8` range).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -18,7 +16,7 @@ enum Repr {
 impl Ord for IpProto {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        (*self).conv::<isize>().cmp(&(*other).conv::<isize>())
+        isize::from(*self).cmp(&isize::from(*other))
     }
 }
 
@@ -121,8 +119,7 @@ impl serde::Serialize for IpProto {
     where
         S: serde::Serializer,
     {
-        use tap::Conv;
-        (*self).conv::<isize>().serialize(serializer)
+        isize::from(*self).serialize(serializer)
     }
 }
 

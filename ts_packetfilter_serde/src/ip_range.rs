@@ -15,7 +15,6 @@ use nom::{
     combinator::{rest, value},
     sequence::separated_pair,
 };
-use tap::Conv;
 
 /// A range of IPs in the various formats in which they might appear.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -91,11 +90,11 @@ impl IpRange {
             &Self::Prefix(pfx) => Box::new(core::iter::once(pfx)),
             Self::Range(range) => Box::new(match (*range.start(), *range.end()) {
                 (IpAddr::V4(start), IpAddr::V4(end)) => {
-                    Box::new(ipnet::Ipv4Subnets::new(start, end, 0).map(|x| x.conv::<IpNet>()))
+                    Box::new(ipnet::Ipv4Subnets::new(start, end, 0).map(IpNet::from))
                         as Box<dyn Iterator<Item = IpNet>>
                 }
                 (IpAddr::V6(start), IpAddr::V6(end)) => {
-                    Box::new(ipnet::Ipv6Subnets::new(start, end, 0).map(|x| x.conv::<IpNet>()))
+                    Box::new(ipnet::Ipv6Subnets::new(start, end, 0).map(IpNet::from))
                 }
                 _ => unreachable!(),
             }),
