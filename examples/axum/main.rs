@@ -1,5 +1,5 @@
-//! Example showing axum running on top of the netstack, accessible on the host through a
-//! tun device.
+//! An `axum`-based HTTP server that serves a simple webpage over the tailnet. Requires
+//! `tailscale-rs` to be compiled with the `axum` feature.
 
 use core::sync::atomic::AtomicUsize;
 use std::sync::Arc;

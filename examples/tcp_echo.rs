@@ -9,7 +9,8 @@ use tracing_subscriber::filter::LevelFilter;
 ///
 ///     $ telnet $TAILNET_IPV4 $LISTEN_PORT
 ///
-/// It should echo back each character you type.
+/// It should echo back each character you type. If not, type a message and hit enter; the entire
+/// line should be echoed back. See the README for an explanation.
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Args {
