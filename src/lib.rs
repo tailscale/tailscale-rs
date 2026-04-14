@@ -26,7 +26,7 @@
 //! ).await?;
 //!
 //! // Bind a UDP socket on our tailnet IP, port 1234
-//! let sock = dev.udp_bind((dev.ipv4().await?, 1234).into()).await?;
+//! let sock = dev.udp_bind((dev.ipv4_addr().await?, 1234).into()).await?;
 //!
 //! // Send a packet containing "ping" to 100.64.0.1:5678 once per second
 //! loop {
@@ -112,7 +112,7 @@ impl Device {
     }
 
     /// Get this node's IPv4 tailnet address.
-    pub async fn ipv4(&self) -> Result<Ipv4Addr, Error> {
+    pub async fn ipv4_addr(&self) -> Result<Ipv4Addr, Error> {
         self.runtime
             .control
             .ask(ts_runtime::control_runner::Ipv4)
@@ -122,7 +122,7 @@ impl Device {
     }
 
     /// Get this node's IPv6 tailnet address.
-    pub async fn ipv6(&self) -> Result<Ipv6Addr, Error> {
+    pub async fn ipv6_addr(&self) -> Result<Ipv6Addr, Error> {
         self.runtime
             .control
             .ask(ts_runtime::control_runner::Ipv6)
@@ -147,8 +147,8 @@ impl Device {
     /// Connect to a TCP socket at the remote address.
     pub async fn tcp_connect(&self, remote: SocketAddr) -> Result<TcpStream, Error> {
         let ip: IpAddr = match remote.is_ipv4() {
-            true => self.ipv4().await?.into(),
-            false => self.ipv6().await?.into(),
+            true => self.ipv4_addr().await?.into(),
+            false => self.ipv6_addr().await?.into(),
         };
 
         // TODO(npry): collision checking
@@ -180,7 +180,7 @@ impl Device {
     ///
     /// Reports whether the device was fully shut down before the timeout. It is still shut
     /// down if it timed out, just more violently and with potential resource leaks.
-    pub async fn graceful_shutdown(self, timeout: Option<Duration>) -> bool {
+    pub async fn shutdown(self, timeout: Option<Duration>) -> bool {
         self.runtime.graceful_shutdown(timeout).await
     }
 }

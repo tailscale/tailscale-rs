@@ -17,9 +17,9 @@ async def main():
     dev = await tailscale.connect('tsrs_state.json', "tskey-auth-$MY_AUTH_KEY")
 
     # bind a udp socket on this node's ipv4 address:
-    tailnet_ipv4 = await dev.ipv4()
+    tailnet_ipv4 = await dev.ipv4_addr()
     udp_sock = await dev.udp_bind((tailnet_ipv4, 1234))
-    print(f'udp bound, local endpoint: {udp_sock.local_endpoint()}')
+    print(f'udp bound, local endpoint: {udp_sock.local_endpoint_addr()}')
 
     # send a message to a peer once per second
     while True:

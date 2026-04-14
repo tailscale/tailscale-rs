@@ -8,14 +8,14 @@ defmodule Tailscale do
     
   `tailscale` is capable of interpreting either the `inet` format or a `String`.
   """
-  @type ip4() :: :inet.ip4_address() | String.t()
+  @type ip4_addr() :: :inet.ip4_address() | String.t()
   
   @typedoc """
   An IPv6 address.
     
   `tailscale` is capable of interpreting either the `inet` format or a `String`.
   """
-  @type ip6() :: :inet.ip6_address() | String.t()
+  @type ip6_addr() :: :inet.ip6_address() | String.t()
 
   @typedoc """
   An IP address (v4 or v6).
@@ -56,15 +56,15 @@ defmodule Tailscale do
     Tailscale.Native.connect(config_path, auth_key)
   end
 
-  @spec ipv4(t()) :: {:ok, :inet.ip4_address()} | {:error, any()}
+  @spec ipv4_addr(t()) :: {:ok, :inet.ip4_address()} | {:error, any()}
   @doc """
   Get the current IPv4 address of this Tailscale node.
     
   Blocks until the address is available.
   """
-  def ipv4(dev), do: Tailscale.Native.ipv4(dev)
+  def ipv4_addr(dev), do: Tailscale.Native.ipv4_addr(dev)
   
-  @spec ipv6(t()) :: {:ok, :inet.ip6_address()} | {:error, any()}
+  @spec ipv6_addr(t()) :: {:ok, :inet.ip6_address()} | {:error, any()}
   @doc """
   Get the current IPv6 address of this Tailscale node.
     
@@ -73,5 +73,5 @@ defmodule Tailscale do
   Note that this address is in `:inet` format (16-bit segments), which may be difficult to read. 
   See `:inet.ntoa` to format to a string.
   """
-  def ipv6(dev), do: Tailscale.Native.ipv6(dev)
+  def ipv6_addr(dev), do: Tailscale.Native.ipv6_addr(dev)
 end

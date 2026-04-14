@@ -63,12 +63,12 @@ impl Debug for TcpStream {
 
 impl TcpStream {
     /// Report the local endpoint to which this stream is connected.
-    pub const fn local_endpoint(&self) -> SocketAddr {
+    pub const fn local_endpoint_addr(&self) -> SocketAddr {
         self.local
     }
 
     /// Report the remote endpoint to which this stream is connected.
-    pub const fn remote_endpoint(&self) -> SocketAddr {
+    pub const fn remote_endpoint_addr(&self) -> SocketAddr {
         self.remote
     }
 

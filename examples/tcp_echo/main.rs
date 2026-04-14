@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     )
     .await?;
 
-    let sockaddr = (dev.ipv4().await?, args.listen_port).into();
+    let sockaddr = (dev.ipv4_addr().await?, args.listen_port).into();
     let listener = dev.tcp_listen(sockaddr).await?;
 
     tracing::info!(listening_addr = %sockaddr);
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
         let conn = listener.accept().await?;
 
         tokio::task::spawn(async move {
-            let remote_ep = conn.remote_endpoint();
+            let remote_ep = conn.remote_endpoint_addr();
             tracing::info!(%remote_ep, "accepted connection");
 
             let (mut reader, mut writer) = tokio::io::split(conn);

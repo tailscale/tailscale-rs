@@ -27,8 +27,8 @@ async fn main() -> common::Result<()> {
         .await?;
     tracing::debug!(?sock, "netstack stream connected");
 
-    assert_eq!(sock.local_endpoint(), common::netstack_endpoint());
-    assert_eq!(sock.remote_endpoint(), common::tun_endpoint());
+    assert_eq!(sock.local_endpoint_addr(), common::netstack_endpoint());
+    assert_eq!(sock.remote_endpoint_addr(), common::tun_endpoint());
 
     common::socket_pingpong(sock).await;
 

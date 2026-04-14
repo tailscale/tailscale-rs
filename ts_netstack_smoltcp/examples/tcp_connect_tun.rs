@@ -24,8 +24,8 @@ fn main() -> common::Result<()> {
         stack_handle.tcp_connect_blocking(common::netstack_endpoint(), common::tun_endpoint())?;
     tracing::debug!(?sock, "netstack stream connected");
 
-    assert_eq!(sock.local_endpoint(), common::netstack_endpoint());
-    assert_eq!(sock.remote_endpoint(), common::tun_endpoint());
+    assert_eq!(sock.local_endpoint_addr(), common::netstack_endpoint());
+    assert_eq!(sock.remote_endpoint_addr(), common::tun_endpoint());
 
     common::socket_pingpong_blocking(sock);
 

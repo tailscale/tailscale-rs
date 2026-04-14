@@ -118,14 +118,14 @@ defmodule Tailscale.Native do
   
   Blocks until the device is connected and gets its address from control.
   """
-  @spec ipv4(device()) :: {:ok, :inet.ip4_address()} | {:error, any()}
-  def ipv4(_dev), do: err()
+  @spec ipv4_addr(device()) :: {:ok, :inet.ip4_address()} | {:error, any()}
+  def ipv4_addr(_dev), do: err()
   
   @doc """
   Retrieve the IPv6 address for the given tailscale device.
   
   Blocks until the device is connected and gets its address from control.
   """
-  @spec ipv6(device()) :: {:ok, :inet.ip6_address()} | {:error, any()}
-  def ipv6(_dev), do: err()
+  @spec ipv6_addr(device()) :: {:ok, :inet.ip6_address()} | {:error, any()}
+  def ipv6_addr(_dev), do: err()
 end

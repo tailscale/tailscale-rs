@@ -18,8 +18,8 @@ fn main() -> common::Result<()> {
 
     tracing::debug!(?sock, "netstack stream connected");
 
-    assert_eq!(sock.local_endpoint(), common::netstack_endpoint());
-    assert_eq!(sock.remote_endpoint(), common::netstack2_endpoint());
+    assert_eq!(sock.local_endpoint_addr(), common::netstack_endpoint());
+    assert_eq!(sock.remote_endpoint_addr(), common::netstack2_endpoint());
 
     common::socket_pingpong_blocking(sock);
 

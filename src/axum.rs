@@ -13,7 +13,7 @@
 //!     Some("YOUR_AUTH_KEY".to_owned()),
 //! ).await?;
 //!
-//! let listener = dev.tcp_listen((dev.ipv4().await?, 80).into()).await?;
+//! let listener = dev.tcp_listen((dev.ipv4_addr().await?, 80).into()).await?;
 //!
 //! async fn index() -> &'static str { "Hello world!" }
 //! let router = axum::Router::new().route("/", axum::routing::get(index));
@@ -49,12 +49,12 @@ impl axum::serve::Listener for Listener {
             }
         };
 
-        let addr = stream.remote_endpoint();
+        let addr = stream.remote_endpoint_addr();
 
         (stream, addr)
     }
 
     fn local_addr(&self) -> std::io::Result<Self::Addr> {
-        Ok(self.0.local_endpoint())
+        Ok(self.0.local_endpoint_addr())
     }
 }

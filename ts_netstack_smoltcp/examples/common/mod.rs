@@ -250,7 +250,7 @@ where
 pub fn netstack_listen_blocking(listener: netsock::TcpListener) {
     loop {
         let sock = listener.accept_blocking().unwrap();
-        tracing::debug!(remote = %sock.remote_endpoint(), "connection accepted");
+        tracing::debug!(remote = %sock.remote_endpoint_addr(), "connection accepted");
 
         std::thread::spawn(move || socket_pingpong_blocking(sock));
     }
@@ -261,7 +261,7 @@ pub fn netstack_listen_blocking(listener: netsock::TcpListener) {
 pub async fn netstack_listen(listener: netsock::TcpListener) {
     loop {
         let sock = listener.accept().await.unwrap();
-        tracing::debug!(remote = %sock.remote_endpoint(), "connection accepted");
+        tracing::debug!(remote = %sock.remote_endpoint_addr(), "connection accepted");
 
         tokio::task::spawn(socket_pingpong(sock));
     }

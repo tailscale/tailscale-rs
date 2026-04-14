@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     .await?;
 
     let listener = dev
-        .tcp_listen((dev.ipv4().await?, args.port).into())
+        .tcp_listen((dev.ipv4_addr().await?, args.port).into())
         .await?;
 
     let router = Router::new()
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
         .with_state(Arc::new(AtomicUsize::new(0)))
         .route("/{*path}", get(assets));
 
-    let url = format!("http://{}/index.html", listener.local_endpoint());
+    let url = format!("http://{}/index.html", listener.local_endpoint_addr());
     tracing::info!(%url, "http server listening");
 
     axum::serve(tailscale::axum::Listener::from(listener), router).await?;

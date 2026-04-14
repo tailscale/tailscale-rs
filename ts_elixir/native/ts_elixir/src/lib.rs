@@ -86,18 +86,18 @@ fn start_tracing() -> impl Encoder {
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn ipv4(env: rustler::Env, dev: ResourceArc<Device>) -> impl Encoder {
+fn ipv4_addr(env: rustler::Env, dev: ResourceArc<Device>) -> impl Encoder {
     let dev = dev.inner.clone();
-    let addr = TOKIO_RUNTIME.block_on(dev.ipv4());
+    let addr = TOKIO_RUNTIME.block_on(dev.ipv4_addr());
 
     erl_result(env, addr.map(|ip| ip_to_erl(env, ip)).map_err(Into::into))
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn ipv6(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> impl Encoder {
+fn ipv6_addr(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> impl Encoder {
     let dev = dev.inner.clone();
 
-    match TOKIO_RUNTIME.block_on(dev.ipv6()) {
+    match TOKIO_RUNTIME.block_on(dev.ipv6_addr()) {
         Err(e) => (atoms::error(), e.to_string()).encode(env),
         Ok(ip) => (atoms::ok(), ip_to_erl(env, ip)).encode(env),
     }
@@ -146,8 +146,8 @@ impl IpOrSelf {
     pub async fn resolve(&self, dev: &tailscale::Device) -> Result<IpAddr> {
         match self {
             IpOrSelf::Ip(ip) => Ok(*ip),
-            IpOrSelf::SelfV4 => dev.ipv4().await.map(Into::into).map_err(Into::into),
-            IpOrSelf::SelfV6 => dev.ipv6().await.map(Into::into).map_err(Into::into),
+            IpOrSelf::SelfV4 => dev.ipv4_addr().await.map(Into::into).map_err(Into::into),
+            IpOrSelf::SelfV6 => dev.ipv6_addr().await.map(Into::into).map_err(Into::into),
         }
     }
 }

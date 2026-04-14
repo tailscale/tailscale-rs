@@ -35,12 +35,15 @@ impl TcpListener {
     }
 
     /// Get the local endpoint this TCP listener is listening on.
-    pub fn local_endpoint(&self) -> (String, u16) {
-        sockaddr_as_tuple(self.listener.local_endpoint())
+    pub fn local_endpoint_addr(&self) -> (String, u16) {
+        sockaddr_as_tuple(self.listener.local_endpoint_addr())
     }
 
     fn __repr__(&self) -> String {
-        format!("tailscale.TcpListener({})", self.listener.local_endpoint(),)
+        format!(
+            "tailscale.TcpListener({})",
+            self.listener.local_endpoint_addr(),
+        )
     }
 }
 
@@ -74,20 +77,20 @@ impl TcpStream {
     }
 
     /// Get the local endpoint this socket is bound to.
-    pub fn local_endpoint(&self) -> (String, u16) {
-        sockaddr_as_tuple(self.sock.local_endpoint())
+    pub fn local_endpoint_addr(&self) -> (String, u16) {
+        sockaddr_as_tuple(self.sock.local_endpoint_addr())
     }
 
     /// Get the remote endpoint this socket is connected to.
-    pub fn remote_endpoint(&self) -> (String, u16) {
-        sockaddr_as_tuple(self.sock.remote_endpoint())
+    pub fn remote_endpoint_addr(&self) -> (String, u16) {
+        sockaddr_as_tuple(self.sock.remote_endpoint_addr())
     }
 
     fn __repr__(&self) -> String {
         format!(
             "tailscale.TcpStream({} -> {})",
-            self.sock.local_endpoint(),
-            self.sock.remote_endpoint()
+            self.sock.local_endpoint_addr(),
+            self.sock.remote_endpoint_addr()
         )
     }
 

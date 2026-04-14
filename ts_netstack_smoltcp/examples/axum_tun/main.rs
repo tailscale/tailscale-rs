@@ -92,12 +92,12 @@ impl axum::serve::Listener for Listener {
             }
         };
 
-        let addr = stream.remote_endpoint();
+        let addr = stream.remote_endpoint_addr();
 
         (stream, addr)
     }
 
     fn local_addr(&self) -> std::io::Result<Self::Addr> {
-        Ok(self.0.local_endpoint())
+        Ok(self.0.local_endpoint_addr())
     }
 }

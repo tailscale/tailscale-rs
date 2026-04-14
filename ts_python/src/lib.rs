@@ -124,21 +124,21 @@ impl Device {
     }
 
     /// Get the device's IPv4 tailnet address.
-    pub fn ipv4<'p>(&self, py: Python<'p>) -> PyFut<'p> {
+    pub fn ipv4_addr<'p>(&self, py: Python<'p>) -> PyFut<'p> {
         let dev = self.dev.clone();
 
         future_into_py(py, async move {
-            let ip = dev.ipv4().await.map_err(py_value_err)?;
+            let ip = dev.ipv4_addr().await.map_err(py_value_err)?;
             Ok(ip.to_string())
         })
     }
 
     /// Get the device's IPv6 tailnet address.
-    pub fn ipv6<'p>(&self, py: Python<'p>) -> PyFut<'p> {
+    pub fn ipv6_addr<'p>(&self, py: Python<'p>) -> PyFut<'p> {
         let dev = self.dev.clone();
 
         future_into_py(py, async move {
-            let ip = dev.ipv6().await.map_err(py_value_err)?;
+            let ip = dev.ipv6_addr().await.map_err(py_value_err)?;
             Ok(ip.to_string())
         })
     }

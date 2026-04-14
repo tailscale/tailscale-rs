@@ -67,7 +67,7 @@ impl TcpListener {
     }
 
     /// Report the local endpoint on which this is listening.
-    pub const fn local_endpoint(&self) -> SocketAddr {
+    pub const fn local_endpoint_addr(&self) -> SocketAddr {
         self.endpoint
     }
 }

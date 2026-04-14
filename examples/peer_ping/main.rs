@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     )
     .await?;
 
-    let sock = dev.udp_bind((dev.ipv4().await?, 1234).into()).await?;
+    let sock = dev.udp_bind((dev.ipv4_addr().await?, 1234).into()).await?;
     let mut ticker = tokio::time::interval(Duration::from_secs_f64(args.ping_interval_secs));
 
     loop {
