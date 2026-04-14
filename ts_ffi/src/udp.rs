@@ -101,5 +101,5 @@ pub unsafe extern "C" fn ts_udp_recvfrom(
 /// Get the local endpoint to which the socket is bound.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_udp_local(sock: &udp_socket) -> crate::sockaddr {
-    sock.0.local_endpoint().into()
+    sock.0.local_endpoint_addr().into()
 }

@@ -44,7 +44,7 @@ pub extern "C" fn ts_tcp_accept(listener: &tcp_listener) -> Option<Box<tcp_strea
 /// Get the local endpoint `listener` is listening on.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_tcp_listener_local(listener: &tcp_listener) -> crate::sockaddr {
-    listener.0.local_endpoint().into()
+    listener.0.local_endpoint_addr().into()
 }
 
 /// Close the specified socket.
@@ -123,13 +123,13 @@ pub unsafe extern "C" fn ts_tcp_recv(stream: &tcp_stream, buf: *mut u8, len: usi
 /// Get the local endpoint for this TCP stream.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_tcp_local(stream: &tcp_stream) -> crate::sockaddr {
-    stream.0.local_endpoint().into()
+    stream.0.local_endpoint_addr().into()
 }
 
 /// Get the remote endpoint this TCP stream is connected to.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_tcp_remote(stream: &tcp_stream) -> crate::sockaddr {
-    stream.0.remote_endpoint().into()
+    stream.0.remote_endpoint_addr().into()
 }
 
 /// Close the specified socket.

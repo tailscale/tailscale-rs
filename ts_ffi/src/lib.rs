@@ -125,7 +125,7 @@ pub extern "C" fn ts_deinit(dev: Box<device>) {
 /// Returns a negative number on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_ipv4(dev: &device, dst: &mut in_addr_t) -> ffi::c_int {
-    let addr = match TOKIO_RUNTIME.block_on(dev.0.ipv4()) {
+    let addr = match TOKIO_RUNTIME.block_on(dev.0.ipv4_addr()) {
         Ok(addr) => addr,
         Err(e) => {
             tracing::error!(error = %e, "getting ipv4");
@@ -143,7 +143,7 @@ pub extern "C" fn ts_ipv4(dev: &device, dst: &mut in_addr_t) -> ffi::c_int {
 /// Returns a negative number on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_ipv6(dev: &device, dst: &mut in6_addr_t) -> ffi::c_int {
-    let addr = match TOKIO_RUNTIME.block_on(dev.0.ipv6()) {
+    let addr = match TOKIO_RUNTIME.block_on(dev.0.ipv6_addr()) {
         Ok(addr) => addr,
         Err(e) => {
             tracing::error!(error = %e, "getting ipv6");
