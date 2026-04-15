@@ -58,7 +58,7 @@
 //!
 //! Additional examples of using the `tailscale` crate can be found in the [`examples/`] directory.
 //!
-//! ## Using tailscale-rs
+//! ## Using `tailscale`
 //!
 //! To use this crate or the language bindings, you will need to set the `TS_RS_EXPERIMENT` env var
 //! to `this_is_unstable_software`. We'll remove this requirement after a third-party code/cryptography
@@ -69,7 +69,7 @@
 //! async API functions. The easiest way to do this is to use `#[tokio::main]`, see the
 //! [Tokio docs](https://docs.rs/tokio) for more information. In the future, we would like to limit
 //! our reliance on Tokio so that there are alternatives for users of other async runtimes.
-//! 
+//!
 //! ## Caveats
 //!
 //! This software is still a work-in-progress! We are providing it in the open at this stage out of
@@ -87,23 +87,21 @@
 //!
 //! ## Feature Flags
 //!
-//! `tailscale` has a single feature flag at this time, but we'll be adding more flags as we add
-//! more features that can be disabled.
-//! - `axum`: enables the `axum` module, which enables you to run an [`axum` HTTP server] on top
+//! - `axum`: enables the [`axum`] module, which enables you to run an [`axum` HTTP server] on top
 //!   of a [`TcpListener`].
 //!
 //! ## Platform Support
 //!
 //! `tailscale` currently supports the following platforms:
 //!
-//! - Linux (`x86_64`/`ARM64`)
-//! - macOS (`ARM64`)
+//! - Linux (x86_64 and ARM64)
+//! - macOS (ARM64)
 //!
 //! ## Component crates
 //!
 //! The following crates are part of the tailscale-rs project and are dependencies of this one. For
 //! many tasks, just this crate should be sufficient and these other crates are an implementation detail.
-//! There are other crates too, see [ARCHITECTURE.md](https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md)
+//! There are other crates too, see [ARCHITECTURE.md]
 //! or the [GitHub repo](https://github.com/tailscale/tailscale-rs).
 //!
 //! - [ts_runtime](https://docs.rs/ts_runtime): for each API-level `Device`, the runtime uses an actor
@@ -128,8 +126,6 @@
 //! [`examples/`]: https://github.com/tailscale/tailscale-rs/blob/main/examples/README.md
 //! [open an issue]: https://github.com/tailscale/tailscale-rs/issues
 //! [`axum` HTTP server]: https://docs.rs/axum/latest/axum/
-//! - We currently rely on DERP relays for all communication. Direct connections via NAT holepunching
-//!   will be a seamless upgrade in the future, but for now, this puts a cap on data throughput.
 
 extern crate ts_netstack_smoltcp as netstack;
 

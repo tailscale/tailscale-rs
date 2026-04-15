@@ -185,7 +185,7 @@ inherits = "release"
 [package]
 name = "tailscale"
 version.workspace = true
-description = "experimental tailscale implementation in rust"
+description = "A work-in-progress Tailscale implementation"
 categories = ["network-programming", "api-bindings", "authentication", "asynchronous"]
 keywords = ["tailscale", "networking"]
 
@@ -193,6 +193,9 @@ repository.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 # Our crates.
