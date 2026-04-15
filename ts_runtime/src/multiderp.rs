@@ -121,7 +121,7 @@ impl Multiderp {
     }
 }
 
-#[tracing::instrument(skip_all, fields(region_id = %id), name = "derp packet transport")]
+#[tracing::instrument(skip_all, fields(region_id = %id), name = "derp runner")]
 async fn run_derp_once(
     id: RegionId,
     region: &DerpRegion,

@@ -165,7 +165,7 @@ where
                 FrameType::KeepAlive => {
                     // TODO (dylan): do we need to do anything on KeepAlive other than reset a timer?
                     // TODO (dylan): handle KeepAlive timer
-                    tracing::debug!(transport = %self, "received KeepAlive frame");
+                    tracing::trace!("received KeepAlive frame");
                 }
                 FrameType::Ping => {
                     let Some((&ping, _)) = frame.as_type::<Ping>() else {
