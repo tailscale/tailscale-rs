@@ -142,6 +142,8 @@ use ts_netstack_smoltcp::{CreateSocket, netcore::Channel};
 pub mod axum;
 pub mod config;
 mod error;
+#[cfg(feature = "ssh")]
+pub mod ssh;
 
 /// How a program connects to a tailnet and communicates with peers.
 ///
