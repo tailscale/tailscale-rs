@@ -21,14 +21,14 @@ below; for an explanation, see [the Caveats section of the README](../README.md#
 
 Brief descriptions and links to each example.
 
-### [Axum](axum/main.rs)
+### [Axum](axum)
 
 An `axum`-based HTTP server that serves a simple webpage over the tailnet.
 
-### [Peer Ping](peer_ping/main.rs)
+### [Peer Ping](peer_ping)
 
 A UDP client that sends "hello" to a tailnet peer on a configurable interval.
 
-### [TCP Echo](tcp_echo/main.rs)
+### [TCP Echo](tcp_echo)
 
 A TCP server that listens on the tailnet and echoes input back to the sender.
