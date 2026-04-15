@@ -1,11 +1,25 @@
-//! Tailscale SDK.
+//! A work-in-progress [Tailscale](https://tailscale.com/blog/how-tailscale-works) library.
 //!
-//! See [ARCHITECTURE.md](https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md) for
-//! high-level architecture and crate descriptions.
+//! `tailscale` allows Rust programs to connect to a tailnet and exchange traffic with peers over
+//! TCP and UDP. It can communicate with other `tailscale`-based peers, `tailscaled` (the Tailscale
+//! Go client), `tsnet`, and `libtailscale` via public DERP servers.
 //!
-//! ## Example
+//! <div class="warning">
+//! `tailscale` is unstable and insecure.
 //!
-//! Example binding a UDP socket and sending periodic pings:
+//! We welcome enthusiasm and interest, but please **do not** build production software using these
+//! libraries or rely on it for data privacy until we have a chance to batten down some hatches and
+//! complete a third-party audit.
+//!
+//! See the [Caveats section](#caveats) for more details.
+//! </div>
+//!
+//! For instructions on how to run tests, lints, etc., see [CONTRIBUTING.md]. For the high-level
+//! architecture and repository layout, see [ARCHITECTURE.md].
+//!
+//! ## Code Sample
+//!
+//! A simple UDP client that periodically sends messages to a tailnet peer at `100.64.0.1:5678`:
 //!
 //! ```no_run
 //! # use std::{
@@ -16,7 +30,7 @@
 //! #
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn Error>> {
-//! // Open a new connection to tailscale
+//! // Open a new connection to the tailnet
 //! let dev = tailscale::Device::new(
 //!     &tailscale::Config {
 //!         key_state: tailscale::load_key_file("tsrs_key.json", Default::default()).await?,
@@ -28,27 +42,54 @@
 //! // Bind a UDP socket on our tailnet IP, port 1234
 //! let sock = dev.udp_bind((dev.ipv4_addr().await?, 1234).into()).await?;
 //!
-//! // Send a packet containing "ping" to 100.64.0.1:5678 once per second
+//! // Send a packet containing "hello, world!" to 100.64.0.1:5678 once per second
 //! loop {
-//!     sock.send_to((Ipv4Addr::new(100, 64, 0, 1), 5678).into(), b"ping").await?;
+//!     sock.send_to((Ipv4Addr::new(100, 64, 0, 1), 5678).into(), b"hello, world!").await?;
 //!     tokio::time::sleep(Duration::from_secs(1)).await;
 //! }
 //! # }
 //! ```
 //!
+//! Additional examples of using the `tailscale` crate can be found in the [`examples/`] directory.
+//!
 //! ## Caveats
 //!
-//! This software is still a work-in-progress! We are providing it in the open at this stage out of a
-//! belief in open-source and to see where the community runs with it, but please be aware of a few
-//! important considerations:
+//! This software is still a work-in-progress! We are providing it in the open at this stage out of
+//! a belief in open-source and to see where the community runs with it, but please be aware of a
+//! few important considerations:
 //!
-//! - This implementation contains unaudited cryptography and hasn't undergone a comprehensive security
-//!   analysis. Conservatively, assume there could be a critical security hole meaning anything you send
-//!   or receive could be in the clear on the public Internet.
-//! - There are no compatibility guarantees at the moment. This is early-days software &mdash; we may
+//! - This implementation contains unaudited cryptography and hasn't undergone a comprehensive
+//!   security analysis. Conservatively, assume there could be a critical security hole meaning
+//!   anything you send or receive could be in the clear on the public Internet.
+//! - There are no compatibility guarantees at the moment. This is early-days software - we may
 //!   break dependent code in order to get things right.
-//! - We currently rely on DERP relays for all communication. Direct connections via NAT holepunching
-//!   will be a seamless upgrade in the future, but for now, this puts a cap on data throughput.
+//! - We currently rely on DERP relays for all communication. Direct connections via NAT
+//!   holepunching will be a seamless upgrade in the future, but for now, this puts a cap on data
+//!   throughput.
+//! - The `TS_RS_EXPERIMENT` environment variable is required to be set to
+//!   `this_is_unstable_software` for all code linked against `tailscale-rs`; this includes Rust, C,
+//!   Elixir, and Python code. We'll remove this requirement after a third-party code/cryptography
+//!   audit and any necessary fixes.
+//!
+//! ## Feature Flags
+//!
+//! `tailscale` has a single feature flag at this time, but we'll be adding more flags as we add
+//! more features that can be disabled.
+//! - `axum`: enables the `axum` module, which enables you to run an [`axum` HTTP server] on top
+//!   of a [`TcpListener`].
+//!
+//! ## Platform Support
+//!
+//! `tailscale` currently supports the following platforms:
+//!
+//! - Linux (`x86_64`/`ARM64`)
+//! - macOS (`ARM64`)
+//!
+//! [ARCHITECTURE.md]: https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md
+//! [CONTRIBUTING.md]: https://github.com/tailscale/tailscale-rs/blob/main/CONTRIBUTING.md
+//! [`examples/`]: https://github.com/tailscale/tailscale-rs/blob/main/examples/README.md
+//! [open an issue]: https://github.com/tailscale/tailscale-rs/issues
+//! [`axum` HTTP server]: https://docs.rs/axum/latest/axum/
 
 extern crate ts_netstack_smoltcp as netstack;
 
@@ -74,7 +115,11 @@ pub mod axum;
 mod config;
 mod error;
 
-/// A tailscale device.
+/// How a program connects to a tailnet and communicates with peers.
+///
+/// The `Device` connects to the control plane, registers itself with the tailnet, and communicates
+/// with tailnet peers. Its tailnet identity is determined by the key state provided at
+/// construction-time.
 pub struct Device {
     runtime: ts_runtime::Runtime,
     channel: Channel,
@@ -83,7 +128,7 @@ pub struct Device {
 impl Device {
     /// Create a device from the given [`Config`] and auth key.
     ///
-    /// Internally, this will spawn mutltiple asynchronous actors onto a Tokio runtime.
+    /// Internally, this will spawn multiple asynchronous actors onto a Tokio runtime.
     ///
     /// # Example
     ///
@@ -112,7 +157,7 @@ impl Device {
         })
     }
 
-    /// Get this node's IPv4 tailnet address.
+    /// Get this [`Device`]'s IPv4 tailnet address.
     pub async fn ipv4_addr(&self) -> Result<Ipv4Addr, Error> {
         self.runtime
             .control
@@ -122,7 +167,7 @@ impl Device {
             .ok_or(Error::InternalFailure)
     }
 
-    /// Get this node's IPv6 tailnet address.
+    /// Get this [`Device`]'s IPv6 tailnet address.
     pub async fn ipv6_addr(&self) -> Result<Ipv6Addr, Error> {
         self.runtime
             .control

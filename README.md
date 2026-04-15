@@ -5,8 +5,8 @@
 
 https://tailscale.com
 
-`tailscale-rs` is an experimental Tailscale library written in Rust, with language bindings to C,
-Elixir, and Python.
+`tailscale-rs` is a work-in-progress Tailscale library written in Rust, with language bindings to
+C, Elixir, and Python.
 
 > [!CAUTION]
 > This software is unstable and insecure.
