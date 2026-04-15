@@ -10,6 +10,7 @@ mod client_version;
 mod debug;
 mod derp_map;
 mod dial_plan;
+mod dns;
 mod env_type;
 mod host_info;
 mod location;
@@ -29,6 +30,10 @@ pub use derp_map::{
     DerpMap, DerpServer, IpUsage as DerpIpUsage, Region as DerpRegion, RegionId as DerpRegionId,
 };
 pub use dial_plan::{ControlDialPlan, ControlIpCandidate};
+pub use dns::{
+    Config as DnsConfig, Record as DnsRecord, Resolver as DnsResolver,
+    ResolverAddr as DnsResolverAddr,
+};
 pub use host_info::HostInfo;
 pub use net_info::{DerpLatencyMap, LinkType, NetInfo};
 pub use netmap::{Endpoint, EndpointType, MapRequest, MapResponse};
@@ -39,10 +44,3 @@ pub use service::{Service, ServiceProto};
 pub use tka_info::TkaInfo;
 pub use tpm::TpmInfo;
 pub use user::{Login, LoginId, User, UserId, UserProfile};
-
-/// TODO (dylan): implement properly
-#[derive(Debug, Clone, PartialEq, Hash, serde::Deserialize, serde::Serialize)]
-pub struct DnsResolver<'a> {
-    #[serde(skip)]
-    phantom: core::marker::PhantomData<&'a ()>,
-}
