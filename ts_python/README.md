@@ -5,7 +5,7 @@ Python bindings for `tailscale-rs`.
 At the moment, this exposes facilities for connecting to a tailnet and binding network sockets that
 have access to the tailnet.
 
-## example
+## Code Sample
 
 ```python
 import asyncio
@@ -38,7 +38,7 @@ To run this demo:
 $ TS_RS_EXPERIMENT=this_is_unstable_software python demo.py
 ```
 
-## building/usage
+## Building and Usage
 
 We're not up on pypi, so you can't `pip install tailscale` yet. To use the module, you'll
 need to build it. The best way to do that is with [`maturin`](https://www.maturin.rs/):

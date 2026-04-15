@@ -6,13 +6,13 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use crate::{PyFut, py_value_err, sockaddr_as_tuple};
 
 /// A TCP listen socket.
-#[pyclass(frozen, module = "tailscale")]
+#[pyclass(frozen, module = "_internal")]
 pub struct TcpListener {
     pub(crate) listener: Arc<ts::TcpListener>,
 }
 
 /// An established TCP stream.
-#[pyclass(frozen, module = "tailscale")]
+#[pyclass(frozen, module = "_internal")]
 pub struct TcpStream {
     pub(crate) sock: Arc<ts::TcpStream>,
 }

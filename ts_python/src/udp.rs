@@ -10,7 +10,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use crate::{PyFut, py_value_err, sockaddr_as_tuple};
 
 /// A tailscale UDP socket.
-#[pyclass(frozen)]
+#[pyclass(frozen, module = "_internal")]
 pub struct UdpSocket {
     pub(crate) sock: Arc<ts::UdpSocket>,
 }

@@ -1,0 +1,36 @@
+[project]
+name = "tailscale-py"
+version = "0.2.0"
+description = "Work-in-progress Tailscale library written in Rust."
+license = "BSD-3-Clause"
+readme = "README.md"
+keywords = ["tailscale-py", "tailscale-rs", "tailscale", "vpn", "wireguard"]
+documentation = "https://github.com/tailscale/tailscale-rs/tree/main/ts_python"
+homepage = "https://github.com/tailscale/tailscale-rs"
+repository = "https://github.com/tailscale/tailscale-rs"
+requires-python = ">=3.12"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking",
+]
+
+dependencies = [
+    "maturin>=1.13.1",
+]
+
+[build-system]
+requires = ["maturin>=1.13.1,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+python-source = "python"
+module-name = "tailscale._internal"

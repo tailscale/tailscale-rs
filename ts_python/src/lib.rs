@@ -18,7 +18,7 @@ mod udp;
 
 /// Tailscale API.
 #[pymodule]
-pub mod tailscale {
+pub mod _internal {
     use super::*;
     #[pymodule_export]
     use crate::{

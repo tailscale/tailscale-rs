@@ -8,9 +8,11 @@ perf.data
 perf.data.old
 heaptrack.*
 config.json
+key_file*.json
 priv/
 _build/
 ts_elixir/deps/
+ts_python/python/tailscale/*.so
 *.exe
 *.dll
 *.lib
