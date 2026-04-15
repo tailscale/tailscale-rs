@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::net::SocketAddr;
 
 use chrono::{DateTime, Utc};
@@ -7,6 +7,7 @@ use ts_capabilityversion::CapabilityVersion;
 use ts_keys::{DiscoPublicKey, NodePublicKey};
 
 use crate::{
+    DerpRegionId, MarshaledSignature,
     client_version::ClientVersion,
     debug::Debug,
     derp_map::DerpMap,
@@ -304,24 +305,26 @@ pub struct MapResponse<'a> {
     /// IDs of Tailscale nodes that are no longer in the peer list for the Tailnet.
     pub peers_removed: Option<Vec<NodeId>>,
 
+    /// If present, the indicated nodes have changed.
+    ///
+    /// This is a lighter version of `peers_changed` that only supports certain types of
+    /// updates.
+    ///
+    /// These are applied after `peers*`, but in practice, the control server should only
+    /// send these on their own, without the `peers*` fields also set.
+    #[serde(borrow)]
+    pub peers_changed_patch: Vec<Option<PeerChange<'a>>>,
+
+    /// How to update peers' [`last_seen`][crate::Node::last_seen] times.
+    ///
+    /// If the value for a peer is false, the peer is gone. If true, update `last_seen` to
+    /// now.
+    pub peer_seen_change: BTreeMap<NodeId, bool>,
+
+    /// Updates to peers' [`online`][crate::Node::online] states.
+    pub online_change: BTreeMap<NodeId, bool>,
+
     // --------------------------------------------------------------------------------------------
-
-    // PeersChangedPatch, if non-nil, means that node(s) have changed.
-    // This is a lighter version of the older PeersChanged support that
-    // only supports certain types of updates.
-    //
-    // These are applied after Peers* above, but in practice the
-    // control server should only send these on their own, without
-    // the Peers* fields also set.
-    //PeersChangedPatch []*PeerChange `json:",omitempty"`
-
-    // PeerSeenChange contains information on how to update peers' LastSeen
-    // times. If the value is false, the peer is gone. If the value is true,
-    // the LastSeen time is now. Absent means unchanged.
-    //PeerSeenChange map[NodeID]bool `json:",omitempty"`
-
-    // OnlineChange changes the value of a Peer Node.Online value.
-    //OnlineChange map[NodeID]bool `json:",omitempty"`
 
     // DNSConfig contains the DNS settings for the client to use.
     // A nil value means no change from an earlier non-nil value.
@@ -455,6 +458,51 @@ pub struct MapResponse<'a> {
     /// control; the auto-update setting doesn't change if the tailnet admin flips the default
     /// after the node registered.
     pub default_auto_update: Option<bool>,
+}
+
+/// An update to a node.
+#[derive(Default, Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct PeerChange<'a> {
+    /// The ID of the node being mutated.
+    ///
+    /// If not known in the current netmap, this change should be ignored.
+    #[serde(rename = "NodeID")]
+    pub node_id: NodeId,
+
+    /// If present, the node's home derp region is updated to the new value.
+    #[serde(
+        rename = "DERPRegion",
+        deserialize_with = "crate::util::derp_region_id"
+    )]
+    pub derp_region: Option<DerpRegionId>,
+
+    /// If present, the node's capability version is the new value.
+    pub cap: Option<CapabilityVersion>,
+
+    /// If present, the node's capability map has changed.
+    #[serde(borrow)]
+    pub cap_map: Option<ts_nodecapability::Map<'a>>,
+
+    /// If present, the node's UDP endpoints have changed to the new value.
+    pub endpoints: Option<Vec<Endpoint>>,
+
+    /// If present, the node's wireguard public key has changed.
+    pub key: Option<NodePublicKey>,
+
+    /// If present, the signature of the node's wireguard public key has changed.
+    #[serde(borrow)]
+    pub key_signature: Option<MarshaledSignature<'a>>,
+
+    /// If present, the node's disco key has changed.
+    pub disco_key: Option<DiscoPublicKey>,
+    /// If present, the node's online status changed.
+    pub online: Option<bool>,
+    /// If present, the node's last seen time changed.
+    pub last_seen: Option<DateTime<Utc>>,
+
+    /// If present, the node's key expiry has changed to the new value.
+    pub key_expiry: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
