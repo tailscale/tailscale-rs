@@ -16,7 +16,7 @@ defmodule Tailscale.Tcp do
             tailscale device's respective tailnet address.
   - `port`: the port to listen on.
   """
-  @spec listen(Tailscale.t(), Tailscale.ip() | :ip4 | :ip6, :inet.port_number()) :: {:ok, Tailscale.Tcp.Listener.t()} | {:error, any()}
+  @spec listen(Tailscale.t(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) :: {:ok, Tailscale.Tcp.Listener.t()} | {:error, any()}
   def listen(dev, addr, port) do
     Tailscale.Native.tcp_listen(dev, addr, port)
   end
@@ -24,7 +24,7 @@ defmodule Tailscale.Tcp do
   @doc """
   Open a TCP connection to the specified address and port.
   """
-  @spec connect(Tailscale.t(), Tailscale.ip(), :inet.port_number()) :: {:ok, Tailscale.Tcp.Stream.t()} | {:error, any()}
+  @spec connect(Tailscale.t(), Tailscale.ip_addr(), :inet.port_number()) :: {:ok, Tailscale.Tcp.Stream.t()} | {:error, any()}
   def connect(dev, addr, port) do
     Tailscale.Native.tcp_connect(dev, addr, port)
   end

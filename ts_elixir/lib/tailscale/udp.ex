@@ -8,7 +8,7 @@ defmodule Tailscale.Udp do
   """
   @opaque t() :: Tailscale.Native.udp_socket()
   
-  @spec bind(Tailscale.t(), Tailscale.ip() | :ip4 | :ip6, :inet.port_number()) :: {:ok, t()}
+  @spec bind(Tailscale.t(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) :: {:ok, t()}
   @doc """
   Bind a UDP socket on the specified port.
     
@@ -23,7 +23,7 @@ defmodule Tailscale.Udp do
     Tailscale.Native.udp_bind(dev, addr, port)
   end
   
-  @spec send(t(), Tailscale.ip(), :inet.port_number(), binary()) :: :ok | {:error, any()}
+  @spec send(t(), Tailscale.ip_addr(), :inet.port_number(), binary()) :: :ok | {:error, any()}
   @doc """
   Send a packet to a specified remote address.
     
@@ -40,7 +40,7 @@ defmodule Tailscale.Udp do
   end
   
   
-  @spec recv(t()) :: {:ok, Tailscale.ip(), :inet.port_number(), binary()} | {:error, any()}
+  @spec recv(t()) :: {:ok, Tailscale.ip_addr(), :inet.port_number(), binary()} | {:error, any()}
   @doc """
   Receive a packet from the socket, blocking until one is ready.
   """

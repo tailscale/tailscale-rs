@@ -51,7 +51,7 @@ defmodule Tailscale.Native do
   - `dev`: the `m:Tailscale` device on which to create the socket.
   - `port`: the port to which the socket should bind.
   """
-  @spec udp_bind(device(), Tailscale.ip() | :ip4 | :ip6, :inet.port_number()) :: {:ok, udp_socket()} | {:error, any()}
+  @spec udp_bind(device(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) :: {:ok, udp_socket()} | {:error, any()}
   def udp_bind(_dev, _addr, _port), do: err()
 
   @doc """
@@ -64,7 +64,7 @@ defmodule Tailscale.Native do
   - `port`: the port to send the packet to.
   - `msg`: the packet to send.
   """
-  @spec udp_send(udp_socket(), Tailscale.ip(), :inet.port_number(), binary()) :: :ok | {:error, any()}
+  @spec udp_send(udp_socket(), Tailscale.ip_addr(), :inet.port_number(), binary()) :: :ok | {:error, any()}
   def udp_send(_sock, _ip, _port, _msg), do: err()
 
   @doc """
@@ -89,7 +89,7 @@ defmodule Tailscale.Native do
   @doc """
   Start a TCP listener on the given device, address, and port.
   """
-  @spec tcp_listen(device(), Tailscale.ip() | :ip4 | :ip6, :inet.port_number()) :: {:ok, tcp_listener()} | {:error, any()}
+  @spec tcp_listen(device(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) :: {:ok, tcp_listener()} | {:error, any()}
   def tcp_listen(_dev, _addr, _port), do: err()
 
   @doc """
@@ -101,7 +101,7 @@ defmodule Tailscale.Native do
   @doc """
   Connect to the given TCP endpoint using the given device.
   """
-  @spec tcp_connect(device(), Tailscale.ip(), :inet.port_number()) :: {:ok, tcp_stream()} | {:error, any()}
+  @spec tcp_connect(device(), Tailscale.ip_addr(), :inet.port_number()) :: {:ok, tcp_stream()} | {:error, any()}
   def tcp_connect(_dev, _addr, _port), do: err()
   
   @doc """
