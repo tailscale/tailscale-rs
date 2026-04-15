@@ -1,6 +1,7 @@
 # Example: Axum
 
-> [!NOTE] See the top-level [Requirements section](../README.md#requirements) for pre-requisites.
+> [!NOTE]
+> See the top-level [Requirements section](../README.md#requirements) for pre-requisites.
 
 An `axum`-based HTTP server that serves a simple webpage over the tailnet. This example requires
 `tailscale-rs` to be compiled with the `axum` feature:

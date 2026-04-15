@@ -1,6 +1,7 @@
 # Example: Peer Ping
 
-> [!NOTE] See the top-level [Requirements section](../README.md#requirements) for pre-requisites.
+> [!NOTE]
+> See the top-level [Requirements section](../README.md#requirements) for pre-requisites.
 
 A UDP client that sends "hello" to a tailnet peer on a configurable interval.
 

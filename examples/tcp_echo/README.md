@@ -1,6 +1,7 @@
 # Example: TCP Echo
 
-> [!NOTE] See the top-level [Requirements section](../README.md#requirements) for pre-requisites.
+> [!NOTE]
+> See the top-level [Requirements section](../README.md#requirements) for pre-requisites.
 
 A TCP server that listens on the tailnet and echoes input back to the sender.
 
