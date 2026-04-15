@@ -4294,7 +4294,6 @@ dependencies = [
  "tailscale",
  "tokio",
  "tracing",
- "ts_cli_util",
 ]
 
 [[package]]

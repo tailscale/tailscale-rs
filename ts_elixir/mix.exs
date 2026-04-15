@@ -42,8 +42,9 @@ defmodule TsElixir.MixProject do
 
   defp package do
     [
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE),
-      licenses: ["MIT"],
+      files:
+        ~w(lib .formatter.exs mix.exs README.md LICENSE native/ts_elixir/src native/ts_elixir/Cargo* native/ts_elixir/README.md),
+      licenses: ["BSD-3-Clause"],
       links: %{
         "GitHub" => "https://github.com/tailscale/tailscale-rs"
       }
