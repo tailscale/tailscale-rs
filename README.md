@@ -1,7 +1,7 @@
 # tailscale-rs
 
-[![docs.rs](https://img.shields.io/docsrs/tailscale-rs)](https://docs.rs/tailscale-rs)
-[![crates.io version](https://img.shields.io/crates/v/tailscale-rs)](https://crates.io/crates/tailscale-rs)
+[![docs.rs](https://img.shields.io/docsrs/tailscale)](https://docs.rs/tailscale)
+[![crates.io version](https://img.shields.io/crates/v/tailscale)](https://crates.io/crates/tailscale)
 
 https://tailscale.com
 
