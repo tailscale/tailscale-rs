@@ -80,13 +80,6 @@ defmodule Tailscale.Native do
   def udp_local_addr(_sock), do: err()
 
   @doc """
-  Start the Rust-side tracing machinery. This prints to stdout, so may conflict with erlang's
-  logging setup.
-  """
-  @spec start_tracing() :: :ok
-  def start_tracing(), do: err()
-  
-  @doc """
   Start a TCP listener on the given device, address, and port.
   """
   @spec tcp_listen(device(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) :: {:ok, tcp_listener()} | {:error, any()}

@@ -2128,9 +2128,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.1.1"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
+checksum = "50b7e5b27aa02a74bac8c3f23f448f8d87ff11f92d3aac1a6ed369ee08cc56c1"
 dependencies = [
  "libc",
  "wasi",
@@ -3619,10 +3619,29 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "ts_control",
- "ts_keys",
- "ts_netstack_smoltcp",
- "ts_runtime",
+ "ts_control 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_netstack_smoltcp 0.2.0",
+ "ts_runtime 0.2.0",
+ "url",
+]
+
+[[package]]
+name = "tailscale"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65bb03b9d845139dfd9a562511cfbd93c223c75e88c02931fbeb2b3b0c1fa632"
+dependencies = [
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ts_control 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_netstack_smoltcp 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_runtime 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
 ]
 
@@ -3762,9 +3781,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.50.0"
+version = "1.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
+checksum = "a91135f59b1cbf38c91e73cf3386fca9bb77915c45ce2771460c9d92f0f3d776"
 dependencies = [
  "bytes",
  "libc",
@@ -3780,9 +3799,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.6.1"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c55a2eff8b69ce66c84f85e1da1c233edc36ceb85a2058d11b0d6a3c7e7569c"
+checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4117,7 +4136,19 @@ dependencies = [
  "proptest",
  "smallvec",
  "static_assertions",
- "ts_bitset",
+ "ts_bitset 0.2.0",
+]
+
+[[package]]
+name = "ts_array256"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17aee3d3433d5516c6270dad6d5caf158bd7f42b3270f5fec99e215c10d4a20c"
+dependencies = [
+ "heapless",
+ "smallvec",
+ "static_assertions",
+ "ts_bitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4135,8 +4166,22 @@ dependencies = [
  "rand 0.10.1",
  "smallvec",
  "static_assertions",
- "ts_array256",
- "ts_bitset",
+ "ts_array256 0.2.0",
+ "ts_bitset 0.2.0",
+]
+
+[[package]]
+name = "ts_bart"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c821f4071ef71ae17fc7a6ce0023190560a609d74dc40f9c01eb8da80806ed3"
+dependencies = [
+ "cfg-if",
+ "heapless",
+ "ipnet",
+ "static_assertions",
+ "ts_array256 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_bitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4147,11 +4192,26 @@ dependencies = [
  "ipnet",
  "proptest",
  "smallvec",
- "ts_array256",
- "ts_bart",
- "ts_bitset",
- "ts_dynbitset",
- "ts_packetfilter",
+ "ts_array256 0.2.0",
+ "ts_bart 0.2.0",
+ "ts_bitset 0.2.0",
+ "ts_dynbitset 0.2.0",
+ "ts_packetfilter 0.2.0",
+]
+
+[[package]]
+name = "ts_bart_packetfilter"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f10c301b18826f9611adeee9501c67a4c80f9325bb99763d5579896c222a2c7"
+dependencies = [
+ "hashbrown 0.16.1",
+ "smallvec",
+ "ts_array256 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_bart 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_bitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_dynbitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4165,8 +4225,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_bitset"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "177aed4d1e540e5be3d3c8683956f130e470da183c80fd2a6a507f9dff0e1079"
+dependencies = [
+ "cfg-if",
+ "static_assertions",
+]
+
+[[package]]
 name = "ts_capabilityversion"
 version = "0.2.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ts_capabilityversion"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "886fda8b3d183a1dff8948d5130a165c681eaff3d7c6d735a7973de7ba1b316d"
 dependencies = [
  "serde",
 ]
@@ -4178,14 +4257,14 @@ dependencies = [
  "clap",
  "futures-util",
  "gethostname",
- "tailscale",
+ "tailscale 0.2.0",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
  "tracy-client",
- "ts_control",
- "ts_netcheck",
- "ts_transport_derp",
+ "ts_control 0.2.0",
+ "ts_netcheck 0.2.0",
+ "ts_transport_derp 0.2.0",
 ]
 
 [[package]]
@@ -4204,19 +4283,54 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
- "ts_bitset",
- "ts_capabilityversion",
- "ts_control_noise",
- "ts_control_serde",
- "ts_dynbitset",
- "ts_hexdump",
- "ts_http_util",
- "ts_keys",
- "ts_packet",
- "ts_packetfilter",
- "ts_packetfilter_state",
- "ts_tls_util",
- "ts_transport_derp",
+ "ts_bitset 0.2.0",
+ "ts_capabilityversion 0.2.0",
+ "ts_control_noise 0.2.0",
+ "ts_control_serde 0.2.0",
+ "ts_dynbitset 0.2.0",
+ "ts_hexdump 0.2.0",
+ "ts_http_util 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_packetfilter 0.2.0",
+ "ts_packetfilter_state 0.2.0",
+ "ts_tls_util 0.2.0",
+ "ts_transport_derp 0.2.0",
+ "url",
+ "zerocopy",
+]
+
+[[package]]
+name = "ts_control"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68711f544caf05f0cf37d8d79080932303ea0123955d7ce0f7f75cf6d1d0fcf7"
+dependencies = [
+ "bytes",
+ "chrono",
+ "futures-util",
+ "ipnet",
+ "lazy_static",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "ts_bitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_capabilityversion 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_control_noise 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_control_serde 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_dynbitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_hexdump 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_http_util 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter_state 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_tls_util 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport_derp 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
  "zerocopy",
 ]
@@ -4234,10 +4348,33 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "ts_capabilityversion",
- "ts_hexdump",
- "ts_keys",
- "ts_packet",
+ "ts_capabilityversion 0.2.0",
+ "ts_hexdump 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "zerocopy",
+ "zeroize",
+]
+
+[[package]]
+name = "ts_control_noise"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11825adeb2af3e794bc2467e278608d69ae941b5ba8846eac369a7d52843e3bd"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chacha20poly1305",
+ "noise-protocol",
+ "noise-rust-crypto",
+ "pin-project-lite",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ts_capabilityversion 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_hexdump 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "zerocopy",
  "zeroize",
 ]
@@ -4253,10 +4390,30 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "serde_with",
- "ts_capabilityversion",
- "ts_keys",
- "ts_nodecapability",
- "ts_packetfilter_serde",
+ "ts_capabilityversion 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_nodecapability 0.2.0",
+ "ts_packetfilter_serde 0.2.0",
+ "url",
+]
+
+[[package]]
+name = "ts_control_serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77f0d3b0c57575d0afa469cc661f567dc834122ee19bb5f675f969448bea867b"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "ipnet",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "serde_with",
+ "ts_capabilityversion 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_nodecapability 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter_serde 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
 ]
 
@@ -4267,15 +4424,35 @@ dependencies = [
  "etherparse",
  "tokio",
  "tracing",
- "ts_bart",
- "ts_keys",
- "ts_overlay_router",
- "ts_packet",
- "ts_packetfilter",
- "ts_time",
- "ts_transport",
- "ts_tunnel",
- "ts_underlay_router",
+ "ts_bart 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_overlay_router 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_packetfilter 0.2.0",
+ "ts_time 0.2.0",
+ "ts_transport 0.2.0",
+ "ts_tunnel 0.2.0",
+ "ts_underlay_router 0.2.0",
+]
+
+[[package]]
+name = "ts_dataplane"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "542c40764a18e27e4205bcaf7ac4879e6592763ea547e7fa1f7abbe964efda43"
+dependencies = [
+ "etherparse",
+ "tokio",
+ "tracing",
+ "ts_bart 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_overlay_router 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_time 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_tunnel 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_underlay_router 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4288,12 +4465,12 @@ dependencies = [
  "tokio",
  "tracing",
  "ts_cli_util",
- "ts_keys",
- "ts_packet",
- "ts_packetfilter",
- "ts_packetfilter_state",
- "ts_transport",
- "ts_transport_derp",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_packetfilter 0.2.0",
+ "ts_packetfilter_state 0.2.0",
+ "ts_transport 0.2.0",
+ "ts_transport_derp 0.2.0",
 ]
 
 [[package]]
@@ -4306,7 +4483,7 @@ dependencies = [
  "num-traits",
  "rand 0.10.1",
  "thiserror 2.0.18",
- "ts_keys",
+ "ts_keys 0.2.0",
  "zerocopy",
 ]
 
@@ -4316,7 +4493,17 @@ version = "0.2.0"
 dependencies = [
  "proptest",
  "smallvec",
- "ts_bitset",
+ "ts_bitset 0.2.0",
+]
+
+[[package]]
+name = "ts_dynbitset"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e963d1b6edcb903c28492ff68a052ec721c14d3619a9f23b1c68d3ff87c8c1f"
+dependencies = [
+ "smallvec",
+ "ts_bitset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4324,10 +4511,9 @@ name = "ts_elixir"
 version = "0.2.0"
 dependencies = [
  "rustler",
- "tailscale",
+ "tailscale 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio",
  "tracing",
- "ts_cli_util",
 ]
 
 [[package]]
@@ -4335,7 +4521,7 @@ name = "ts_ffi"
 version = "0.2.0"
 dependencies = [
  "cbindgen",
- "tailscale",
+ "tailscale 0.2.0",
  "tokio",
  "tracing",
  "ts_cli_util",
@@ -4344,6 +4530,15 @@ dependencies = [
 [[package]]
 name = "ts_hexdump"
 version = "0.2.0"
+dependencies = [
+ "heapless",
+]
+
+[[package]]
+name = "ts_hexdump"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78c3e5115c6f1a93e406262b26ad3418015cc8efdc9a11c69b0913a8adf428d4"
 dependencies = [
  "heapless",
 ]
@@ -4365,13 +4560,47 @@ dependencies = [
  "tracing",
  "tracing-test",
  "ts_test_util",
- "ts_tls_util",
+ "ts_tls_util 0.2.0",
+ "url",
+]
+
+[[package]]
+name = "ts_http_util"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8082e7677abaa0c06fc604edc2c956a7b076afa3df256a65a059ab3ac3900c13"
+dependencies = [
+ "bytes",
+ "futures",
+ "http",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-util",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ts_tls_util 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
 ]
 
 [[package]]
 name = "ts_keys"
 version = "0.2.0"
+dependencies = [
+ "crypto_box",
+ "serde",
+ "thiserror 2.0.18",
+ "x25519-dalek 3.0.0-pre.6",
+ "zerocopy",
+]
+
+[[package]]
+name = "ts_keys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cc49055f527dad252191ef44d2c44a2a74c8025833e2e05b7e488f5ab90d7b3"
 dependencies = [
  "crypto_box",
  "serde",
@@ -4393,11 +4622,29 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-test",
- "ts_control",
- "ts_control_serde",
- "ts_http_util",
+ "ts_control 0.2.0",
+ "ts_control_serde 0.2.0",
+ "ts_http_util 0.2.0",
  "ts_test_util",
- "ts_transport_derp",
+ "ts_transport_derp 0.2.0",
+ "url",
+]
+
+[[package]]
+name = "ts_netcheck"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e4e9642aef6e92657242a7e93356c19bd1c334cdae3fed841981d3d3b104745"
+dependencies = [
+ "bytes",
+ "dashmap",
+ "stun-rs",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ts_control 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_http_util 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport_derp 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
 ]
 
@@ -4417,9 +4664,23 @@ dependencies = [
  "tracing",
  "tracing-panic",
  "ts_cli_util",
- "ts_netstack_smoltcp_core",
- "ts_netstack_smoltcp_socket",
+ "ts_netstack_smoltcp_core 0.2.0",
+ "ts_netstack_smoltcp_socket 0.2.0",
  "tun-rs",
+]
+
+[[package]]
+name = "ts_netstack_smoltcp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3895381c8c29dae8d84441d6c69bdb2ddc93a07e7fa7d2fd4f69453978ba5d7"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "tokio",
+ "tracing",
+ "ts_netstack_smoltcp_core 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_netstack_smoltcp_socket 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4437,6 +4698,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_netstack_smoltcp_core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca4f9c2e08231b5d805147b8d8cfb6cc12ac7de79c5bb94e5dfa4a1181bedbb7"
+dependencies = [
+ "bytes",
+ "flume",
+ "heapless",
+ "smoltcp",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "ts_netstack_smoltcp_socket"
 version = "0.2.0"
 dependencies = [
@@ -4444,7 +4719,19 @@ dependencies = [
  "futures-io",
  "tokio",
  "tracing",
- "ts_netstack_smoltcp_core",
+ "ts_netstack_smoltcp_core 0.2.0",
+]
+
+[[package]]
+name = "ts_netstack_smoltcp_socket"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62d2c961bd14c6ea39ce4380d93cded06d51fcbd7d680d94d51aafab481d008f"
+dependencies = [
+ "bytes",
+ "tokio",
+ "tracing",
+ "ts_netstack_smoltcp_core 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4457,15 +4744,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_nodecapability"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5220b939d448eb614c32a4cfa3c4cfe8850fcb6f2d6a44f22418a719edbdb1d"
+dependencies = [
+ "cfg-if",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ts_overlay_router"
 version = "0.2.0"
 dependencies = [
  "itertools",
  "tracing",
- "ts_bart",
- "ts_keys",
- "ts_packet",
- "ts_transport",
+ "ts_bart 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_transport 0.2.0",
+]
+
+[[package]]
+name = "ts_overlay_router"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee0d3311f62d8b9047f14c97d745ca3175d4cca1a7ead7e7399883f7aef20a44"
+dependencies = [
+ "itertools",
+ "tracing",
+ "ts_bart 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4474,12 +4786,35 @@ version = "0.2.0"
 dependencies = [
  "bytes",
  "crypto_box",
- "ts_hexdump",
+ "ts_hexdump 0.2.0",
+]
+
+[[package]]
+name = "ts_packet"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c612d09cab1b106bd626df2c474d3c9abc9d66e55a2392e54d01121715b6304a"
+dependencies = [
+ "bytes",
+ "crypto_box",
+ "ts_hexdump 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "ts_packetfilter"
 version = "0.2.0"
+dependencies = [
+ "hashbrown 0.16.1",
+ "ipnet",
+ "static_assertions",
+ "tracing",
+]
+
+[[package]]
+name = "ts_packetfilter"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bb4d0f822b33c2661d1d65f137115bc4adee699f2936671687d865a43e19bda"
 dependencies = [
  "hashbrown 0.16.1",
  "ipnet",
@@ -4496,8 +4831,22 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "ts_nodecapability",
- "ts_peercapability",
+ "ts_nodecapability 0.2.0",
+ "ts_peercapability 0.2.0",
+]
+
+[[package]]
+name = "ts_packetfilter_serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6681897ffd64608590444ed7560ad61b1cfd04bc0b172d8d6a2f90fa2afc2b3"
+dependencies = [
+ "ipnet",
+ "nom 8.0.0",
+ "serde",
+ "serde_json",
+ "ts_nodecapability 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_peercapability 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4506,9 +4855,19 @@ version = "0.2.0"
 dependencies = [
  "divan",
  "serde_json",
- "ts_bart_packetfilter",
- "ts_packetfilter",
- "ts_packetfilter_serde",
+ "ts_bart_packetfilter 0.2.0",
+ "ts_packetfilter 0.2.0",
+ "ts_packetfilter_serde 0.2.0",
+]
+
+[[package]]
+name = "ts_packetfilter_state"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d83ec166e838c7ee5d66c080b662df7b8695a49deb8fca8b3909c75dd3c8372f"
+dependencies = [
+ "ts_packetfilter 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter_serde 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4520,12 +4879,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_peercapability"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23cc912e08bc81d5424441466d67edadc787dcec0fa478edc2e740d82be8d51f"
+dependencies = [
+ "serde",
+ "url",
+]
+
+[[package]]
 name = "ts_python"
 version = "0.2.0"
 dependencies = [
  "pyo3",
  "pyo3-async-runtimes",
- "tailscale",
+ "tailscale 0.2.0",
  "ts_cli_util",
 ]
 
@@ -4539,19 +4908,46 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "ts_bart",
- "ts_bart_packetfilter",
- "ts_control",
- "ts_dataplane",
- "ts_keys",
- "ts_netcheck",
- "ts_netstack_smoltcp",
- "ts_overlay_router",
- "ts_packet",
- "ts_packetfilter",
- "ts_packetfilter_state",
- "ts_transport",
- "ts_transport_derp",
+ "ts_bart 0.2.0",
+ "ts_bart_packetfilter 0.2.0",
+ "ts_control 0.2.0",
+ "ts_dataplane 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_netcheck 0.2.0",
+ "ts_netstack_smoltcp 0.2.0",
+ "ts_overlay_router 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_packetfilter 0.2.0",
+ "ts_packetfilter_state 0.2.0",
+ "ts_transport 0.2.0",
+ "ts_transport_derp 0.2.0",
+]
+
+[[package]]
+name = "ts_runtime"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01c9b1f753b88f10c327430e99e0e497aed2d9b79f672e0d5d24b6b607183d15"
+dependencies = [
+ "futures",
+ "kameo",
+ "kameo_actors",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ts_bart 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_bart_packetfilter 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_control 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_dataplane 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_netcheck 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_netstack_smoltcp 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_overlay_router 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packetfilter_state 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport_derp 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4566,6 +4962,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_time"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89eaf2f01f1a89b921f2932b8addaac5320abf334dcef40ac8321b904f48f193"
+
+[[package]]
 name = "ts_tls_util"
 version = "0.2.0"
 dependencies = [
@@ -4577,11 +4979,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_tls_util"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ecdf7fae98f2ddb27b1f47cf0430fa8300d8b8f8ce905845ed4f0498f82cf2b"
+dependencies = [
+ "tokio",
+ "tokio-rustls",
+ "url",
+ "webpki-roots",
+]
+
+[[package]]
 name = "ts_transport"
 version = "0.2.0"
 dependencies = [
- "ts_keys",
- "ts_packet",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+]
+
+[[package]]
+name = "ts_transport"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f48db0a1a0980fba5ef47c9e225fae1fe9ba37a99ab27bf719877a1b2207fb8e"
+dependencies = [
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4600,13 +5024,40 @@ dependencies = [
  "tokio-util",
  "tracing",
  "ts_cli_util",
- "ts_control_serde",
- "ts_hexdump",
- "ts_http_util",
- "ts_keys",
- "ts_packet",
- "ts_tls_util",
- "ts_transport",
+ "ts_control_serde 0.2.0",
+ "ts_hexdump 0.2.0",
+ "ts_http_util 0.2.0",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_tls_util 0.2.0",
+ "ts_transport 0.2.0",
+ "url",
+ "yoke",
+ "zerocopy",
+]
+
+[[package]]
+name = "ts_transport_derp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "260bb7b8fbe967383b81ac85318b7e257d322b8a67affce28009d9aa862bd934"
+dependencies = [
+ "bytes",
+ "crypto_box",
+ "futures",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ts_hexdump 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_http_util 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_tls_util 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
  "yoke",
  "zerocopy",
@@ -4621,9 +5072,9 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
- "ts_hexdump",
- "ts_packet",
- "ts_transport",
+ "ts_hexdump 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_transport 0.2.0",
  "tun-rs",
 ]
 
@@ -4644,9 +5095,29 @@ dependencies = [
  "tokio",
  "tracing",
  "ts_cli_util",
- "ts_keys",
- "ts_packet",
- "ts_time",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_time 0.2.0",
+ "x25519-dalek 3.0.0-pre.6",
+ "zerocopy",
+]
+
+[[package]]
+name = "ts_tunnel"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c3b14e1a11d6f74a028dc3734f1ccb360a8e223bbe717c1fbea5842aff5a60b"
+dependencies = [
+ "aead",
+ "blake2",
+ "chacha20poly1305",
+ "hkdf",
+ "itertools",
+ "rand 0.10.1",
+ "tracing",
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_time 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "x25519-dalek 3.0.0-pre.6",
  "zerocopy",
 ]
@@ -4655,9 +5126,20 @@ dependencies = [
 name = "ts_underlay_router"
 version = "0.2.0"
 dependencies = [
- "ts_keys",
- "ts_packet",
- "ts_transport",
+ "ts_keys 0.2.0",
+ "ts_packet 0.2.0",
+ "ts_transport 0.2.0",
+]
+
+[[package]]
+name = "ts_underlay_router"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d656ea501afbc3dd6c144784c683ecfe42a40060bfa0cbc2a85f4a05607dced3"
+dependencies = [
+ "ts_keys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_packet 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ts_transport 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

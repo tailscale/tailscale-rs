@@ -1,26 +1,21 @@
 [package]
 name = "ts_elixir"
-version.workspace = true
+version = "0.2.0"
 description = "rustler-based elixir bindings for tailscale"
 categories = ["api-bindings", "network-programming"]
 keywords = ["tailscale", "elixir", "bindings"]
 
-repository.workspace = true
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
+repository = "https://github.com/tailscale"
+edition = "2024"
+license = "BSD-3-Clause"
+rust-version = "1.91.0"
 
 [dependencies]
 rustler = "0.37.2"
+tokio = { version = "1.52", features = ["full"] }
+tracing = { version = "0.1" }
 
-tailscale = { workspace = true }
-ts_cli_util = { workspace = true }
-
-tokio = { workspace = true, features = ["full"] }
-tracing = { workspace = true }
+tailscale = { version = "0.2.0" }
 
 [lib]
 crate-type = ["cdylib"]
-
-[lints]
-workspace = true

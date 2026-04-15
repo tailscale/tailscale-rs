@@ -118,14 +118,6 @@ fn connect(env: rustler::Env, config_path: String, auth_key: Option<String>) -> 
     erl_result(env, dev)
 }
 
-#[rustler::nif]
-fn start_tracing() -> impl Encoder {
-    static TRACING_ONCE: std::sync::Once = std::sync::Once::new();
-    TRACING_ONCE.call_once(ts_cli_util::init_tracing);
-
-    atoms::ok()
-}
-
 #[rustler::nif(schedule = "DirtyIo")]
 fn ipv4_addr(env: rustler::Env, dev: ResourceArc<Device>) -> impl Encoder {
     let dev = dev.inner.clone();

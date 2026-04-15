@@ -36,14 +36,14 @@ defmodule TsElixir.MixProject do
       {:ex_doc, "~> 0.27", only: :dev, runtime: false},
     ]
   end
-  
+
   defp elixirc_paths(:test), do: ["lib", "test/util"]
   defp elixirc_paths(_), do: ["lib"]
 
   defp package do
     [
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE),
-      licenses: ["MIT"],
+      files: ~w(lib .formatter.exs mix.exs README.md LICENSE native/ts_elixir/src native/ts_elixir/Cargo* native/ts_elixir/README.md),
+      licenses: ["BSD-3-Clause"],
       links: %{
         "GitHub": "https://github.com/tailscale/tailscale-rs"
       }
