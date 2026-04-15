@@ -14,6 +14,12 @@
 //! See the [Caveats section](#caveats) for more details.
 //! </div>
 //!
+//! For language bindings, see the following crates:
+//!
+//! - C: [ts_ffi](https://docs.rs/ts_ffi)
+//! - Python: [ts_python](https://docs.rs/ts_python)
+//! - Elixir: [ts_elixir](https://docs.rs/ts_elixir)
+//!
 //! For instructions on how to run tests, lints, etc., see [CONTRIBUTING.md]. For the high-level
 //! architecture and repository layout, see [ARCHITECTURE.md].
 //!
@@ -52,6 +58,18 @@
 //!
 //! Additional examples of using the `tailscale` crate can be found in the [`examples/`] directory.
 //!
+//! ## Using `tailscale`
+//!
+//! To use this crate or the language bindings, you will need to set the `TS_RS_EXPERIMENT` env var
+//! to `this_is_unstable_software`. We'll remove this requirement after a third-party code/cryptography
+//! audit and any necessary fixes.
+//!
+//! Under the hood, we use Tokio for our async runtime. You must also use Tokio, any kind and most
+//! configurations of Tokio runtimes should work, but there must be one available when you call any
+//! async API functions. The easiest way to do this is to use `#[tokio::main]`, see the
+//! [Tokio docs](https://docs.rs/tokio) for more information. In the future, we would like to limit
+//! our reliance on Tokio so that there are alternatives for users of other async runtimes.
+//!
 //! ## Caveats
 //!
 //! This software is still a work-in-progress! We are providing it in the open at this stage out of
@@ -66,24 +84,42 @@
 //! - We currently rely on DERP relays for all communication. Direct connections via NAT
 //!   holepunching will be a seamless upgrade in the future, but for now, this puts a cap on data
 //!   throughput.
-//! - The `TS_RS_EXPERIMENT` environment variable is required to be set to
-//!   `this_is_unstable_software` for all code linked against `tailscale-rs`; this includes Rust, C,
-//!   Elixir, and Python code. We'll remove this requirement after a third-party code/cryptography
-//!   audit and any necessary fixes.
 //!
 //! ## Feature Flags
 //!
-//! `tailscale` has a single feature flag at this time, but we'll be adding more flags as we add
-//! more features that can be disabled.
-//! - `axum`: enables the `axum` module, which enables you to run an [`axum` HTTP server] on top
+//! - `axum`: enables the [`axum`] module, which enables you to run an [`axum` HTTP server] on top
 //!   of a [`TcpListener`].
 //!
 //! ## Platform Support
 //!
 //! `tailscale` currently supports the following platforms:
 //!
-//! - Linux (`x86_64`/`ARM64`)
-//! - macOS (`ARM64`)
+//! - Linux (x86_64 and ARM64)
+//! - macOS (ARM64)
+//!
+//! ## Component crates
+//!
+//! The following crates are part of the tailscale-rs project and are dependencies of this one. For
+//! many tasks, just this crate should be sufficient and these other crates are an implementation detail.
+//! There are other crates too, see [ARCHITECTURE.md]
+//! or the [GitHub repo](https://github.com/tailscale/tailscale-rs).
+//!
+//! - [ts_runtime](https://docs.rs/ts_runtime): for each API-level `Device`, the runtime uses an actor
+//!   architecture to manage the lifecycle of the control client, data plane components, netstack, etc. A message bus passes updates and communications between these top-level actors.
+//! - [ts_netcheck](https://docs.rs/ts_netcheck): checks network availability and reports latency to
+//!   DERP servers in different regions.
+//! - [ts_netstack_smoltcp](https://docs.rs/ts_netstack_smoltcp): a [smoltcp](https://docs.rs/smoltcp)-based
+//!   network stack that processes Layer 3+ packets to/from the overlay network.
+//! - [ts_control](https://docs.rs/ts_control): control plane client that handles registration,
+//!   authorization/authentication, configuration, and streaming updates.
+//! - [ts_dataplane](https://docs.rs/ts_dataplane): wires all the individual data plane functions together,
+//!   flowing inbound and outbound packets through the components in the correct order.
+//! - [ts_tunnel](https://docs.rs/ts_tunnel): a partial implementation of the WireGuard specification
+//!   that protects all data plane traffic, and is interoperable with other WireGuard clients, including Tailscale clients.
+//! - [ts_cli_util](https://docs.rs/ts_cli_util): helpers for writing command line tools and initializing
+//!   logging, used in examples.
+//! - [ts_disco_protocol](https://docs.rs/ts_disco_protocol): incomplete implementation of Tailscale's
+//!   discovery protocol (disco).
 //!
 //! [ARCHITECTURE.md]: https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md
 //! [CONTRIBUTING.md]: https://github.com/tailscale/tailscale-rs/blob/main/CONTRIBUTING.md

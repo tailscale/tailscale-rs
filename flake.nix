@@ -111,7 +111,7 @@
         cargoArtifacts = deps;
         src = rustsrc;
 
-        cargoExtraArgs = "--locked --workspace";
+        cargoExtraArgs = "--locked --workspace --all-features";
       });
 
       crates' = builtins.listToAttrs crates;
