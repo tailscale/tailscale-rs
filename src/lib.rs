@@ -58,6 +58,18 @@
 //!
 //! Additional examples of using the `tailscale` crate can be found in the [`examples/`] directory.
 //!
+//! ## Using tailscale-rs
+//!
+//! To use this crate or the language bindings, you will need to set the `TS_RS_EXPERIMENT` env var
+//! to `this_is_unstable_software`. We'll remove this requirement after a third-party code/cryptography
+//! audit and any necessary fixes.
+//!
+//! Under the hood, we use Tokio for our async runtime. You must also use Tokio, any kind and most
+//! configurations of Tokio runtimes should work, but there must be one available when you call any
+//! async API functions. The easiest way to do this is to use `#[tokio::main]`, see the
+//! [Tokio docs](https://docs.rs/tokio) for more information. In the future, we would like to limit
+//! our reliance on Tokio so that there are alternatives for users of other async runtimes.
+//! 
 //! ## Caveats
 //!
 //! This software is still a work-in-progress! We are providing it in the open at this stage out of
@@ -72,10 +84,6 @@
 //! - We currently rely on DERP relays for all communication. Direct connections via NAT
 //!   holepunching will be a seamless upgrade in the future, but for now, this puts a cap on data
 //!   throughput.
-//! - The `TS_RS_EXPERIMENT` environment variable is required to be set to
-//!   `this_is_unstable_software` for all code linked against `tailscale-rs`; this includes Rust, C,
-//!   Elixir, and Python code. We'll remove this requirement after a third-party code/cryptography
-//!   audit and any necessary fixes.
 //!
 //! ## Feature Flags
 //!
