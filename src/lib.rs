@@ -65,9 +65,9 @@ pub use error::Error;
 pub use netstack::netsock::{TcpListener, TcpStream, UdpSocket};
 use netstack::{CreateSocket, netcore::Channel};
 #[doc(inline)]
-pub use ts_keys::NodeState;
-#[doc(inline)]
 pub use ts_control::Node as NodeInfo;
+#[doc(inline)]
+pub use ts_keys::NodeState;
 
 #[cfg(feature = "axum")]
 pub mod axum;

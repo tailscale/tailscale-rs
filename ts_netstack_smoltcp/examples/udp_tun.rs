@@ -22,7 +22,7 @@ fn main() -> common::Result<()> {
     let sock = stack_handle.udp_bind_blocking(common::netstack_endpoint())?;
     tracing::debug!(?sock, "netstack socket bound");
 
-    assert_eq!(sock.local_endpoint_addr(), common::netstack_endpoint());
+    assert_eq!(sock.local_addr(), common::netstack_endpoint());
 
     let sock = Arc::new(sock);
 

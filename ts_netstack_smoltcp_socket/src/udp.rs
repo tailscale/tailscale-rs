@@ -119,7 +119,7 @@ impl UdpSocket {
     }
 
     /// Report the local endpoint to which this socket is bound.
-    pub const fn local_endpoint_addr(&self) -> SocketAddr {
+    pub const fn local_addr(&self) -> SocketAddr {
         self.local
     }
 

@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
         .with_state(Arc::new(AtomicUsize::new(0)))
         .route("/{*path}", get(assets));
 
-    let url = format!("http://{}/index.html", listener.local_endpoint_addr());
+    let url = format!("http://{}/index.html", listener.local_addr());
     tracing::info!(%url, "http server listening");
 
     axum::serve(tailscale::axum::Listener::from(listener), router).await?;

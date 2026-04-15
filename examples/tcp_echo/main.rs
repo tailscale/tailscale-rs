@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
         let conn = listener.accept().await?;
 
         tokio::task::spawn(async move {
-            let remote_ep = conn.remote_endpoint_addr();
+            let remote_ep = conn.remote_addr();
             tracing::info!(%remote_ep, "accepted connection");
 
             let (mut reader, mut writer) = tokio::io::split(conn);

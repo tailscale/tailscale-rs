@@ -28,7 +28,7 @@ static void* run_conn_echo(void* arg) {
     ts_tcp_stream* stream = arg;
     pthread_t id = pthread_self();
 
-    struct ts_sockaddr remote_addr = ts_tcp_remote(stream);
+    struct ts_sockaddr remote_addr = ts_tcp_remote_addr(stream);
     struct ts_sockaddr_in remote_addr_in = remote_addr.sa_data.sockaddr_in;
 
     char* addr_str = inet_ntoa(*(struct in_addr*)&remote_addr_in.sin_addr);
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
             },
         },
     };
-    assert(!ts_ipv4(dev, &addr.sa_data.sockaddr_in.sin_addr));
+    assert(!ts_ipv4_addr(dev, &addr.sa_data.sockaddr_in.sin_addr));
 
     char* addr_str = inet_ntoa(*(struct in_addr*)&addr.sa_data.sockaddr_in.sin_addr);
     printf("listening on %s:%u\n", addr_str, 1234);

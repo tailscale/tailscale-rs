@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
             },
         },
     };
-    assert(!ts_ipv4(dev, &addr.sa_data.sockaddr_in.sin_addr));
+    assert(!ts_ipv4_addr(dev, &addr.sa_data.sockaddr_in.sin_addr));
 
     char* addr_str = inet_ntoa(*(struct in_addr*)&addr.sa_data.sockaddr_in.sin_addr);
     printf("bound to %s:%u\n", addr_str, 1234);

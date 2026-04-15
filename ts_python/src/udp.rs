@@ -55,10 +55,10 @@ impl UdpSocket {
 
     /// Get the local endpoint this socket is bound to.
     pub fn local_endpoint_addr(&self) -> (String, u16) {
-        sockaddr_as_tuple(self.sock.local_endpoint_addr())
+        sockaddr_as_tuple(self.sock.local_addr())
     }
 
     fn __repr__(&self) -> String {
-        format!("tailscale.UdpSocket({})", self.sock.local_endpoint_addr())
+        format!("tailscale.UdpSocket({})", self.sock.local_addr())
     }
 }

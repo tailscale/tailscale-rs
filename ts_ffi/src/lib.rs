@@ -32,7 +32,7 @@ pub use net_types::{
 };
 pub use tcp::{
     tcp_listener, tcp_stream, ts_tcp_close, ts_tcp_close_listener, ts_tcp_connect, ts_tcp_listen,
-    ts_tcp_listener_local, ts_tcp_local, ts_tcp_recv, ts_tcp_remote, ts_tcp_send,
+    ts_tcp_listener_local_addr, ts_tcp_local_addr, ts_tcp_recv, ts_tcp_remote_addr, ts_tcp_send,
 };
 pub use udp::{ts_udp_bind, ts_udp_close, ts_udp_recvfrom, ts_udp_sendto, udp_socket};
 
@@ -124,7 +124,7 @@ pub extern "C" fn ts_deinit(dev: Box<device>) {
 ///
 /// Returns a negative number on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn ts_ipv4(dev: &device, dst: &mut in_addr_t) -> ffi::c_int {
+pub extern "C" fn ts_ipv4_addr(dev: &device, dst: &mut in_addr_t) -> ffi::c_int {
     let addr = match TOKIO_RUNTIME.block_on(dev.0.ipv4_addr()) {
         Ok(addr) => addr,
         Err(e) => {
@@ -142,7 +142,7 @@ pub extern "C" fn ts_ipv4(dev: &device, dst: &mut in_addr_t) -> ffi::c_int {
 ///
 /// Returns a negative number on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn ts_ipv6(dev: &device, dst: &mut in6_addr_t) -> ffi::c_int {
+pub extern "C" fn ts_ipv6_addr(dev: &device, dst: &mut in6_addr_t) -> ffi::c_int {
     let addr = match TOKIO_RUNTIME.block_on(dev.0.ipv6_addr()) {
         Ok(addr) => addr,
         Err(e) => {
