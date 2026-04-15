@@ -14,6 +14,12 @@
 //! See the [Caveats section](#caveats) for more details.
 //! </div>
 //!
+//! For language bindings, see the following crates:
+//!
+//! - C: [ts_ffi](https://docs.rs/ts_ffi)
+//! - Python: [ts_python](https://docs.rs/ts_python)
+//! - Elixir: [ts_elixir](https://docs.rs/ts_elixir)
+//!
 //! For instructions on how to run tests, lints, etc., see [CONTRIBUTING.md]. For the high-level
 //! architecture and repository layout, see [ARCHITECTURE.md].
 //!
