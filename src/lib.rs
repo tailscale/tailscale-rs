@@ -91,11 +91,37 @@
 //! - Linux (`x86_64`/`ARM64`)
 //! - macOS (`ARM64`)
 //!
+//! ## Component crates
+//!
+//! The following crates are part of the tailscale-rs project and are dependencies of this one. For
+//! many tasks, just this crate should be sufficient and these other crates are an implementation detail.
+//! There are other crates too, see [ARCHITECTURE.md](https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md)
+//! or the [GitHub repo](https://github.com/tailscale/tailscale-rs).
+//!
+//! - [ts_runtime](https://docs.rs/ts_runtime): for each API-level `Device`, the runtime uses an actor
+//!   architecture to manage the lifecycle of the control client, data plane components, netstack, etc. A message bus passes updates and communications between these top-level actors.
+//! - [ts_netcheck](https://docs.rs/ts_netcheck): checks network availability and reports latency to
+//!   DERP servers in different regions.
+//! - [ts_netstack_smoltcp](https://docs.rs/ts_netstack_smoltcp): a [smoltcp](https://docs.rs/smoltcp)-based
+//!   network stack that processes Layer 3+ packets to/from the overlay network.
+//! - [ts_control](https://docs.rs/ts_control): control plane client that handles registration,
+//!   authorization/authentication, configuration, and streaming updates.
+//! - [ts_dataplane](https://docs.rs/ts_dataplane): wires all the individual data plane functions together,
+//!   flowing inbound and outbound packets through the components in the correct order.
+//! - [ts_tunnel](https://docs.rs/ts_tunnel): a partial implementation of the WireGuard specification
+//!   that protects all data plane traffic, and is interoperable with other WireGuard clients, including Tailscale clients.
+//! - [ts_cli_util](https://docs.rs/ts_cli_util): helpers for writing command line tools and initializing
+//!   logging, used in examples.
+//! - [ts_disco_protocol](https://docs.rs/ts_disco_protocol): incomplete implementation of Tailscale's
+//!   discovery protocol (disco).
+//!
 //! [ARCHITECTURE.md]: https://github.com/tailscale/tailscale-rs/blob/main/ARCHITECTURE.md
 //! [CONTRIBUTING.md]: https://github.com/tailscale/tailscale-rs/blob/main/CONTRIBUTING.md
 //! [`examples/`]: https://github.com/tailscale/tailscale-rs/blob/main/examples/README.md
 //! [open an issue]: https://github.com/tailscale/tailscale-rs/issues
 //! [`axum` HTTP server]: https://docs.rs/axum/latest/axum/
+//! - We currently rely on DERP relays for all communication. Direct connections via NAT holepunching
+//!   will be a seamless upgrade in the future, but for now, this puts a cap on data throughput.
 
 extern crate ts_netstack_smoltcp as netstack;
 
