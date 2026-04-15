@@ -11,19 +11,18 @@ Elixir, and Python.
 > [!CAUTION]
 > This software is unstable and insecure.
 >
-> We welcome enthusiasm and interest, but please **do not** build production software using
-> `tailscale-rs` or rely on it for data privacy until we have a chance to batten down some hatches
+> We welcome enthusiasm and interest, but please **do not** build production software using these
+> libraries or rely on it for data privacy until we have a chance to batten down some hatches
 > and complete a third-party audit.
 >
 > See [Caveats](#caveats) for more details.
 
 ## Getting Started
 
-> [!IMPORTANT]
-> The following instructions are for Rust! For other languages, see the language-specific README:
-> - [C](ts_ffi/README.md)
-> - [Elixir](ts_elixir/README.md)
-> - [Python](ts_python/README.md) 
+The following instructions are for Rust! For other languages, see the language-specific README:
+- [C](ts_ffi/README.md)
+- [Elixir](ts_elixir/README.md)
+- [Python](ts_python/README.md) 
 
 Add this dependency line to your `Cargo.toml`:
 
@@ -104,14 +103,10 @@ perform any necessary fixes.
 
 ## Platform Support
 
-We officially support the following platforms and architectures:
+We support the following platforms and architectures:
 
 - Linux (`x86_64`/`ARM64`)
 - macOS (`ARM64`)
-
-There may be references to other platforms throughout the codebase; this doesn't indicate official
-support, or that we definitely plan to support that platform. If there's a platform or architecture
-you'd like to see supported, please open an issue!
 
 ## Status
 
@@ -124,25 +119,22 @@ is the best way to see the latest updates.
 These are features that we currently implement:
 
 - Basics
-  - Create TCP, UDP, and raw sockets on the tailnet
-  - Peer-to-peer communication via public DERP relays
-  - Full compatibility with the Tailscale Go client, `tsnet`, and `libtailscale`
-  - Packet filtering via tailnet policy
+  - Create TCP and UDP sockets on the tailnet
+  - Communicate with peers via public DERP relays
+  - Communicate with the Tailscale Go client, `tsnet`, and `libtailscale`
 - Language support
   - Rust API
   - C, Elixir, and Python bindings
 
 ### Coming Soon
 
-These are features we have in the pipeline and are actively working towards. This *does not*
-absolutely mean that we'll ship these features, or indicate when we'll ship these features, but
-does mean that we're working on them.
+These are features or efforts we have in the pipeline and are actively working towards, but provide
+no guarantees on timeline or completion:
 
 - Direct connections (NAT traversal, STUN, and Disco)
-- Headscale integration
 - Peer lookups (addressing peers by hostname)
-- Third-Party Code and Cryptography Audit
-- Windows support
+- Third-party code and cryptography audit
+- Official Windows support
 
 ### Unsupported
 
@@ -150,6 +142,11 @@ This is an incomplete list of features in the Tailscale Go client, `tsnet`, and/
 that we currently *do not* support. We'd like to add all of these eventually! If there's something
 on this list you'd like to see supported, or something _not_ on this list you're not sure about,
 please open an issue!
+
+<details>
+<summary>
+Unsupported features
+</summary>
 
 - Networking
   - Peer relays
@@ -188,6 +185,8 @@ please open an issue!
   - Tailscale Services
   - Webhooks
 - Any other features not listed in "Implemented" or "Coming Soon"
+
+</details>
 
 ## Legal
 

@@ -5,12 +5,11 @@ use tracing_subscriber::filter::LevelFilter;
 
 /// Run a TCP echo server on the tailnet on a particular port.
 ///
-/// To see the server working, try connecting to it with `telnet`:
+/// To see the server working, try connecting to it with netcat (`nc`):
 ///
-///     $ telnet $TAILNET_IPV4 $LISTEN_PORT
+///     $ nc $TAILNET_IPV4 $LISTEN_PORT
 ///
-/// It should echo back each character you type. If not, type a message and hit enter; the entire
-/// line should be echoed back. See the README for an explanation.
+/// Type a message and hit enter; the server should echo the message back to you.
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Args {

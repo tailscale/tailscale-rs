@@ -232,3 +232,9 @@ axum = ["dep:axum"]
 [[example]]
 name = "axum"
 required-features = ["axum"]
+
+[[example]]
+name = "peer_ping"
+
+[[example]]
+name = "tcp_echo"
