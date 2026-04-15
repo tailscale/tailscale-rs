@@ -19,7 +19,7 @@ async def main():
     # bind a udp socket on this node's ipv4 address:
     tailnet_ipv4 = await dev.ipv4_addr()
     udp_sock = await dev.udp_bind((tailnet_ipv4, 1234))
-    print(f'udp bound, local endpoint: {udp_sock.local_endpoint_addr()}')
+    print(f'udp bound, local endpoint: {udp_sock.local_addr()}')
 
     # send a message to a peer once per second
     while True:
