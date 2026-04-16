@@ -21,6 +21,13 @@ pub enum Error {
     /// A connection was reset.
     #[error("connection reset")]
     ConnectionReset,
+
+    /// A configuration environment variable held an unparseable or non-UTF-8 value.
+    ///
+    /// The wrapped `&'static str` names the offending variable (e.g. `"TS_CONTROL_URL"`).
+    /// The underlying parse error is logged at the call site via `tracing::error!`.
+    #[error("invalid value for config env var {0}")]
+    InvalidConfigEnv(&'static str),
 }
 
 impl From<ts_runtime::Error> for Error {
