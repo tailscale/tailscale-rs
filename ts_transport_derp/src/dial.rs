@@ -54,20 +54,33 @@ pub async fn dial_region_tls<'c>(
     };
     let remote_addr = conn.peer_addr()?;
 
-    let TlsValidationConfig::CommonName { common_name } = &server.tls_validation_config else {
-        // These should be filtered out in `dial_region_tcp`, so we want this to panic.
-        unimplemented!("self-signed derp server certs are currently unsupported");
+    let tls_conn = match &server.tls_validation_config {
+        TlsValidationConfig::CommonName { common_name } => {
+            ts_tls_util::connect(
+                ServerName::try_from(common_name.clone()).map_err(|e| {
+                    tracing::error!(error = %e, "derp common name");
+                    Error::InvalidParam
+                })?,
+                conn,
+            )
+            .await?
+        }
+        TlsValidationConfig::InsecureForTests => {
+            tracing::warn!(%server.hostname, "using insecure TLS for tests");
+            ts_tls_util::connect_insecure(
+                ServerName::try_from(server.hostname.clone()).map_err(|e| {
+                    tracing::error!(error = %e, "derp hostname");
+                    Error::InvalidParam
+                })?,
+                conn,
+            )
+            .await?
+        }
+        TlsValidationConfig::SelfSigned { .. } => {
+            // SelfSigned should be filtered out in `dial_region_tcp`.
+            unimplemented!("self-signed derp server certs are currently unsupported");
+        }
     };
-
-    let tls_conn = ts_tls_util::connect(
-        ServerName::try_from(common_name.clone()).map_err(|e| {
-            tracing::error!(error = %e, "derp common name");
-
-            Error::InvalidParam
-        })?,
-        conn,
-    )
-    .await?;
 
     Ok(Some((tls_conn, server, remote_addr)))
 }
@@ -101,6 +114,8 @@ pub async fn dial_region_tcp<'c>(
             );
             continue;
         }
+
+        // InsecureForTests is allowed through -- TLS verification is skipped in dial_region_tls.
 
         match dial_server(server).await {
             Ok(Some(conn)) => {
