@@ -88,15 +88,15 @@ pub struct DerpServer<'a> {
     /// The port on the [`DerpServer`] listening for STUN binding requests. If not provided,
     /// defaults to `StunPort::Port(3478)`. If `StunPort::Disabled`, STUN is disabled on the
     /// server.
-    #[serde(default)]
+    #[serde(default, rename = "STUNPort")]
     pub stun_port: StunPort,
     /// Indicates this server is only a STUN server, and not a DERP server capable of relaying
     /// packets.
-    #[serde(default)]
+    #[serde(default, rename = "STUNOnly")]
     pub stun_only: bool,
     /// Optionally provides an alternate TLS port number for the DERP HTTPS server. If zero, port
     /// 443 is used.
-    #[serde(default)]
+    #[serde(default, rename = "DERPPort")]
     pub derp_port: u16,
 
     /// Used by unit tests to disable TLS verification. Do NOT set this on production servers or
@@ -105,7 +105,7 @@ pub struct DerpServer<'a> {
     pub insecure_for_tests: bool,
     /// Used in tests to override the STUN server's IP address. If empty, it's assumed to be the
     /// same IP address as the DERP server.
-    #[serde(default)]
+    #[serde(default, rename = "STUNTestIP")]
     pub stun_test_ip: Option<IpAddr>,
     /// Indicates whether this DERP node is accessible over HTTP on TCP port 80. This is used for
     /// captive portal checks.
