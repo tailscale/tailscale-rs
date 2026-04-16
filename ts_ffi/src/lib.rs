@@ -114,6 +114,94 @@ pub unsafe extern "C" fn ts_init(
     .map(Box::new)
 }
 
+/// Initialize a new Tailscale device with additional configuration options.
+///
+/// Like [`ts_init`], but allows specifying a custom control server URL and hostname.
+///
+/// `control_url` is the URL of the control server to connect to. Pass `NULL` to use the
+/// default production control server.
+///
+/// `hostname` is the hostname this node will request on the tailnet. Pass `NULL` to use
+/// the OS hostname.
+///
+/// # Safety
+///
+/// All non-null string parameters must be able to be read according to [`CStr`] rules, i.e.
+/// they must be NUL-terminated and valid for reading up to and including the NUL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ts_init_custom(
+    config_path: *const c_char,
+    auth_token: *const c_char,
+    control_url: *const c_char,
+    hostname: *const c_char,
+) -> Option<Box<device>> {
+    static TRACING_ONCE: Once = Once::new();
+    TRACING_ONCE.call_once(ts_cli_util::init_tracing);
+
+    async fn _ts_init_custom(
+        config_path: &CStr,
+        auth_token: Option<&CStr>,
+        control_url: Option<&CStr>,
+        hostname: Option<&CStr>,
+    ) -> Result<device> {
+        let config_path = config_path.to_str()?.to_string();
+        tracing::info!(config_path);
+
+        let auth_token = auth_token
+            .and_then(|x| x.to_str().ok())
+            .map(ToOwned::to_owned);
+
+        let mut config = tailscale::Config {
+            key_state: tailscale::load_key_file(&config_path, Default::default()).await?,
+            ..Default::default()
+        };
+
+        if let Some(url_cstr) = control_url {
+            let url_str = url_cstr.to_str()?;
+            tracing::info!(control_url = url_str);
+            config.control_server_url = url::Url::parse(url_str)
+                .map_err(|e| Box::new(e) as Box<dyn core::error::Error + Send + Sync>)?;
+        }
+
+        if let Some(hn_cstr) = hostname {
+            let hn_str = hn_cstr.to_str()?;
+            tracing::info!(hostname = hn_str);
+            config.requested_hostname = Some(hn_str.to_owned());
+        }
+
+        let dev = tailscale::Device::new(&config, auth_token).await?;
+
+        Result::<_>::Ok(device(dev))
+    }
+
+    // SAFETY: ensured by function precondition
+    unsafe {
+        TOKIO_RUNTIME.block_on(_ts_init_custom(
+            CStr::from_ptr(config_path),
+            if auth_token.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(auth_token))
+            },
+            if control_url.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(control_url))
+            },
+            if hostname.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(hostname))
+            },
+        ))
+    }
+    .inspect_err(|e| {
+        tracing::error!(err = %e, "ts_init_custom failed");
+    })
+    .ok()
+    .map(Box::new)
+}
+
 /// Deinitialize and shut down a Tailscale device.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_deinit(dev: Box<device>) {

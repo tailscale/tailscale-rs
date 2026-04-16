@@ -17,6 +17,7 @@ ts_cli_util.workspace = true
 
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["release_max_level_info"] }
+url.workspace = true
 
 [build-dependencies]
 cbindgen = "0.29"
