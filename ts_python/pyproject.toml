@@ -5,9 +5,6 @@ description = "Work-in-progress Tailscale library written in Rust."
 license = "BSD-3-Clause"
 readme = "README.md"
 keywords = ["tailscale-py", "tailscale-rs", "tailscale", "vpn", "wireguard"]
-documentation = "https://github.com/tailscale/tailscale-rs/tree/main/ts_python"
-homepage = "https://github.com/tailscale/tailscale-rs"
-repository = "https://github.com/tailscale/tailscale-rs"
 requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -26,6 +23,11 @@ classifiers = [
 dependencies = [
     "maturin>=1.13.1",
 ]
+
+[project.urls]
+Documentation = "https://github.com/tailscale/tailscale-rs/tree/main/ts_python"
+Homepage = "https://github.com/tailscale/tailscale-rs"
+Repository = "https://github.com/tailscale/tailscale-rs"
 
 [build-system]
 requires = ["maturin>=1.13.1,<2.0"]
