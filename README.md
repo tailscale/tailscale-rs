@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Open a new connection to tailscale
     let dev = tailscale::Device::new(
         &tailscale::Config {
-            key_state: tailscale::load_key_file("tsrs_state.json", Default::default()).await?,
+            key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
             ..Default::default()
         },
         Some("YOUR_AUTH_KEY_HERE".to_owned()),

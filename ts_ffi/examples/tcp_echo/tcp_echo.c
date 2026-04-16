@@ -21,7 +21,7 @@
 
 #define USAGE \
     "usage: tcp_echo CONFIG_PATH AUTH_TOKEN\n" \
-    "  e.g. tcp_echo test.json tskey-auth-XXX"
+    "  e.g. tcp_echo tsrs_keys.json tskey-auth-XXX"
 
 static void* run_conn_echo(void* arg) {
     uint8_t* buf = malloc(1024);

@@ -14,7 +14,7 @@ import tailscale
 
 async def main():
     # connect to the tailnet:
-    dev = await tailscale.connect('tsrs_state.json', "tskey-auth-$MY_AUTH_KEY")
+    dev = await tailscale.connect('tsrs_keys.json', "tskey-auth-$MY_AUTH_KEY")
 
     # bind a udp socket on this node's ipv4 address:
     tailnet_ipv4 = await dev.ipv4_addr()

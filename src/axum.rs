@@ -7,7 +7,7 @@
 //! # async fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let dev = tailscale::Device::new(
 //!     &tailscale::Config {
-//!         key_state: tailscale::load_key_file("tsrs_key.json", Default::default()).await?,
+//!         key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
 //!         ..Default::default()
 //!     },
 //!     Some("YOUR_AUTH_KEY".to_owned()),

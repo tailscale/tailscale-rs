@@ -7,8 +7,7 @@ flamegraph.svg
 perf.data
 perf.data.old
 heaptrack.*
-config.json
-key_file*.json
+tsrs_keys*.json
 priv/
 _build/
 ts_elixir/deps/

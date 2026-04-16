@@ -23,7 +23,7 @@ Then, in another terminal, run the example:
 
 ```sh
 # Terminal 2
-$ TS_RS_EXPERIMENT=this_is_unstable_software cargo run --example peer_ping -- --auth-key $AUTH_KEY --key-file key_file.json --peer <tailnet IP>:5678 
+$ TS_RS_EXPERIMENT=this_is_unstable_software cargo run --example peer_ping -- --auth-key $AUTH_KEY --key-file tsrs_keys.json --peer <tailnet IP>:5678 
 ...
 INFO ts_runtime::multiderp: new home derp region selected region_id=1 latency_ms=12.223305702209473
 ...

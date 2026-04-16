@@ -18,7 +18,7 @@
 
 #define USAGE \
     "usage: udp_ping CONFIG_PATH AUTH_TOKEN PEER_ADDR\n" \
-    "  e.g. udp_ping test.json tskey-auth-XXX 1.2.3.4:5678"
+    "  e.g. udp_ping tsrs_keys.json tskey-auth-XXX 1.2.3.4:5678"
 
 int main(int argc, char** argv) {
     if (argc != 4) {

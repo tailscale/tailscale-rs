@@ -8,7 +8,7 @@ import tailscale
 
 async def main(auth_key: str, bind_port: int) -> None:
     # Connect to the tailnet:
-    dev = await tailscale.connect('key_file_recv.json', auth_key)
+    dev = await tailscale.connect('tsrs_keys_recv.json', auth_key)
 
     # Bind a UDP socket on this device's IPv4 address:
     tailnet_ipv4 = await dev.ipv4_addr()

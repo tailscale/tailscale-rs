@@ -7,7 +7,7 @@ An `axum`-based HTTP server that serves a simple webpage over the tailnet. This 
 `tailscale-rs` to be compiled with the `axum` feature:
 
 ```sh
-$ TS_RS_EXPERIMENT=this_is_unstable_software cargo run --example axum --features axum -- --auth-key $AUTH_KEY --key-file key_file.json
+$ TS_RS_EXPERIMENT=this_is_unstable_software cargo run --example axum --features axum -- --auth-key $AUTH_KEY --key-file tsrs_keys.json
 ...
 INFO axum: http server listening url=http://<tailnet IP>:80/index.html
 ```

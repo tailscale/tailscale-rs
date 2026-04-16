@@ -9,7 +9,7 @@ For this example, you can use netcat (`nc`) to test the server. First, start the
 
 ```sh
 # Terminal 1
-$ TS_RS_EXPERIMENT=this_is_unstable_software cargo run --example tcp_echo -- --auth-key $AUTH_KEY --key-file key_file.json 
+$ TS_RS_EXPERIMENT=this_is_unstable_software cargo run --example tcp_echo -- --auth-key $AUTH_KEY --key-file tsrs_keys.json 
 ...
 INFO tcp_echo: listening_addr=<tailnet IP>:1234
 ...

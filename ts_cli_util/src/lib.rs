@@ -20,7 +20,7 @@ static GLOBAL_ALLOC: tracy_client::ProfiledAllocator<std::alloc::System> =
 #[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
 pub struct CommonArgs {
     /// The path of the key file to save to.
-    #[arg(short = 'c', long, default_value = "config.json")]
+    #[arg(short = 'c', long, default_value = "tsrs_keys.json")]
     pub key_state_path: std::path::PathBuf,
 
     /// The auth key to connect with.
