@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   pull_request:
   schedule:
     # Nightly run; execute daily at 06:37 AM UTC on main (default branch).
