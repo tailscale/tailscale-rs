@@ -1,16 +1,15 @@
 use alloc::string::String;
 use core::{fmt, str::FromStr};
 
+use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use ts_capabilityversion::CapabilityVersion;
-use ts_hexdump::{AsHexExt, Case};
 use ts_http_util::{BytesBody, ClientExt, EmptyBody, HeaderName, HeaderValue, Http2, ResponseExt};
-use ts_keys::{ChallengePublicKey, MachineKeyPair, MachinePublicKey};
-use ts_packet::PacketMut;
+use ts_keys::{MachineKeyPair, MachinePublicKey};
 use url::Url;
 use zerocopy::network_endian::U32;
 
-use crate::tokio::{MapStreamError, RegistrationError};
+use crate::tokio::{MapStreamError, RegistrationError, prefixed_reader::PrefixedReader};
 
 const CHALLENGE_MAGIC: [u8; 5] = [0xFF, 0xFF, 0xFF, b'T', b'S'];
 const HANDSHAKE_HEADER_KEY: &str = "X-Tailscale-Handshake";
@@ -83,8 +82,13 @@ pub async fn connect(
         CapabilityVersion::CURRENT,
     );
 
-    let mut conn = upgrade_ts2021(control_url, &init_msg, handshake, h1_client).await?;
-    let _challenge_packet = read_challenge_packet(&mut conn).await?;
+    let conn = upgrade_ts2021(control_url, &init_msg, handshake, h1_client).await?;
+
+    // The early payload (challenge packet) is optional. The server may send
+    // the magic prefix [FF FF FF 'T' 'S'] followed by a JSON challenge, or it
+    // may go straight to HTTP/2 (whose first frame starts with different bytes).
+    // Read the first 9 bytes (same size as an HTTP/2 frame header) and check.
+    let conn = read_challenge_packet(conn).await?;
 
     let h2_conn = ts_http_util::http2::connect(conn).await?;
     Ok(h2_conn)
@@ -153,21 +157,32 @@ pub async fn upgrade_ts2021(
     Ok(conn)
 }
 
-#[tracing::instrument(skip_all, ret, err, level = "trace")]
-pub async fn read_challenge_packet(
-    conn: &mut (impl AsyncRead + Unpin),
-) -> Result<ChallengePublicKey, ConnectionError> {
+/// Read the optional early payload (challenge packet) from the server.
+///
+/// The server may send a challenge packet with magic prefix [FF FF FF 'T' 'S'] followed
+/// by a JSON payload, or it may go straight to HTTP/2. This function checks for the magic header
+/// and consumes the payload if present, otherwise chaining the bytes back for consumption by the
+/// HTTP/2 parser.
+#[tracing::instrument(skip_all, err, level = "trace")]
+pub async fn read_challenge_packet<Conn>(
+    mut conn: Conn,
+) -> Result<PrefixedReader<Conn>, ConnectionError>
+where
+    Conn: AsyncRead + Unpin,
+{
     let mut magic = [0u8; CHALLENGE_MAGIC.len()];
 
     conn.read_exact(&mut magic)
         .await
         .map_err(|err| ConnectionError::Io {
-            field: Some("magic"),
-            stage: "challenge",
+            field: Some("header"),
+            stage: "early_payload",
             err,
         })?;
+
+    // This isn't an early challenge payload, it's the start of the HTTP/2 header -- chain it back
     if magic != CHALLENGE_MAGIC {
-        return Err(ConnectionError::InvalidChallengeMagic(magic));
+        return Ok(PrefixedReader::new(conn, Bytes::copy_from_slice(&magic)));
     }
 
     let mut challenge_len: U32 = 0.into();
@@ -178,13 +193,15 @@ pub async fn read_challenge_packet(
             stage: "challenge",
             err,
         })?;
+
     let challenge_len = challenge_len.get() as usize;
     if challenge_len > MAX_CHALLENGE_LENGTH {
         return Err(ConnectionError::InvalidChallengeLength(challenge_len));
     }
 
-    let mut json = PacketMut::new(challenge_len);
-    conn.read_exact(json.as_mut())
+    // Read and discard the challenge JSON.
+    let mut limited = conn.take(challenge_len as _);
+    tokio::io::copy(&mut limited, &mut tokio::io::sink())
         .await
         .map_err(|err| ConnectionError::Io {
             field: Some("body"),
@@ -192,20 +209,69 @@ pub async fn read_challenge_packet(
             err,
         })?;
 
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct ChallengePacket {
-        node_key_challenge: ChallengePublicKey,
-    }
-
     tracing::trace!(
-        "challenge packet:\n{}",
-        json.iter()
-            .hexdump(Case::Lower)
-            .flatten()
-            .collect::<String>()
+        n_bytes = challenge_len,
+        "read and discarded early challenge payload"
     );
 
-    let packet = serde_json::from_slice::<ChallengePacket>(&json[..])?;
-    Ok(packet.node_key_challenge)
+    Ok(PrefixedReader::new(
+        limited.into_inner(),
+        Default::default(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
+
+    use super::*;
+
+    /// Build a challenge packet: magic + big-endian length + JSON body.
+    fn make_challenge(json: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&CHALLENGE_MAGIC);
+        buf.extend_from_slice(&(json.len() as u32).to_be_bytes());
+        buf.extend_from_slice(json);
+        buf
+    }
+
+    /// Test that when the server sends an early challenge packet (production control
+    /// server behavior), the magic+length+JSON is consumed and subsequent HTTP/2 data
+    /// is passed through unmodified.
+    #[tokio::test]
+    async fn challenge_present() {
+        let json = b"{\"nodeKeyChallenge\":\"test\"}";
+        let payload = b"HTTP/2 data after challenge";
+
+        let mut data = make_challenge(json);
+        data.extend_from_slice(payload);
+
+        let (mut writer, reader) = duplex(1024);
+        writer.write_all(&data).await.unwrap();
+        drop(writer);
+
+        let mut conn = read_challenge_packet(reader).await.unwrap();
+
+        let mut out = Vec::new();
+        conn.read_to_end(&mut out).await.unwrap();
+        assert_eq!(out, payload);
+    }
+
+    /// Test that when the server skips the early challenge and goes straight to HTTP/2
+    /// (testcontrol behavior), all bytes are preserved -- the 9-byte peek that didn't
+    /// match the magic is chained back so the HTTP/2 parser sees the full stream.
+    #[tokio::test]
+    async fn challenge_absent() {
+        let payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+        let (mut writer, reader) = duplex(1024);
+        writer.write_all(payload).await.unwrap();
+        drop(writer);
+
+        let mut conn = read_challenge_packet(reader).await.unwrap();
+
+        let mut out = Vec::new();
+        conn.read_to_end(&mut out).await.unwrap();
+        assert_eq!(out, payload);
+    }
 }
