@@ -53,8 +53,11 @@ fn server(server: &ts_control_serde::DerpServer) -> ts_transport_derp::ServerCon
         port => port,
     };
 
-    let tls_config =
-        TlsValidationConfig::from_str(server.cert_name.unwrap_or_default(), server.hostname);
+    let tls_config = if server.insecure_for_tests {
+        TlsValidationConfig::InsecureForTests
+    } else {
+        TlsValidationConfig::from_str(server.cert_name.unwrap_or_default(), server.hostname)
+    };
 
     ts_transport_derp::ServerConnInfo {
         hostname: server.hostname.to_string(),
