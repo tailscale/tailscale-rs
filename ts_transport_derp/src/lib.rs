@@ -185,6 +185,7 @@ pub enum TlsValidationConfig {
         /// The common name the certificate should have.
         common_name: String,
     },
+    #[cfg(feature = "insecure-for-tests")]
     /// Skip TLS certificate verification entirely. Only for use in tests.
     InsecureForTests,
 }

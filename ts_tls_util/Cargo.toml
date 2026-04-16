@@ -15,8 +15,13 @@ rust-version.workspace = true
 # Unconditionally required dependencies.
 tokio.workspace = true
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
+tracing.workspace = true
 url.workspace = true
 webpki-roots = { version = "1.0" }
+
+[features]
+# enable the connect_insecure function, which doesn't validate tls certs
+insecure = []
 
 [lints]
 workspace = true

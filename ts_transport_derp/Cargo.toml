@@ -40,5 +40,11 @@ tokio = { workspace = true, features = ["full"] }
 ts_cli_util.workspace = true
 ts_control_serde.workspace = true
 
+[features]
+# Enable insecure TLS connections for running in test configurations
+insecure-for-tests = [
+    "ts_tls_util/insecure"
+]
+
 [lints]
 workspace = true

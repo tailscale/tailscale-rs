@@ -4571,6 +4571,7 @@ version = "0.2.0"
 dependencies = [
  "tokio",
  "tokio-rustls",
+ "tracing",
  "url",
  "webpki-roots",
 ]

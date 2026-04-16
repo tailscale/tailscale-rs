@@ -65,8 +65,10 @@ pub async fn dial_region_tls<'c>(
             )
             .await?
         }
+        #[cfg(feature = "insecure-for-tests")]
         TlsValidationConfig::InsecureForTests => {
             tracing::warn!(%server.hostname, "using insecure TLS for tests");
+
             ts_tls_util::connect_insecure(
                 ServerName::try_from(server.hostname.clone()).map_err(|e| {
                     tracing::error!(error = %e, "derp hostname");
@@ -77,7 +79,7 @@ pub async fn dial_region_tls<'c>(
             .await?
         }
         TlsValidationConfig::SelfSigned { .. } => {
-            // SelfSigned should be filtered out in `dial_region_tcp`.
+            // These should be filtered out in `dial_region_tcp`, so we want this to panic.
             unimplemented!("self-signed derp server certs are currently unsupported");
         }
     };
