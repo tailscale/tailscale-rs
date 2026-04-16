@@ -71,7 +71,7 @@ pub async fn connect(
     control_url: &Url,
     machine_keys: &MachineKeyPair,
 ) -> Result<Http2<BytesBody>, ConnectionError> {
-    let h1_client = ts_http_util::http1::connect_tls(control_url).await?;
+    let h1_client = connect_h1(control_url).await?;
 
     let control_public_key = fetch_control_key(control_url).await?;
 
@@ -94,16 +94,32 @@ pub async fn connect(
     Ok(h2_conn)
 }
 
+/// Connect an HTTP/1.1 client to the control server, using TLS for https://
+/// URLs and plain TCP for http:// URLs.
+async fn connect_h1(url: &Url) -> Result<ts_http_util::Http1<EmptyBody>, ConnectionError> {
+    if url.scheme() == "http" {
+        Ok(ts_http_util::http1::connect_tcp(url).await?)
+    } else {
+        Ok(ts_http_util::http1::connect_tls(url).await?)
+    }
+}
+
 #[tracing::instrument(skip_all, fields(%control_url), ret, err, level = "trace")]
 pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, ConnectionError> {
     let mut key_url = control_url.join("/key")?;
+
+    #[cfg(not(feature = "insecure-keyfetch"))]
     key_url.set_scheme("https").unwrap();
+
+    if key_url.scheme() == "http" {
+        tracing::warn!("fetching control key over insecure http");
+    }
 
     key_url
         .query_pairs_mut()
         .extend_pairs([("v", CapabilityVersion::CURRENT.to_string())]);
 
-    let client = ts_http_util::http1::connect_tls::<EmptyBody>(&key_url).await?;
+    let client = connect_h1(&key_url).await?;
     let response = client.get(&key_url, None).await?;
     if !response.status().is_success() {
         let status = response.status();

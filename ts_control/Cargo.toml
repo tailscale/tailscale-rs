@@ -51,6 +51,8 @@ async_tokio = ["dep:futures-util", "dep:tokio", "dep:tokio-stream"]
 
 # Allow derp connections to be made without verifying TLS certs. Only for use in tests.
 insecure-derp = ["ts_transport_derp/insecure-for-tests"]
+# Allow control keys to be fetched over plain HTTP1 without TLS. Only for use in tests.
+insecure-keyfetch = []
 
 [lints]
 workspace = true
