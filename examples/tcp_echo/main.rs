@@ -1,6 +1,10 @@
 //! Run a TCP echo server on the tailnet on a particular port.
 
+use std::{error::Error, path::PathBuf};
+
 use clap::Parser;
+use tailscale::{Config, Device};
+use tokio::task::spawn;
 use tracing_subscriber::filter::LevelFilter;
 
 /// Run a TCP echo server on the tailnet on a particular port.
@@ -15,7 +19,7 @@ use tracing_subscriber::filter::LevelFilter;
 struct Args {
     /// Path to a key file to use. Will be created if it doesn't exist.
     #[arg(short = 'c', long, default_value = "tsrs_keys.json")]
-    key_file: std::path::PathBuf,
+    key_file: PathBuf,
 
     /// The auth key to connect with.
     ///
@@ -29,7 +33,7 @@ struct Args {
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<(), Box<dyn core::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
@@ -40,11 +44,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     let args = Args::parse();
 
-    let dev = tailscale::Device::new(
-        &tailscale::Config::from_key_file(&args.key_file).await?,
-        args.auth_key,
-    )
-    .await?;
+    let dev = Device::new(&Config::from_key_file(&args.key_file).await?, args.auth_key).await?;
 
     let sockaddr = (dev.ipv4_addr().await?, args.listen_port).into();
     let listener = dev.tcp_listen(sockaddr).await?;
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     loop {
         let conn = listener.accept().await?;
 
-        tokio::task::spawn(async move {
+        spawn(async move {
             let remote_ep = conn.remote_addr();
             tracing::info!(%remote_ep, "accepted connection");
 
