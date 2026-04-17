@@ -221,8 +221,10 @@ mime_guess = "2.0"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-test = "0.2"
 
 ts_keys.workspace = true
+ts_test_util.workspace = true
 
 [lints]
 workspace = true

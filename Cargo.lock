@@ -3619,10 +3619,12 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tracing-test",
  "ts_control",
  "ts_keys",
  "ts_netstack_smoltcp",
  "ts_runtime",
+ "ts_test_util",
  "url",
 ]
 
