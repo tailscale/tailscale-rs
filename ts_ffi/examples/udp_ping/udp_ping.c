@@ -26,8 +26,16 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 
+    ts_init_tracing();
+
+    struct ts_node_key_state key_state = {0};
+    assert(ts_load_key_file(argv[1], false, &key_state) >= 0);
+
+    struct ts_config config = {0};
+    config.key_state = &key_state;
+
     const struct ts_device* dev = ts_init(
-        argv[1],
+        &config,
         argv[2]
     );
     assert(dev);
