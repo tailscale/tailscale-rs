@@ -97,7 +97,10 @@ pub fn make_upgrade_req(
     protocol: &str,
     extra_headers: impl IntoIterator<Item = (HeaderName, HeaderValue)>,
 ) -> Result<Request<EmptyBody>, Error> {
-    let mut req = Request::get(u.as_str())
+    // Use POST for the upgrade request. Some server implementations accept both
+    // GET and POST, but others (e.g. Go's testcontrol) only accept POST. POST
+    // is what Go's controlhttp client sends, so use it for widest compatibility.
+    let mut req = Request::post(u.as_str())
         .header(HOST, u.host_str().ok_or(Error::InvalidParam)?)
         .header(UPGRADE, protocol)
         .header(CONNECTION, "Upgrade")

@@ -13,6 +13,7 @@ pub use map_stream::{FilterUpdate, MapStreamError, PeerUpdate, StateUpdate};
 mod ping;
 pub use ping::PingError;
 
+mod prefixed_reader;
 mod register;
 
 pub use register::{AuthResult, RegistrationError, register};
