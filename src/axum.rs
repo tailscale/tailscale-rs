@@ -1,4 +1,4 @@
-//! Support for the [`axum`] http server wrapping [`TcpListener`].
+//! Support for the [`axum`] http server wrapping [`netstack::TcpListener`].
 //!
 //! # Example
 //!
@@ -26,32 +26,32 @@
 
 use std::net::SocketAddr;
 
-use crate::{TcpListener, TcpStream};
+use crate::netstack;
 
-/// Wrapper type implementing [`axum::serve::Listener`] on [`TcpListener`].
+/// Wrapper type implementing [`axum::serve::Listener`] on [`netstack::TcpListener`].
 #[derive(Debug)]
-pub struct Listener(TcpListener);
+pub struct Listener(netstack::TcpListener);
 
-impl From<TcpListener> for Listener {
-    fn from(listener: TcpListener) -> Self {
+impl From<netstack::TcpListener> for Listener {
+    fn from(listener: netstack::TcpListener) -> Self {
         Self(listener)
     }
 }
 
-impl From<Listener> for TcpListener {
+impl From<Listener> for netstack::TcpListener {
     fn from(listener: Listener) -> Self {
         listener.0
     }
 }
 
-impl AsRef<TcpListener> for Listener {
-    fn as_ref(&self) -> &TcpListener {
+impl AsRef<netstack::TcpListener> for Listener {
+    fn as_ref(&self) -> &netstack::TcpListener {
         &self.0
     }
 }
 
 impl axum::serve::Listener for Listener {
-    type Io = TcpStream;
+    type Io = netstack::TcpStream;
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
