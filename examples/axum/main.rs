@@ -1,22 +1,29 @@
 //! An `axum`-based HTTP server that serves a simple webpage over the tailnet. Requires
 //! `tailscale-rs` to be compiled with the `axum` feature.
 
-use core::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::{
+    error::Error,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use axum::{
     Router,
     extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{StatusCode, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use clap::Parser;
+use tailscale::{Config, Device};
 use tracing::level_filters::LevelFilter;
 
 static WWW: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/examples/axum/www");
 
-async fn assets(Path(path): Path<String>) -> axum::response::Response {
+async fn assets(Path(path): Path<String>) -> Response {
     let Some(result) = WWW
         .get_file(&path)
         .or_else(|| WWW.get_file(format!("{path}/index.html")))
@@ -27,17 +34,14 @@ async fn assets(Path(path): Path<String>) -> axum::response::Response {
     let mime = mime_guess::from_path(result.path());
 
     (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            mime.first_or_octet_stream().as_ref(),
-        )],
+        [(CONTENT_TYPE, mime.first_or_octet_stream().as_ref())],
         result.contents(),
     )
         .into_response()
 }
 
 async fn count(count: State<Arc<AtomicUsize>>) -> impl IntoResponse {
-    let new = count.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let new = count.0.fetch_add(1, Ordering::SeqCst);
 
     format!(r#"{{"count": {new}}}"#)
 }
@@ -47,7 +51,7 @@ async fn count(count: State<Arc<AtomicUsize>>) -> impl IntoResponse {
 struct Args {
     /// Path to a key file to use. Will be created if it doesn't exist.
     #[arg(short = 'c', long, default_value = "tsrs_keys.json")]
-    key_file: std::path::PathBuf,
+    key_file: PathBuf,
 
     /// The auth key to connect with.
     ///
@@ -61,7 +65,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn core::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
@@ -72,8 +76,8 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     let args = Args::parse();
 
-    let dev = tailscale::Device::new(
-        &tailscale::Config::from_key_file(&args.key_file).await?,
+    let dev = Device::new(
+        &Config::from_key_file(&args.key_file).await?,
         args.auth_key.clone(),
     )
     .await?;

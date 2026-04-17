@@ -162,8 +162,9 @@ impl Device {
     /// ```rust,no_run
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let dev = tailscale::Device::new(
-    ///     &tailscale::Config::from_key_file("tsrs_keys.json").await?,
+    /// # use tailscale::*;
+    /// let dev = Device::new(
+    ///     &Config::from_key_file("tsrs_keys.json").await?,
     ///     Some("MY_AUTH_KEY".to_string()),
     /// ).await?;
     /// # Ok(()) }
