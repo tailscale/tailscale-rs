@@ -1,6 +1,6 @@
 [project]
 name = "tailscale-py"
-version = "0.2.0"
+version = "0.2.0.post3"
 description = "Work-in-progress Tailscale library written in Rust."
 license = "BSD-3-Clause"
 readme = "README.md"
@@ -36,3 +36,9 @@ build-backend = "maturin"
 [tool.maturin]
 python-source = "python"
 module-name = "tailscale._internal"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
