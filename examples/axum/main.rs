@@ -73,10 +73,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     let args = Args::parse();
 
     let dev = tailscale::Device::new(
-        &tailscale::Config {
-            key_state: tailscale::load_key_file(&args.key_file, Default::default()).await?,
-            ..Default::default()
-        },
+        &tailscale::Config::from_key_file(&args.key_file).await?,
         args.auth_key.clone(),
     )
     .await?;

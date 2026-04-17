@@ -41,7 +41,7 @@ pub mod _internal {
 
         future_into_py(py, async move {
             let config = ts::Config {
-                key_state: ts::load_key_file(config_path, Default::default())
+                key_state: ts::config::load_key_file(config_path, Default::default())
                     .await
                     .map_err(py_value_err)?,
                 client_name: Some("ts_python".to_owned()),

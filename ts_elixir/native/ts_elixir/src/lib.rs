@@ -103,7 +103,7 @@ where
 fn connect(env: rustler::Env, config_path: String, auth_key: Option<String>) -> impl Encoder {
     let dev = TOKIO_RUNTIME.block_on(async move {
         let config = tailscale::Config {
-            key_state: tailscale::load_key_file(config_path, Default::default()).await?,
+            key_state: tailscale::config::load_key_file(config_path, Default::default()).await?,
             client_name: Some("ts_elixir".to_owned()),
             ..Default::default()
         };

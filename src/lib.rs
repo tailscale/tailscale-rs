@@ -38,10 +38,7 @@
 //! # async fn main() -> Result<(), Box<dyn Error>> {
 //! // Open a new connection to the tailnet
 //! let dev = tailscale::Device::new(
-//!     &tailscale::Config {
-//!         key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
-//!         ..Default::default()
-//!     },
+//!     &tailscale::Config::from_key_file("tsrs_keys.json").await?,
 //!     Some("YOUR_AUTH_KEY_HERE".to_owned()),
 //! ).await?;
 //!
@@ -133,19 +130,16 @@ use std::{
     time::Duration,
 };
 
-#[doc(inline)]
-pub use config::{BadFormatBehavior, Config, load_key_file};
+pub use config::Config;
 #[doc(inline)]
 pub use error::Error;
-use ts_netstack_smoltcp::{CreateSocket, netcore::Channel};
 #[doc(inline)]
 pub use ts_control::Node as NodeInfo;
-#[doc(inline)]
-pub use ts_keys::NodeState;
+use ts_netstack_smoltcp::{CreateSocket, netcore::Channel};
 
 #[cfg(feature = "axum")]
 pub mod axum;
-mod config;
+pub mod config;
 mod error;
 
 /// How a program connects to a tailnet and communicates with peers.
@@ -169,10 +163,7 @@ impl Device {
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let dev = tailscale::Device::new(
-    ///     &tailscale::Config {
-    ///         key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
-    ///         ..Default::default()
-    ///     },
+    ///     &tailscale::Config::from_key_file("tsrs_keys.json").await?,
     ///     Some("MY_AUTH_KEY".to_string()),
     /// ).await?;
     /// # Ok(()) }
@@ -216,7 +207,10 @@ impl Device {
     }
 
     /// Bind a TCP listener to the specified [`SocketAddr`].
-    pub async fn tcp_listen(&self, socket_addr: SocketAddr) -> Result<netstack::TcpListener, Error> {
+    pub async fn tcp_listen(
+        &self,
+        socket_addr: SocketAddr,
+    ) -> Result<netstack::TcpListener, Error> {
         self.channel
             .tcp_listen(socket_addr)
             .await
@@ -272,9 +266,9 @@ impl Device {
 /// easier-to-integrate, more-portable API.
 pub mod netstack {
     #[doc(inline)]
-    pub use ts_netstack_smoltcp::netsock::{TcpListener, TcpStream, UdpSocket};
-    #[doc(inline)]
     pub use ts_netstack_smoltcp::netcore::Error;
+    #[doc(inline)]
+    pub use ts_netstack_smoltcp::netsock::{TcpListener, TcpStream, UdpSocket};
 }
 
 const ENV_MAGIC_VAR: &str = "TS_RS_EXPERIMENT";
