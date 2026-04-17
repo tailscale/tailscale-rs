@@ -4339,6 +4339,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ts_cli_util",
+ "ts_keys",
 ]
 
 [[package]]

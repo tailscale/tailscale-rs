@@ -18,13 +18,16 @@
 //! synchronization.
 
 use std::{
-    ffi::{self, CStr, c_char},
+    ffi::{self, c_char},
     sync::{LazyLock, Once},
 };
 
+mod config;
+mod keys;
 mod net_types;
 mod tcp;
 mod udp;
+mod util;
 
 pub use net_types::{
     AF_INET, AF_INET6, in_addr_t, in6_addr_t, sa_family_t, sockaddr, sockaddr_data, sockaddr_in,
@@ -47,18 +50,27 @@ static TOKIO_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     rt
 });
 
-type Result<T> = std::result::Result<T, Box<dyn core::error::Error + Send + Sync + 'static>>;
-
 /// A Tailscale device, also variously called a "node" or "peer".
 ///
 /// A device is the unit of identity in a tailnet; it has a tailnet IP and can send and
 /// receive IP datagrams to other peers.
 pub struct device(tailscale::Device);
 
+static TRACING_ONCE: Once = Once::new();
+
+/// Initialize the Rust tailscale tracing subsystem.
+///
+/// This is automatically called during `ts_init`, but you may want to call this first to log any
+/// errors if initialization needs to be done before `ts_init`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ts_init_tracing() {
+    TRACING_ONCE.call_once(ts_cli_util::init_tracing);
+}
+
 /// Initialize a new Tailscale device.
 ///
-/// `config_path` is the path to a config file on your system. It will be created if it doesn't
-/// exist.
+/// `config` is the configuration with which to initialize the device. You may pass `NULL`, and a
+/// default ephemeral configuration will be used.
 ///
 /// `auth_token` is an optional auth token (you may pass `NULL`) that is used to authenticate the
 /// device if required. If you pass `NULL`, the credentials in `config_path` must already be
@@ -66,52 +78,67 @@ pub struct device(tailscale::Device);
 ///
 /// # Safety
 ///
-/// `config_path` and `auth_token` must be able to be read according to [`CStr`] rules, i.e.
-/// they must be NUL-terminated and valid for reading up to and including the NUL.
+/// `auth_token`  must be able to be read according to [`CStr`][ffi::CStr] rules, i.e.
+/// it must be NUL-terminated and valid for reading up to and including the NUL.
+/// The string fields of `config` may be null, but if they are not, they must
+/// obey the same invariants.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ts_init(
-    config_path: *const c_char,
+    config: Option<&config::config>,
     auth_token: *const c_char,
 ) -> Option<Box<device>> {
-    static TRACING_ONCE: Once = Once::new();
-    TRACING_ONCE.call_once(ts_cli_util::init_tracing);
+    ts_init_tracing();
 
-    async fn _ts_init(config_path: &CStr, auth_token: Option<&CStr>) -> Result<device> {
-        let config_path = config_path.to_str()?.to_string();
-        tracing::info!(config_path);
+    let config = match config {
+        Some(cfg) => unsafe { cfg.to_ts_config() },
+        None => Default::default(),
+    };
 
-        let auth_token = auth_token
-            .and_then(|x| x.to_str().ok())
-            .map(ToOwned::to_owned);
+    let auth_token = if auth_token.is_null() {
+        None
+    } else {
+        unsafe { util::str(auth_token).map(ToOwned::to_owned) }
+    };
 
-        let dev = tailscale::Device::new(
-            &tailscale::Config {
-                key_state: tailscale::load_key_file(&config_path, Default::default()).await?,
-                ..Default::default()
-            },
-            auth_token,
-        )
-        .await?;
+    match TOKIO_RUNTIME.block_on(tailscale::Device::new(&config, auth_token)) {
+        Ok(dev) => Some(Box::new(device(dev))),
+        Err(e) => {
+            tracing::error!(err = %e, "ts_init failed");
+            None
+        }
+    }
+}
 
-        Result::<_>::Ok(device(dev))
+/// Initialize a new Tailscale device with a default configuration using the given key file for the
+/// key state. The file is created with new keys if it doesn't exist.
+///
+/// `auth_token` is an optional auth token (you may pass `NULL`) that is used to authenticate the
+/// device if required. If you pass `NULL`, the credentials in `config_path` must already be
+/// authorized to make a successful connection.
+///
+/// # Safety
+///
+/// `auth_token` and `key_file` must be able to be read according to [`CStr`][ffi::CStr] rules, i.e.
+/// they must be NUL-terminated and valid for reading up to and including the NUL.
+pub unsafe extern "C" fn ts_init_from_key_file(
+    key_file: *const c_char,
+    auth_token: *const c_char,
+) -> Option<Box<device>> {
+    let mut state = keys::node_key_state::default();
+
+    // SAFETY: CStr invariants maintained by function precondition
+    if unsafe { keys::ts_load_key_file(key_file, false, &mut state) } < 0 {
+        return None;
     }
 
-    // SAFETY: ensured by function precondition
-    unsafe {
-        TOKIO_RUNTIME.block_on(_ts_init(
-            CStr::from_ptr(config_path),
-            if auth_token.is_null() {
-                None
-            } else {
-                Some(CStr::from_ptr(auth_token))
-            },
-        ))
-    }
-    .inspect_err(|e| {
-        tracing::error!(err = %e, "ts_init failed");
-    })
-    .ok()
-    .map(Box::new)
+    let config = config::config {
+        key_state: Some(&mut state),
+        ..Default::default()
+    };
+
+    // SAFETY: `auth_token` meets the CStr invariants by this function precondition. `config` is
+    // safely zero-initialized, except for key state, which has no safety requirements.
+    unsafe { ts_init(Some(&config), auth_token) }
 }
 
 /// Deinitialize and shut down a Tailscale device.

@@ -21,6 +21,8 @@ ifeq ($(OS),Windows_NT)
 	RUST_TARGET := x86_64-pc-windows-gnu
 	CFLAGS += -lntdll -luserenv -lbcrypt
 	TARGET_SUFFIX := .exe
+else
+	TARGET_SUFFIX := .bin
 endif
 
 # If we have an explicit target set, this is usually because it's not our default target, and we
@@ -46,6 +48,6 @@ clean:
 
 $(TARGETS): %$(TARGET_SUFFIX): libtailscalers $(wildcard %/*.c)
 	$(CC) -o $@ $(wildcard $*/*.c) $(CFLAGS)
-	
+
 libtailscalers:
 	cargo build -p ts_ffi --profile $(RUST_PROFILE) $(RUST_TARGET_FLAG)
