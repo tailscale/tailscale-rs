@@ -3,7 +3,7 @@ use std::ffi;
 use crate::TOKIO_RUNTIME;
 
 /// A Tailscale UDP socket handle.
-pub struct udp_socket(tailscale::UdpSocket);
+pub struct udp_socket(tailscale::netstack::UdpSocket);
 
 /// Bind a UDP socket on `addr`.
 ///

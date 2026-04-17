@@ -3,10 +3,10 @@ use std::ffi;
 use crate::TOKIO_RUNTIME;
 
 /// A Tailscale TCP listener handle.
-pub struct tcp_listener(tailscale::TcpListener);
+pub struct tcp_listener(tailscale::netstack::TcpListener);
 
 /// A Tailscale TCP stream handle.
-pub struct tcp_stream(tailscale::TcpStream);
+pub struct tcp_stream(tailscale::netstack::TcpStream);
 
 /// Start a TCP listener on the given `addr`.
 ///

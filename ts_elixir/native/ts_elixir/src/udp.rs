@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub struct UdpSocket {
-    inner: Arc<tailscale::UdpSocket>,
+    inner: Arc<tailscale::netstack::UdpSocket>,
 }
 
 #[rustler::resource_impl]

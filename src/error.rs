@@ -1,4 +1,4 @@
-use netstack::netcore;
+use crate::netstack::Error as NetstackError;
 
 /// Errors that may occur while interacting with a device.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error)]
@@ -35,16 +35,16 @@ impl From<ts_runtime::Error> for Error {
     }
 }
 
-impl From<netcore::Error> for Error {
-    fn from(value: netcore::Error) -> Self {
+impl From<NetstackError> for Error {
+    fn from(value: NetstackError) -> Self {
         match value {
-            netcore::Error::ChannelClosed => Error::RuntimeDegraded,
+            NetstackError::ChannelClosed => Error::RuntimeDegraded,
 
-            netcore::Error::WrongType
-            | netcore::Error::BadRequest
-            | netcore::Error::InvariantViolated => Error::InternalFailure,
+            NetstackError::WrongType
+            | NetstackError::BadRequest
+            | NetstackError::InvariantViolated => Error::InternalFailure,
 
-            netcore::Error::TcpStream(netcore::tcp::stream::Error::Reset) => Error::ConnectionReset,
+            NetstackError::TcpStream(_) => Error::ConnectionReset,
         }
     }
 }
