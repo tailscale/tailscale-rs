@@ -85,10 +85,7 @@ pub unsafe extern "C" fn ts_init(
             .map(ToOwned::to_owned);
 
         let dev = tailscale::Device::new(
-            &tailscale::Config {
-                key_state: tailscale::load_key_file(&config_path, Default::default()).await?,
-                ..Default::default()
-            },
+            &tailscale::Config::from_key_file(&config_path).await?,
             auth_token,
         )
         .await?;

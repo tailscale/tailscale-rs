@@ -41,11 +41,9 @@ pub struct CommonArgs {
 impl CommonArgs {
     /// Convert the args to a [`tailscale::Config`].
     pub async fn config(&self) -> Result<tailscale::Config> {
-        Ok(tailscale::Config {
-            key_state: tailscale::load_key_file(&self.key_state_path, Default::default()).await?,
-            requested_hostname: self.hostname.clone(),
-            ..Default::default()
-        })
+        tailscale::Config::from_key_file(&self.key_state_path)
+            .await
+            .map_err(Into::into)
     }
 
     /// Load or init the config, then connect to the configured control server.
