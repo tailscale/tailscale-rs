@@ -9,7 +9,7 @@ defmodule Tailscale.NodeInfo do
 
   defstruct [
     :id,
-    :name,
+    :hostname,
     :stable_id,
     :derp_region,
     :node_key,
@@ -17,6 +17,7 @@ defmodule Tailscale.NodeInfo do
     :machine_key,
     underlay_addresses: [],
     tags: [],
-    tailnet_addresses: [],
+    tailnet: nil,
+    tailnet_addresses: []
   ]
 end

@@ -2,14 +2,14 @@ defmodule Tailscale do
   @moduledoc """
   Elixir bindings for the Tailscale Rust client. 
   """
-  
+
   @typedoc """
   An IPv4 address.
     
   `tailscale` is capable of interpreting either the `inet` format or a `String`.
   """
   @type ip4_addr() :: :inet.ip4_address() | String.t()
-  
+
   @typedoc """
   An IPv6 address.
     
@@ -23,26 +23,26 @@ defmodule Tailscale do
   `tailscale` is capable of interpreting either the `inet` format or a `String`.
   """
   @type ip_addr() :: ip4_addr() | ip6_addr()
-  
+
   @typedoc """
   Handle to a tailscale "device", i.e. a unique tailnet-connected identity with a network address.
   See the note in `connect/2` about nomenclature for more details.
   """
   @opaque t() :: Tailscale.Native.device()
-  
+
   @spec connect(String.t(), String.t() | nil) :: {:ok, t()}
   @doc """
   Open a connection to tailscale, creating a device connected to a tailnet. 
-  
+
   ## Parameters
     
   - `config_path`: the path of the config/state file to load. This contains the node's cryptographic 
     keys and therefore defines the identity of this device. It will be created if it doesn't exist.
   - `auth_key`: the auth key to be used to authorize this device. You only need to supply this if
     the device state in `config_path` has not been authorized.
-  
+
   ## Nomenclature (devices, peers, nodes, etc.)
-  
+
   In our parlance, anything that shows up on console.tailscale.com 
   and gets a tailnet IP is known canonically as a "device", though these are also variously been 
   referred to as "nodes" or "peers". Conventionally, each of these would be a device running 
@@ -63,13 +63,13 @@ defmodule Tailscale do
   Blocks until the address is available.
   """
   def ipv4_addr(dev), do: Tailscale.Native.ipv4_addr(dev)
-  
+
   @spec ipv6_addr(t()) :: {:ok, :inet.ip6_address()} | {:error, any()}
   @doc """
   Get the current IPv6 address of this Tailscale node.
     
   Blocks until the address is available.
-  
+
   Note that this address is in `:inet` format (16-bit segments), which may be difficult to read. 
   See `:inet.ntoa` to format to a string.
   """

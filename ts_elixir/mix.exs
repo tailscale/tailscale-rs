@@ -11,13 +11,12 @@ defmodule TsElixir.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
-
       name: "Tailscale",
       description: "tailscale client in elixir",
       source_url: @source_url,
-      homepage_url:  @source_url,
+      homepage_url: @source_url,
       docs: docs(),
-      package: package(),
+      package: package()
     ]
   end
 
@@ -33,10 +32,10 @@ defmodule TsElixir.MixProject do
 
       # dev
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.27", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.27", only: :dev, runtime: false}
     ]
   end
-  
+
   defp elixirc_paths(:test), do: ["lib", "test/util"]
   defp elixirc_paths(_), do: ["lib"]
 
@@ -45,7 +44,7 @@ defmodule TsElixir.MixProject do
       files: ~w(lib .formatter.exs mix.exs README.md LICENSE),
       licenses: ["MIT"],
       links: %{
-        "GitHub": "https://github.com/tailscale/tailscale-rs"
+        "GitHub" => "https://github.com/tailscale/tailscale-rs"
       }
     ]
   end
@@ -60,9 +59,9 @@ defmodule TsElixir.MixProject do
         Tcp: [
           Tailscale.Tcp,
           Tailscale.Tcp.Listener,
-          Tailscale.Tcp.Stream,
+          Tailscale.Tcp.Stream
         ]
-      ],
+      ]
     ]
   end
 end
