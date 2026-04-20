@@ -3,7 +3,7 @@
 use std::{error::Error, path::PathBuf};
 
 use clap::Parser;
-use tailscale::Config;
+use tailscale::{Config, Device};
 use tokio::task::spawn;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let mut config = Config::default_with_key_file(&args.key_file).await?;
     config.requested_hostname = args.hostname;
-    let dev = tailscale::Device::new(&config, args.auth_key).await?;
+    let dev = Device::new(&config, args.auth_key).await?;
 
     let sockaddr = (dev.ipv4_addr().await?, args.listen_port).into();
     let listener = dev.tcp_listen(sockaddr).await?;
