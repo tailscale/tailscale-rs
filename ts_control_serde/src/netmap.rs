@@ -484,7 +484,7 @@ pub struct PeerChange<'a> {
     pub cap_map: Option<ts_nodecapability::Map<'a>>,
 
     /// If present, the node's UDP endpoints have changed to the new value.
-    pub endpoints: Option<Vec<Endpoint>>,
+    pub endpoints: Option<Vec<SocketAddr>>,
 
     /// If present, the node's wireguard public key has changed.
     pub key: Option<NodePublicKey>,
