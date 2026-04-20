@@ -2,8 +2,7 @@
 
 use std::path::Path;
 
-#[doc(inline)]
-pub use ts_keys::NodeState;
+use crate::keys::NodeState;
 
 /// Config for connecting to Tailscale.
 pub struct Config {
@@ -34,7 +33,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create a new config with it's [`key_state`](Config::key_state) populated from the specified key file and using
+    /// Create a new config with its [`key_state`](Config::key_state) populated from the specified key file and using
     /// default options for other configuration.
     ///
     /// See [`load_key_file`] for more details and an alternative with more options for reading

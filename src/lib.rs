@@ -272,6 +272,12 @@ pub mod netstack {
     pub use ts_netstack_smoltcp::netsock::{TcpListener, TcpStream, UdpSocket};
 }
 
+/// Tailscale cryptographic key types.
+pub mod keys {
+    #[doc(inline)]
+    pub use ts_keys::{DiscoKeyPair, MachineKeyPair, NetworkLockKeyPair, NodeKeyPair, NodeState};
+}
+
 const ENV_MAGIC_VAR: &str = "TS_RS_EXPERIMENT";
 const ENV_MAGIC_VALUE: &str = "this_is_unstable_software";
 
