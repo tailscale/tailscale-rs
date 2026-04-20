@@ -30,6 +30,7 @@ ts_transport_derp.workspace = true
 # Unconditionally required dependencies.
 bytes.workspace = true
 chrono = { workspace = true, features = ["serde"] }
+gethostname.workspace = true
 ipnet = { workspace = true, features = ["serde"] }
 lazy_static.workspace = true
 serde.workspace = true

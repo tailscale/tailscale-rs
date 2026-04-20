@@ -51,7 +51,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             server_url: DEFAULT_CONTROL_SERVER.clone(),
-            hostname: None,
+            hostname: gethostname::gethostname().into_string().ok(),
             client_name: None,
         }
     }

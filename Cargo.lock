@@ -4144,7 +4144,6 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "futures-util",
- "gethostname",
  "tailscale",
  "tracing",
  "tracing-subscriber",
@@ -4162,6 +4161,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "gethostname",
  "ipnet",
  "lazy_static",
  "serde",

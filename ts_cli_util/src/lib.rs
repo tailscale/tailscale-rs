@@ -29,12 +29,10 @@ pub struct CommonArgs {
     #[arg(short = 'k', long)]
     pub auth_key: Option<String>,
 
-    /// Hostname to request for this node.
-    #[arg(
-        short = 'H',
-        long,
-        default_value = "gethostname::gethostname.into_string().ok()"
-    )]
+    /// The hostname this node will request.
+    ///
+    /// If left blank, uses the hostname reported by the OS.
+    #[arg(short = 'H', long)]
     pub hostname: Option<String>,
 }
 

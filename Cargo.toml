@@ -71,6 +71,7 @@ divan = "0.1"
 flume = "0.12"
 futures = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
+gethostname = "1.1"
 hashbrown = "0.16"
 heapless = "0.9"
 hex = "0.4"

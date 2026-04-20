@@ -276,13 +276,18 @@ pub async fn run_once(
             command = command_rx.recv() => {
                 match command.unwrap() {
                     Command::SetDerpHomeRegion { id, latencies } => {
-                        let req = MapRequestBuilder::new(node_keys)
+                        let builder = MapRequestBuilder::new(node_keys)
                             .keep_alive(false)
                             .omit_peers(true)
                             .stream(false)
                             .preferred_derp(id)
-                            .derp_latencies(latencies.iter().map(|(k, v)| (k.as_str(), *v)))
-                            .build();
+                            .derp_latencies(latencies.iter().map(|(k, v)| (k.as_str(), *v)));
+
+                        let req = if let Some(hostname) = &config.hostname {
+                            builder.hostname(hostname)
+                        } else {
+                            builder
+                        }.build();
 
                         drop(send_map_request(req, &map_url, &h2_client).await?);
                     },
