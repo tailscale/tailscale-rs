@@ -7,6 +7,7 @@ use ts_capabilityversion::CapabilityVersion;
 use ts_keys::{DiscoPublicKey, NodePublicKey};
 
 use crate::{
+    DnsConfig,
     client_version::ClientVersion,
     debug::Debug,
     derp_map::DerpMap,
@@ -322,12 +323,13 @@ pub struct MapResponse<'a> {
 
     // OnlineChange changes the value of a Peer Node.Online value.
     //OnlineChange map[NodeID]bool `json:",omitempty"`
-
-    // DNSConfig contains the DNS settings for the client to use.
-    // A nil value means no change from an earlier non-nil value.
-    //DNSConfig *DNSConfig `json:",omitempty"`
-
     // --------------------------------------------------------------------------------------------
+    /// The DNS settings for the client to use.
+    ///
+    /// A `None` value means no change.
+    #[serde(borrow, rename = "DNSConfig")]
+    pub dns_config: Option<DnsConfig<'a>>,
+
     /// The name of the network that this node is in. It's either of the form:
     /// - "example.com" (for user foo@example.com, for multi-user networks)
     /// - "foo@gmail.com" (for siloed users on shared email providers)
