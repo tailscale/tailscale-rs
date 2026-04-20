@@ -173,3 +173,17 @@ Target-independent Rust checks (clippy, fmt, deny) and validation of the Nix str
 ```sh
 $ nix flake check
 ```
+
+## Releases
+
+We aim for a roughly monthly release schedule. Releases are time-based, not feature-based. We will
+make ad hoc patch releases as necessary.
+
+Publishing releases is currently manual, but we are moving to a GitHub workflow.
+
+Releases should be [tagged](https://github.com/tailscale/tailscale-rs/tags).
+
+TODO describe how to make and publish a release.
+
+Breaking or significant changes should be recorded in the [changelog](CHANGELOG.md) as part of the
+PR making the change.
