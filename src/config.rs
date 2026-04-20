@@ -2,8 +2,7 @@
 
 use std::path::Path;
 
-#[doc(inline)]
-pub use ts_keys::NodeState;
+use crate::keys::NodeState;
 
 /// Config for connecting to Tailscale.
 pub struct Config {
