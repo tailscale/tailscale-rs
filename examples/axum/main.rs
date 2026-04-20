@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let dev = Device::new(
-        &Config::from_key_file(&args.key_file).await?,
+        &Config::default_with_key_file(&args.key_file).await?,
         args.auth_key.clone(),
     )
     .await?;

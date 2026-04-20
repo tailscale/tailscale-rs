@@ -44,7 +44,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
 
-    let dev = Device::new(&Config::from_key_file(&args.key_file).await?, args.auth_key).await?;
+    let dev = Device::new(
+        &Config::default_with_key_file(&args.key_file).await?,
+        args.auth_key,
+    )
+    .await?;
 
     let sockaddr = (dev.ipv4_addr().await?, args.listen_port).into();
     let listener = dev.tcp_listen(sockaddr).await?;

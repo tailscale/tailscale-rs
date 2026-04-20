@@ -38,7 +38,7 @@
 //! # async fn main() -> Result<(), Box<dyn Error>> {
 //! // Open a new connection to the tailnet
 //! let dev = tailscale::Device::new(
-//!     &tailscale::Config::from_key_file("tsrs_keys.json").await?,
+//!     &tailscale::Config::default_with_key_file("tsrs_keys.json").await?,
 //!     Some("YOUR_AUTH_KEY_HERE".to_owned()),
 //! ).await?;
 //!
@@ -164,7 +164,7 @@ impl Device {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # use tailscale::*;
     /// let dev = Device::new(
-    ///     &Config::from_key_file("tsrs_keys.json").await?,
+    ///     &Config::default_with_key_file("tsrs_keys.json").await?,
     ///     Some("MY_AUTH_KEY".to_string()),
     /// ).await?;
     /// # Ok(()) }

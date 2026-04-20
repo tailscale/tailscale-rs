@@ -7,7 +7,7 @@
 //! # async fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! # use tailscale::{Config, Device};
 //! let dev = Device::new(
-//!     &Config::from_key_file("tsrs_keys.json").await?,
+//!     &Config::default_with_key_file("tsrs_keys.json").await?,
 //!     Some("YOUR_AUTH_KEY".to_owned()),
 //! ).await?;
 //!

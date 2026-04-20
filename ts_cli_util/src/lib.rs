@@ -41,7 +41,7 @@ pub struct CommonArgs {
 impl CommonArgs {
     /// Convert the args to a [`tailscale::Config`].
     pub async fn config(&self) -> Result<tailscale::Config> {
-        tailscale::Config::from_key_file(&self.key_state_path)
+        tailscale::Config::default_with_key_file(&self.key_state_path)
             .await
             .map_err(Into::into)
     }
