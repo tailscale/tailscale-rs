@@ -3,7 +3,7 @@
 use std::{error::Error, path::PathBuf};
 
 use clap::Parser;
-use tailscale::{Config, Device};
+use tailscale::Config;
 use tokio::task::spawn;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -27,6 +27,10 @@ struct Args {
     #[arg(short = 'k', long)]
     auth_key: Option<String>,
 
+    /// The hostname this node will request.
+    #[arg(short = 'H', long, default_value = "tcp_echo_example")]
+    hostname: Option<String>,
+
     /// Port to listen on (on tailnet IPv4).
     #[clap(short, long, default_value_t = 1234)]
     listen_port: u16,
@@ -43,12 +47,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .init();
 
     let args = Args::parse();
-
-    let dev = Device::new(
-        &Config::default_with_key_file(&args.key_file).await?,
-        args.auth_key,
-    )
-    .await?;
+    let mut config = Config::default_with_key_file(&args.key_file).await?;
+    config.requested_hostname = args.hostname;
+    let dev = tailscale::Device::new(&config, args.auth_key).await?;
 
     let sockaddr = (dev.ipv4_addr().await?, args.listen_port).into();
     let listener = dev.tcp_listen(sockaddr).await?;

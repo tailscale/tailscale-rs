@@ -19,6 +19,10 @@ struct Args {
     #[arg(short = 'k', long)]
     auth_key: Option<String>,
 
+    /// The hostname this node will request.
+    #[arg(short = 'H', long, default_value = "peer_ping_example")]
+    hostname: Option<String>,
+
     /// Peer to send messages to.
     #[clap(short, long)]
     peer: SocketAddr,
@@ -40,11 +44,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
 
-    let dev = Device::new(
-        &Config::default_with_key_file(&args.key_file).await?,
-        args.auth_key,
-    )
-    .await?;
+    let mut config = Config::default_with_key_file(&args.key_file).await?;
+    config.requested_hostname = args.hostname;
+    let dev = Device::new(&config, args.auth_key.clone()).await?;
 
     let sock = dev.udp_bind((dev.ipv4_addr().await?, 1234).into()).await?;
     let mut ticker = tokio::time::interval(Duration::from_secs_f64(args.ping_interval_secs));

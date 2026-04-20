@@ -59,6 +59,10 @@ struct Args {
     #[arg(short = 'k', long)]
     auth_key: Option<String>,
 
+    /// The hostname this node will request.
+    #[arg(short = 'H', long, default_value = "axum-example")]
+    hostname: Option<String>,
+
     /// Port to bind to.
     #[arg(short, long, default_value_t = 80)]
     port: u16,
@@ -75,12 +79,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .init();
 
     let args = Args::parse();
-
-    let dev = Device::new(
-        &Config::default_with_key_file(&args.key_file).await?,
-        args.auth_key.clone(),
-    )
-    .await?;
+    let mut config = Config::default_with_key_file(&args.key_file).await?;
+    config.requested_hostname = args.hostname;
+    let dev = Device::new(&config, args.auth_key.clone()).await?;
 
     let listener = dev
         .tcp_listen((dev.ipv4_addr().await?, args.port).into())
