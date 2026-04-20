@@ -39,7 +39,7 @@ impl Config {
     ///
     /// See [`load_key_file`] for more details and an alternative with more options for reading
     /// the key file.
-    pub async fn from_key_file(p: impl AsRef<Path>) -> Result<Self, crate::Error> {
+    pub async fn default_with_key_file(p: impl AsRef<Path>) -> Result<Self, crate::Error> {
         Ok(Config {
             key_state: load_key_file(p, Default::default()).await?,
             ..Default::default()

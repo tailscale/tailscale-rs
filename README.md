@@ -52,7 +52,7 @@ use tailscale::{Config, Device};
 async fn main() -> Result<(), Box<dyn Error>> {
     // Open a new connection to tailscale
     let dev = Device::new(
-        &Config::from_key_file("tsrs_keys.json").await?,
+        &Config::default_with_key_file("tsrs_keys.json").await?,
         Some("YOUR_AUTH_KEY_HERE".to_owned()),
     ).await?;
 
