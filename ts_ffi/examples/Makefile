@@ -33,7 +33,7 @@ ifneq ($(RUST_TARGET),)
 endif
 
 CFLAGS += -L../../target/$(RUST_TARGET_PATH)$(RUST_PROFILE_DIR)/
-TARGET_NAMES := udp_ping tcp_echo
+TARGET_NAMES := udp_ping tcp_echo lookup_peer
 TARGETS := $(patsubst %,%$(TARGET_SUFFIX),$(TARGET_NAMES))
 
 # libtailscalers: let cargo handle build incrementality

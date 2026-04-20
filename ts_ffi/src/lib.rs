@@ -155,3 +155,89 @@ pub extern "C" fn ts_ipv6_addr(dev: &device, dst: &mut in6_addr_t) -> ffi::c_int
 
     0
 }
+
+/// Get the IPv4 address of a specified peer by name.
+///
+/// `peer_name` can be a fully-qualified name (`$HOST.tail1234.ts.net`) or an unqualified
+/// hostname (`$HOST`). The first match is returned: shared-in nodes may cause ambiguity
+/// when unqualified hostnames are used.
+///
+/// Returns a negative number if there was an error, zero if no match was found, and a
+/// positive number if `addr` has been populated with the address for the requested peer.
+///
+/// # Safety
+///
+/// `peer_name` must be able to be read according to [`CStr`] rules, i.e.
+/// it must be NUL-terminated and valid for reading up to and including the NUL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ts_peer_ipv4_addr(
+    dev: &device,
+    peer_name: *const c_char,
+    addr: &mut in_addr_t,
+) -> ffi::c_int {
+    // SAFETY: ensured by function precondition
+    unsafe {
+        _peer_by_addr(dev, peer_name, |n| {
+            *addr = n.tailnet_address.ipv4.addr().into();
+        })
+    }
+}
+
+/// Get the IPv6 address of a specified peer by name.
+///
+/// `peer_name` can be a fully-qualified name (`$HOST.tail1234.ts.net`) or an unqualified
+/// hostname (`$HOST`). The first match is returned: shared-in nodes may cause ambiguity
+/// when unqualified hostnames are used.
+///
+/// Returns a negative number if there was an error, zero if no match was found, and a
+/// positive number if `addr` has been populated with the address for the requested peer.
+///
+/// # Safety
+///
+/// `peer_name` must be able to be read according to [`CStr`] rules, i.e.
+/// it must be NUL-terminated and valid for reading up to and including the NUL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ts_peer_ipv6_addr(
+    dev: &device,
+    peer_name: *const c_char,
+    addr: &mut in6_addr_t,
+) -> ffi::c_int {
+    // SAFETY: ensured by function precondition
+    unsafe {
+        _peer_by_addr(dev, peer_name, |n| {
+            *addr = n.tailnet_address.ipv6.addr().into();
+        })
+    }
+}
+
+/// # Safety
+///
+/// `peer_name` must be able to be read according to [`CStr`] rules, i.e.
+/// it must be NUL-terminated and valid for reading up to and including the NUL.
+unsafe fn _peer_by_addr(
+    dev: &device,
+    peer_name: *const c_char,
+    on_node_info: impl FnOnce(&tailscale::NodeInfo),
+) -> ffi::c_int {
+    // SAFETY: ensured by function precondition
+    let name = unsafe { CStr::from_ptr(peer_name) };
+
+    let Ok(name) = name.to_str() else {
+        tracing::error!("peer name: invalid utf-8");
+        return -1;
+    };
+
+    match TOKIO_RUNTIME.block_on(dev.0.peer_by_name(name)) {
+        Ok(Some(node)) => {
+            on_node_info(&node);
+            1
+        }
+
+        Ok(None) => 0,
+
+        Err(e) => {
+            tracing::error!(error = %e, "");
+            -1
+        }
+    }
+}
