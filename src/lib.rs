@@ -70,6 +70,21 @@
 //! [Tokio docs](https://docs.rs/tokio) for more information. In the future, we would like to limit
 //! our reliance on Tokio so that there are alternatives for users of other async runtimes.
 //!
+//! ## Environment variables
+//!
+//! [`Device::new`] consults a small set of environment variables when the
+//! corresponding [`Config`] field (or `auth_key` parameter) is left unset, so
+//! applications can point at a self-hosted control server or supply an auth
+//! key without code changes. Precedence is *explicit value > environment
+//! variable > built-in default*:
+//!
+//! | Variable | Configures | Default |
+//! | --- | --- | --- |
+//! | `TS_CONTROL_URL` | [`Config::control_server_url`] | `https://controlplane.tailscale.com/` |
+//! | `TS_HOSTNAME` | [`Config::requested_hostname`] | OS hostname |
+//! | `TS_CLIENT_NAME` | [`Config::client_name`] | unset |
+//! | `TS_AUTH_KEY` | `auth_key` parameter of [`Device::new`] | unset |
+//!
 //! ## Caveats
 //!
 //! This software is still a work-in-progress! We are providing it in the open at this stage out of
@@ -135,7 +150,10 @@ use std::{
 };
 
 #[doc(inline)]
-pub use config::{BadFormatBehavior, Config, load_key_file};
+pub use config::{
+    BadFormatBehavior, Config, ENV_AUTH_KEY, ENV_CLIENT_NAME, ENV_CONTROL_URL, ENV_HOSTNAME,
+    load_key_file,
+};
 #[doc(inline)]
 pub use error::Error;
 #[doc(inline)]
@@ -183,8 +201,18 @@ impl Device {
     pub async fn new(config: &Config, auth_key: Option<String>) -> Result<Self, Error> {
         check_magic_env()?;
 
-        let rt =
-            ts_runtime::Runtime::spawn(config.into(), auth_key, config.key_state.clone()).await?;
+        let get = |name: &str| std::env::var(name).ok();
+        let ts_cfg = ts_control::Config {
+            server_url: config::resolve_control_url(&config.control_server_url, get)?,
+            hostname: config
+                .requested_hostname
+                .clone()
+                .or_else(|| get(ENV_HOSTNAME)),
+            client_name: config.client_name.clone().or_else(|| get(ENV_CLIENT_NAME)),
+        };
+        let auth_key = auth_key.or_else(|| get(ENV_AUTH_KEY));
+
+        let rt = ts_runtime::Runtime::spawn(ts_cfg, auth_key, config.key_state.clone()).await?;
         let channel = rt.channel().await?;
 
         Ok(Self {
