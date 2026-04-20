@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use tailscale::{Config, Device, Error, netstack::UdpSocket};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::timeout,
@@ -186,7 +187,7 @@ async fn test_udp(dev: &tailscale::Device, ip: IpAddr) {
     test_udp_unidir(&udp2, &udp1).await;
 }
 
-async fn test_udp_unidir(tx: &tailscale::UdpSocket, rx: &tailscale::UdpSocket) {
+async fn test_udp_unidir(tx: &UdpSocket, rx: &UdpSocket) {
     tx.send_to(rx.local_addr(), b"hello").await.unwrap();
 
     let (who, msg) = rx.recv_from_bytes().await.unwrap();
@@ -195,12 +196,8 @@ async fn test_udp_unidir(tx: &tailscale::UdpSocket, rx: &tailscale::UdpSocket) {
     assert_eq!(msg.as_ref(), b"hello");
 }
 
-async fn make_ts_device() -> Result<tailscale::Device, tailscale::Error> {
+async fn make_ts_device() -> Result<Device, Error> {
     unsafe { std::env::set_var("TS_RS_EXPERIMENT", "this_is_unstable_software") };
 
-    tailscale::Device::new(
-        &tailscale::Config::default(),
-        Some(ts_test_util::auth_key().unwrap()),
-    )
-    .await
+    Device::new(&Config::default(), Some(ts_test_util::auth_key().unwrap())).await
 }
