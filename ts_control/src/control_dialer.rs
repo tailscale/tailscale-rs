@@ -255,8 +255,8 @@ where
         CapabilityVersion::CURRENT,
     );
 
-    let mut conn = crate::tokio::upgrade_ts2021(url, &init_msg, handshake, h1_client).await?;
-    let _challenge_packet = crate::tokio::read_challenge_packet(&mut conn).await?;
+    let conn = crate::tokio::upgrade_ts2021(url, &init_msg, handshake, h1_client).await?;
+    let conn = crate::tokio::read_challenge_packet(conn).await?;
 
     let h2_conn = ts_http_util::http2::connect(conn).await?;
     tracing::debug!("http2 connection to control established");

@@ -18,7 +18,6 @@ ts_capabilityversion = { workspace = true, features = ["serde"] }
 ts_control_noise.workspace = true
 ts_control_serde.workspace = true
 ts_dynbitset.workspace = true
-ts_hexdump.workspace = true
 ts_http_util.workspace = true
 ts_keys.workspace = true
 ts_packet.workspace = true
@@ -38,7 +37,6 @@ thiserror.workspace = true
 tokio-util = { workspace = true, features = ["time"] }
 tracing.workspace = true
 url = { workspace = true, features = ["serde", "std"] }
-zerocopy.workspace = true
 
 # Required dependencies for the async_tokio feature.
 futures-util = { workspace = true, optional = true }
