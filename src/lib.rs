@@ -135,7 +135,7 @@ use std::{
 };
 
 #[doc(inline)]
-pub use config::{BadFormatBehavior, Config, load_key_file};
+pub use config::{BadFormatBehavior, Config, auth_key_from_env, load_key_file};
 #[doc(inline)]
 pub use error::Error;
 #[doc(inline)]
@@ -277,7 +277,7 @@ fn check_magic_env() -> Result<(), Error> {
         let warning = format!(
             "
 check failed: set {ENV_MAGIC_VAR}={ENV_MAGIC_VALUE} to acknowledge that tailscale-rs is early-days
-experimental software containing bugs, unvalidated cryptography, and no stability or compatibility 
+experimental software containing bugs, unvalidated cryptography, and no stability or compatibility
 guarantees.
             "
         );
