@@ -41,20 +41,18 @@ repository layout, see [ARCHITECTURE.md](ARCHITECTURE.md).
 A simple UDP client that periodically sends messages to a tailnet peer at `100.64.0.1:5678`:
 
 ```rust
-use core::{
+use std::{
     time::Duration,
     net::Ipv4Addr,
     error::Error,
 };
+use tailscale::{Config, Device};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Open a new connection to tailscale
-    let dev = tailscale::Device::new(
-        &tailscale::Config {
-            key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
-            ..Default::default()
-        },
+    let dev = Device::new(
+        &Config::default_with_key_file("tsrs_keys.json").await?,
         Some("YOUR_AUTH_KEY_HERE".to_owned()),
     ).await?;
 

@@ -38,10 +38,7 @@
 //! # async fn main() -> Result<(), Box<dyn Error>> {
 //! // Open a new connection to the tailnet
 //! let dev = tailscale::Device::new(
-//!     &tailscale::Config {
-//!         key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
-//!         ..Default::default()
-//!     },
+//!     &tailscale::Config::default_with_key_file("tsrs_keys.json").await?,
 //!     Some("YOUR_AUTH_KEY_HERE".to_owned()),
 //! ).await?;
 //!
@@ -88,7 +85,7 @@
 //! ## Feature Flags
 //!
 //! - `axum`: enables the [`axum`] module, which enables you to run an [`axum` HTTP server] on top
-//!   of a [`TcpListener`].
+//!   of a [`netstack::TcpListener`].
 //!
 //! ## Platform Support
 //!
@@ -105,7 +102,8 @@
 //! or the [GitHub repo](https://github.com/tailscale/tailscale-rs).
 //!
 //! - [ts_runtime](https://docs.rs/ts_runtime): for each API-level `Device`, the runtime uses an actor
-//!   architecture to manage the lifecycle of the control client, data plane components, netstack, etc. A message bus passes updates and communications between these top-level actors.
+//!   architecture to manage the lifecycle of the control client, data plane components, netstack, etc.
+//!   A message bus passes updates and communications between these top-level actors.
 //! - [ts_netcheck](https://docs.rs/ts_netcheck): checks network availability and reports latency to
 //!   DERP servers in different regions.
 //! - [ts_netstack_smoltcp](https://docs.rs/ts_netstack_smoltcp): a [smoltcp](https://docs.rs/smoltcp)-based
@@ -127,28 +125,21 @@
 //! [open an issue]: https://github.com/tailscale/tailscale-rs/issues
 //! [`axum` HTTP server]: https://docs.rs/axum/latest/axum/
 
-extern crate ts_netstack_smoltcp as netstack;
-
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 
-#[doc(inline)]
-pub use config::{BadFormatBehavior, Config, load_key_file};
+pub use config::Config;
 #[doc(inline)]
 pub use error::Error;
 #[doc(inline)]
-pub use netstack::netsock::{TcpListener, TcpStream, UdpSocket};
-use netstack::{CreateSocket, netcore::Channel};
-#[doc(inline)]
 pub use ts_control::Node as NodeInfo;
-#[doc(inline)]
-pub use ts_keys::NodeState;
+use ts_netstack_smoltcp::{CreateSocket, netcore::Channel};
 
 #[cfg(feature = "axum")]
 pub mod axum;
-mod config;
+pub mod config;
 mod error;
 
 /// How a program connects to a tailnet and communicates with peers.
@@ -171,11 +162,9 @@ impl Device {
     /// ```rust,no_run
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let dev = tailscale::Device::new(
-    ///     &tailscale::Config {
-    ///         key_state: tailscale::load_key_file("tsrs_keys.json", Default::default()).await?,
-    ///         ..Default::default()
-    ///     },
+    /// # use tailscale::*;
+    /// let dev = Device::new(
+    ///     &Config::default_with_key_file("tsrs_keys.json").await?,
     ///     Some("MY_AUTH_KEY".to_string()),
     /// ).await?;
     /// # Ok(()) }
@@ -214,12 +203,15 @@ impl Device {
     }
 
     /// Bind a UDP socket to the specified [`SocketAddr`].
-    pub async fn udp_bind(&self, socket_addr: SocketAddr) -> Result<UdpSocket, Error> {
+    pub async fn udp_bind(&self, socket_addr: SocketAddr) -> Result<netstack::UdpSocket, Error> {
         self.channel.udp_bind(socket_addr).await.map_err(Into::into)
     }
 
     /// Bind a TCP listener to the specified [`SocketAddr`].
-    pub async fn tcp_listen(&self, socket_addr: SocketAddr) -> Result<TcpListener, Error> {
+    pub async fn tcp_listen(
+        &self,
+        socket_addr: SocketAddr,
+    ) -> Result<netstack::TcpListener, Error> {
         self.channel
             .tcp_listen(socket_addr)
             .await
@@ -227,7 +219,7 @@ impl Device {
     }
 
     /// Connect to a TCP socket at the remote address.
-    pub async fn tcp_connect(&self, remote: SocketAddr) -> Result<TcpStream, Error> {
+    pub async fn tcp_connect(&self, remote: SocketAddr) -> Result<netstack::TcpStream, Error> {
         let ip: IpAddr = match remote.is_ipv4() {
             true => self.ipv4_addr().await?.into(),
             false => self.ipv6_addr().await?.into(),
@@ -267,6 +259,23 @@ impl Device {
     pub async fn shutdown(self, timeout: Option<Duration>) -> bool {
         self.runtime.graceful_shutdown(timeout).await
     }
+}
+
+/// Command-channel-driven userspace network stack.
+///
+/// This is an opinionated wrapper around [smoltcp](https://docs.rs/smoltcp) that provides an
+/// easier-to-integrate, more-portable API.
+pub mod netstack {
+    #[doc(inline)]
+    pub use ts_netstack_smoltcp::netcore::Error;
+    #[doc(inline)]
+    pub use ts_netstack_smoltcp::netsock::{TcpListener, TcpStream, UdpSocket};
+}
+
+/// Tailscale cryptographic key types.
+pub mod keys {
+    #[doc(inline)]
+    pub use ts_keys::{DiscoKeyPair, MachineKeyPair, NetworkLockKeyPair, NodeKeyPair, NodeState};
 }
 
 const ENV_MAGIC_VAR: &str = "TS_RS_EXPERIMENT";

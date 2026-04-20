@@ -41,11 +41,10 @@ pub mod _internal {
 
         future_into_py(py, async move {
             let config = ts::Config {
-                key_state: ts::load_key_file(config_path, Default::default())
-                    .await
-                    .map_err(py_value_err)?,
                 client_name: Some("ts_python".to_owned()),
-                ..Default::default()
+                ..ts::Config::default_with_key_file(config_path)
+                    .await
+                    .map_err(py_value_err)?
             };
 
             let dev = ts::Device::new(&config, auth_key)

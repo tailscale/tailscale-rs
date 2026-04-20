@@ -1,4 +1,8 @@
+//! Types and utilities for configuring a Tailscale [`Device`](crate::Device).
+
 use std::path::Path;
+
+use crate::keys::NodeState;
 
 /// Config for connecting to Tailscale.
 pub struct Config {
@@ -7,7 +11,7 @@ pub struct Config {
     /// This file represents this node's identity. The key file format is specific to
     /// tailscale-rs; key files are not interchangeable with those produced by other
     /// implementations of Tailscale, e.g. `tailscaled` or `tsnet`.
-    pub key_state: crate::NodeState,
+    pub key_state: NodeState,
 
     // TODO(npry): let clients also define an app name once the sdk-level name moves
     //  to a dedicated field
@@ -28,6 +32,20 @@ pub struct Config {
     pub requested_tags: Vec<String>,
 }
 
+impl Config {
+    /// Create a new config with it's [`key_state`](Config::key_state) populated from the specified key file and using
+    /// default options for other configuration.
+    ///
+    /// See [`load_key_file`] for more details and an alternative with more options for reading
+    /// the key file.
+    pub async fn default_with_key_file(p: impl AsRef<Path>) -> Result<Self, crate::Error> {
+        Ok(Config {
+            key_state: load_key_file(p, Default::default()).await?,
+            ..Default::default()
+        })
+    }
+}
+
 /// Load key state from a path on the filesystem, or create a file with a new key state if
 /// one doesn't exist.
 ///
@@ -36,7 +54,7 @@ pub struct Config {
 pub async fn load_key_file(
     p: impl AsRef<Path>,
     bad_format: BadFormatBehavior,
-) -> Result<crate::NodeState, crate::Error> {
+) -> Result<NodeState, crate::Error> {
     let p = p.as_ref();
 
     tracing::trace!(key_file = %p.display(), "loading key file");
@@ -47,7 +65,7 @@ pub async fn load_key_file(
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct KeyFile {
-    key_state: crate::NodeState,
+    key_state: NodeState,
 }
 
 impl From<&Config> for ts_control::Config {

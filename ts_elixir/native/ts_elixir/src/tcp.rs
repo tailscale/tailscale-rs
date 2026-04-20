@@ -5,11 +5,11 @@ use rustler::{Encoder, ResourceArc};
 use crate::{IpOrSelf, Result, TOKIO_RUNTIME, atoms, erl_result, ip_from_erl, ok_arc};
 
 pub(crate) struct TcpListener {
-    inner: Arc<tailscale::TcpListener>,
+    inner: Arc<tailscale::netstack::TcpListener>,
 }
 
 pub(crate) struct TcpStream {
-    inner: Arc<tailscale::TcpStream>,
+    inner: Arc<tailscale::netstack::TcpStream>,
 }
 
 #[rustler::resource_impl]

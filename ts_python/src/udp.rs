@@ -9,7 +9,7 @@ use crate::{PyFut, ip_or_str::IpRepr, py_value_err, sockaddr_as_tuple};
 /// A tailscale UDP socket.
 #[pyclass(frozen, module = "_internal")]
 pub struct UdpSocket {
-    pub(crate) sock: Arc<ts::UdpSocket>,
+    pub(crate) sock: Arc<ts::netstack::UdpSocket>,
 }
 
 #[pymethods]
