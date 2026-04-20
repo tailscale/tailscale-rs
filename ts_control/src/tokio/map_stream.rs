@@ -137,6 +137,10 @@ pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpd
             None
         };
 
+        if !map_response.peers_changed_patch.is_empty() {
+            tracing::warn!(peers_changed_patch = ?map_response.peers_changed_patch, "ignored peer patch changes");
+        }
+
         Some((
             StateUpdate {
                 peer_update,
