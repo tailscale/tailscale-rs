@@ -9,7 +9,7 @@ the API as we iterate.
 
 ```elixir
 # Connect to tailscale:
-{:ok, dev} = Tailscale.connect("tsrs_keys.json", "YOUR_AUTH_KEY")
+{:ok, dev} = Tailscale.connect("tsrs_keys.json", auth_key: "YOUR_AUTH_KEY")
 # Fetch our tailnet IPv4:
 {:ok, ip} = Tailscale.ip4(dev)
 

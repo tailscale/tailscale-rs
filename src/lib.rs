@@ -286,7 +286,11 @@ pub mod netstack {
 /// Tailscale cryptographic key types.
 pub mod keys {
     #[doc(inline)]
-    pub use ts_keys::{DiscoKeyPair, MachineKeyPair, NetworkLockKeyPair, NodeKeyPair, NodeState};
+    pub use ts_keys::{
+        DiscoKeyPair, DiscoPrivateKey, DiscoPublicKey, MachineKeyPair, MachinePrivateKey,
+        MachinePublicKey, NetworkLockKeyPair, NetworkLockPrivateKey, NetworkLockPublicKey,
+        NodeKeyPair, NodePrivateKey, NodePublicKey, NodeState,
+    };
 }
 
 const ENV_MAGIC_VAR: &str = "TS_RS_EXPERIMENT";

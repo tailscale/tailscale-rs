@@ -44,7 +44,7 @@ defmodule Tailscale.Test.Helpers do
     {:ok, auth_key: auth_key} = auth_key(ctx)
     {:ok, state_file: state_file} = state_file(ctx)
 
-    case Tailscale.connect(state_file, auth_key) do
+    case Tailscale.connect(state_file, auth_key: auth_key) do
       {:ok, dev} ->
         # wait for ipv4 to be available (successful control connection)
         {:ok, _ip} = Tailscale.ipv4_addr(dev)

@@ -11,7 +11,7 @@ defmodule Tailscale.Test do
 
     @tag skip: @net_skip
     test "connect", %{state_file: state_file, auth_key: auth_key} do
-      {:ok, dev} = Tailscale.connect(state_file, auth_key)
+      {:ok, dev} = Tailscale.connect(state_file, auth_key: auth_key)
       IO.puts("connected!")
 
       {:ok, ip} = Tailscale.ipv4_addr(dev)

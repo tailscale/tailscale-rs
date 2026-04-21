@@ -1,18 +1,22 @@
 #![doc = include_str!("../README.md")]
 
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
     sync::{Arc, LazyLock},
 };
 
-use rustler::{Encoder, ResourceArc, Term};
+use rustler::{Encoder, NifResult, ResourceArc, Term};
 
+mod config;
 mod tcp;
 mod udp;
 
 use tcp::{TcpListener, TcpStream};
 use udp::UdpSocket;
+
+use crate::config::Keystate;
 
 mod atoms {
     rustler::atoms! {
@@ -100,13 +104,13 @@ where
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn connect(env: rustler::Env, config_path: String, auth_key: Option<String>) -> impl Encoder {
-    let dev = TOKIO_RUNTIME.block_on(async move {
-        let config = tailscale::Config {
-            client_name: Some("ts_elixir".to_owned()),
-            ..tailscale::Config::default_with_key_file(config_path).await?
-        };
+fn connect<'env>(
+    env: rustler::Env<'env>,
+    opts: HashMap<rustler::Atom, Term<'_>>,
+) -> NifResult<(rustler::Atom, Term<'env>)> {
+    let (config, auth_key) = config::config_from_erl(&opts)?;
 
+    let dev = TOKIO_RUNTIME.block_on(async move {
         let dev = tailscale::Device::new(&config, auth_key).await?;
 
         ok_arc(Device {
@@ -114,7 +118,23 @@ fn connect(env: rustler::Env, config_path: String, auth_key: Option<String>) -> 
         })
     });
 
-    erl_result(env, dev)
+    match dev {
+        Ok(dev) => Ok((atoms::ok(), dev.encode(env))),
+        Err(e) => Err(rustler::Error::Term(Box::new(e.to_string()))),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+fn load_key_file(env: rustler::Env, path: &str) -> impl Encoder {
+    let result = TOKIO_RUNTIME
+        .block_on(tailscale::config::load_key_file(path, Default::default()))
+        .map(|keys| {
+            let result: Keystate = keys.into();
+            result
+        })
+        .map_err(Into::into);
+
+    erl_result(env, result)
 }
 
 #[rustler::nif(schedule = "DirtyIo")]

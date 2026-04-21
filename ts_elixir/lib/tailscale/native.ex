@@ -34,14 +34,10 @@ defmodule Tailscale.Native do
   @doc """
   Open a new tailnet connection.
 
-  ## Parameters
-
-  - `config_path`: the path to the state file to load (created if it doesn't exist)
-  - `auth_key`: the auth key to use to authorize this device (may be `nil` if the device is already
-  authorized)
+  See `t:Tailscale.options/0` for details on what options are supported.
   """
-  @spec connect(String.t(), String.t() | nil) :: {:ok, device()} | {:error, any()}
-  def connect(_config_path, _auth_key), do: err()
+  @spec connect(%{}) :: {:ok, device()} | {:error, any()}
+  def connect(_opts), do: err()
 
   @doc """
   Bind a new udp socket.
@@ -169,4 +165,10 @@ defmodule Tailscale.Native do
   """
   @spec self_node(device()) :: {:ok, %{}} | {:error, any()}
   def self_node(_dev), do: err()
+
+  @doc """
+  Load key state from the specified path, generating a new state if the file doesn't exist.
+  """
+  @spec load_key_file(String.t()) :: {:ok, Tailscale.Keystate.t()} | {:error, any()}
+  def load_key_file(_path), do: err()
 end

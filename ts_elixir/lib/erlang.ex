@@ -3,8 +3,8 @@ defmodule :tailscale do
   Erlang-friendly re-export of `Tailscale`.
   """
 
-  defdelegate connect(config_path), to: Tailscale
-  defdelegate connect(config_path, auth_key), to: Tailscale
+  defdelegate connect(options), to: Tailscale
+  defdelegate connect(config_path, options), to: Tailscale
   defdelegate ipv4_addr(dev), to: Tailscale
   defdelegate ipv6_addr(dev), to: Tailscale
   defdelegate peer_by_name(dev, name), to: Tailscale
