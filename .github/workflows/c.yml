@@ -27,7 +27,7 @@ jobs:
           - version: 1.94.0
             label: latest
 
-        target:
+        build:
           - triple: x86_64-unknown-linux-gnu
             runner: linux-x86_64-16cpu
           - triple: aarch64-unknown-linux-gnu
@@ -44,25 +44,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Cache Rust
-        id: cache-rust-c
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Setup rust
+        id: setup-rust
+        uses: ./.github/workflows/setup-rust.yml
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/.rustup/toolchains
-            target/
-          key: ${{ matrix.target.triple }}-rs-c-${{ env.cache_key }}-${{ matrix.rust_toolchain.version }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install Rust toolchain
-        id: install-toolchain
-        if: steps.cache-rust-c.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 4/22/2026
-        with:
-          toolchain: ${{ matrix.rust_toolchain.version }}
+          toolchain-version: ${{ matrix.rust_toolchain.version }}
+          builder-triple: ${{ matrix.build.triple }}
+          runner: ${{ matrix.build.runner }}
 
       - name: Build examples
         run: make -C examples

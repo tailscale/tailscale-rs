@@ -44,30 +44,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Set up cache
-        id: cache-cargo
-        uses: actions/cache@v5
+      - name: Setup rust
+        id: setup-rust
+        uses: ./.github/workflows/setup-rust.yml
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/.rustup/toolchains
-            target/
-          # the 'cargo+$SUFFIX' below is a cache-busting key -- change it if the build changes in a way that
-          # invalidates old cached state.
-          key: ${{ matrix.target.runner }}-cargo+machete-${{ matrix.toolchain.version }}-${{ matrix.target.triple }}-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install Rust toolchain
-        id: install-toolchain
-        if: steps.cache-cargo.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain.version }}
+          toolchain-version: ${{ matrix.toolchain.version }}
+          builder-triple: ${{ matrix.target.build-triple }}
+          runner: ${{ matrix.target.runner }}
           components: clippy
       - name: Install nightly Rust toolchain
         id: install-nightly-toolchain
-        if: steps.cache-cargo.outputs.cache-hit != 'true'
+        if: steps.setup-rust.outputs.toolchain_cache_hit != 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -75,7 +62,7 @@ jobs:
       - name: binstall
         uses: cargo-bins/cargo-binstall@main
       - name: Install cargo-deny
-        if: steps.cache-cargo.outputs.cache-hit != 'true'
+        if: steps.setup-rust.outputs.toolchain_cache_hit != 'true'
         run: cargo binstall --no-confirm cargo-deny
       - name: Check for unused dependencies (cargo machete)
         uses: bnjbvr/cargo-machete@main

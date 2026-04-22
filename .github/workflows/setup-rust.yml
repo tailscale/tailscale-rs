@@ -1,0 +1,81 @@
+name: setup rust
+on:
+  workflow_call:
+    inputs:
+      toolchain-version:
+        description: Rust toolchain version to use.
+        required: true
+        type: string
+
+      builder-triple:
+        description: Target-triple of builder system.
+        required: true
+        type: string
+
+      targets:
+        description: Comma-separated list of additional targets to install.
+        default: ""
+        type: string
+
+      components:
+        description: Comma-separated list of components installed with the toolchain.
+        type: string
+        default: none
+        required: true
+
+      runner:
+        description: Runner to use.
+        type: string
+        required: true
+
+    outputs:
+      toolchain_cache_hit:
+        description: Did the toolchain cache hit?
+        value: ${{ jobs.install_and_cache.outputs.toolchain_cache_hit }}
+
+env:
+  cache_key: init
+  targets: ${{ case(inputs.targets == inputs.builder-triple, '', inputs.targets) }}
+
+jobs:
+  install_and_cache:
+    name: Install Rust toolchain and set up cache.
+    runs-on: ${{ inputs.runner }}
+
+    outputs:
+      toolchain_cache_hit: ${{ steps.cache-rust-toolchain.outputs.cache-hit }}
+
+    steps:
+      - name: Cache Rust Toolchain
+        id: cache-rust-toolchain
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.rustup/toolchains
+          key: rust-toolchain-${{ env.cache_key }}-${{ inputs.builder-triple }}-targets=${{ env.targets }}-components=${{ inputs.components }}
+          restore-keys:
+            rust-toolchain-${{ env.cache_key }}-${{ inputs.builder-triple }}-targets=${{ env.targets }}-components=
+            rust-toolchain-${{ env.cache_key }}-${{ inputs.builder-triple }}-targets=
+
+      - name: Install Rust toolchain
+        id: install-toolchain
+        if: steps.cache-rust-toolchain.outputs.cache-hit != 'true' || inputs.builder-triple == 'nightly'
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 4/22/2026
+        with:
+          toolchain: ${{ inputs.toolchain-version }}
+          components: ${{ inputs.components }}
+          targets: ${{ env.targets }}
+
+      - name: Cache target/
+        id: cache-rust-target
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/
+          key: rust-target-${{ env.cache_key }}-${{ inputs.builder-triple }}-${{ hashFiles('**/Cargo.lock') }} }}
+          restore-keys:
+            rust-target-${{ env.cache_key }}-${{ inputs.builder-triple }}-
