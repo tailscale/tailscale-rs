@@ -13,11 +13,11 @@ publish.workspace = true
 
 [dependencies]
 tailscale.workspace = true
-ts_cli_util.workspace = true
 ts_keys.workspace = true
 
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 cbindgen = "0.29"

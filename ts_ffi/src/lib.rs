@@ -22,6 +22,8 @@ use std::{
     sync::{LazyLock, Once},
 };
 
+use tracing::level_filters::LevelFilter;
+
 mod config;
 mod keys;
 mod net_types;
@@ -64,7 +66,15 @@ static TRACING_ONCE: Once = Once::new();
 /// errors if initialization needs to be done before `ts_init`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ts_init_tracing() {
-    TRACING_ONCE.call_once(ts_cli_util::init_tracing);
+    TRACING_ONCE.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(LevelFilter::INFO.into())
+                    .from_env_lossy(),
+            )
+            .init();
+    });
 }
 
 /// Initialize a new Tailscale device.
