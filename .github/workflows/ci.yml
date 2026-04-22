@@ -11,8 +11,28 @@ on:
     # Nightly run; execute daily at 06:37 AM UTC on main (default branch).
     - cron: '37 6 * * *'
 
+  workflow_dispatch:
+    inputs:
+      # It doesn't currently make sense to publish to staging.crates.io because this
+      # requires all our dependencies to be present for the push to succeed, so this is
+      # disabled for now.
+      crates_repo:
+        description: "crates.io repo to publish to"
+        default: prod
+        required: true
+        options:
+          # - staging
+          - prod
+
 env:
   CARGO_TERM_COLOR: always
+  crates_environment: &crates_environment ${{ case(inputs.crates_repo == 'prod', 'crates.io', startsWith(github.ref, 'refs/tags/'), 'crates.io', 'staging.crates.io') }}
+
+  is_tag_push: ${{ startsWith(github.ref, 'refs/tags/') }}
+  is_dispatch: ${{ github.event_name == 'workflow_dispatch' }}
+
+  prev_rust: &prev_rust 1.93.1
+  latest_rust: &latest_rust 1.94.0
 
 jobs:
   build_test:
@@ -29,9 +49,9 @@ jobs:
           - triple: aarch64-apple-darwin
             runner: macos-26
         toolchain:
-          - version: 1.93.1
+          - version: *prev_rust
             label: prev
-          - version: 1.94.0
+          - version: *latest_rust
             label: latest
         exclude:
           # Don't run macOS builds on PR/push workflows; only on the nightly workflow.
@@ -91,10 +111,14 @@ jobs:
           toolchain-version: nightly
           builder-triple: x86_64-unknown-linux-gnu
           components: rustfmt
-      - name: binstall
+      - &binstall
+        name: binstall
         uses: cargo-bins/cargo-binstall@main
       - name: Install cargo-deny
         run: command -v cargo-deny || cargo binstall --no-confirm cargo-deny
+      - &cargo_ws
+        name: Install cargo-workspaces
+        run: command -v cargo-workspaces || cargo binstall --no-confirm cargo-workspaces
       - name: Check for unused dependencies (cargo machete)
         uses: bnjbvr/cargo-machete@main
         with:
@@ -105,3 +129,53 @@ jobs:
         run: cargo +nightly fmt --check
       - name: Custom workspace checks
         run: cargo run -p checks
+      - &dry_publish
+        name: Publish (Dry run)
+        run: cargo ws publish --dry-run --publish-as-is
+
+  publish:
+    name: publish
+    runs-on: linux-x86_64-16cpu
+
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    needs:
+      - build_test
+      - arch_independent
+
+    environment: *crates_environment
+
+    # `id-token` is used to grab the cargo registry token.
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
+        id: auth
+        with:
+          url: ${{ case(inputs.crates_repo != 'prod', 'https://staging.crates.io', 'https://crates.io') }}
+
+      - name: Setup rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain-version: *latest_rust
+          builder-triple: x86_64-unknown-linux-gnu
+
+      - *binstall
+      - *cargo_ws
+
+      - name: Configure staging registry
+        if: inputs.crates_repo != 'prod'
+        run: |-
+          echo CARGO_REGISTRIES_STAGING_INDEX=https://staging.crates.io/index >> $GITHUB_ENV
+          echo CARGO_REGISTRY_DEFAULT=staging >> $GITHUB_ENV
+
+      - *dry_publish
+
+      - name: Publish
+        run: cargo ws publish --publish-as-is
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
