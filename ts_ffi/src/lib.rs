@@ -78,7 +78,7 @@ pub extern "C" fn ts_init_tracing() {
 ///
 /// # Safety
 ///
-/// `auth_token`  must be able to be read according to [`CStr`][ffi::CStr] rules, i.e.
+/// `auth_token`  must be able to be read according to [`CStr`] rules, i.e.
 /// it must be NUL-terminated and valid for reading up to and including the NUL.
 /// The string fields of `config` may be `NULL`, but if they are not, they must
 /// obey the same invariants.
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ts_init(
 ///
 /// # Safety
 ///
-/// `auth_token` and `key_file` must be able to be read according to [`CStr`][ffi::CStr] rules, i.e.
+/// `auth_token` and `key_file` must be able to be read according to [`CStr`] rules, i.e.
 /// they must be NUL-terminated and valid for reading up to and including the NUL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ts_init_from_key_file(
