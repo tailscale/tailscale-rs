@@ -235,6 +235,16 @@ impl Device {
             .map_err(Into::into)
     }
 
+    /// Get our node info.
+    pub async fn self_node(&self) -> Result<NodeInfo, Error> {
+        self.runtime
+            .control
+            .ask(ts_runtime::control_runner::SelfNode)
+            .await
+            .map_err(ts_runtime::Error::from)?
+            .ok_or(Error::RuntimeDegraded)
+    }
+
     /// Look up a peer by name.
     pub async fn peer_by_name(&self, name: &str) -> Result<Option<NodeInfo>, Error> {
         let pt = self
@@ -251,14 +261,32 @@ impl Device {
         .map_err(Into::into)
     }
 
-    /// Get our node info.
-    pub async fn self_node(&self) -> Result<NodeInfo, Error> {
-        self.runtime
-            .control
-            .ask(ts_runtime::control_runner::SelfNode)
+    /// Look up a peer by ip.
+    pub async fn peer_by_tailnet_ip(&self, ip: IpAddr) -> Result<Option<NodeInfo>, Error> {
+        let pt = self
+            .runtime
+            .peer_tracker
+            .upgrade()
+            .ok_or(Error::RuntimeDegraded)?;
+
+        pt.ask(ts_runtime::peer_tracker::PeerByTailnetIp { ip })
             .await
-            .map_err(ts_runtime::Error::from)?
-            .ok_or(Error::RuntimeDegraded)
+            .map_err(ts_runtime::Error::from)
+            .map_err(Into::into)
+    }
+
+    /// Look up the peer(s) with the most-specific route matches for `ip`.
+    pub async fn peers_with_route(&self, ip: IpAddr) -> Result<Vec<NodeInfo>, Error> {
+        let pt = self
+            .runtime
+            .peer_tracker
+            .upgrade()
+            .ok_or(Error::RuntimeDegraded)?;
+
+        pt.ask(ts_runtime::peer_tracker::PeerByAcceptedRoute { ip })
+            .await
+            .map_err(ts_runtime::Error::from)
+            .map_err(Into::into)
     }
 
     /// Attempt to gracefully shut down this device's runtime.

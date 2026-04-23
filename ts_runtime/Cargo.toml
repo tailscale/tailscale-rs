@@ -28,6 +28,7 @@ ts_transport_derp.workspace = true
 
 # Unconditionally required dependencies.
 futures.workspace = true
+ipnet.workspace = true
 kameo = "0.19"
 kameo_actors = "0.4"
 thiserror.workspace = true

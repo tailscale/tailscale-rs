@@ -4503,6 +4503,7 @@ name = "ts_runtime"
 version = "0.2.0"
 dependencies = [
  "futures",
+ "ipnet",
  "kameo",
  "kameo_actors",
  "thiserror 2.0.18",
