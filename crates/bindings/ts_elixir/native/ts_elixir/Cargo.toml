@@ -11,11 +11,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustler = "0.37.2"
-
 tailscale = { workspace = true }
 
+futures-util.workspace = true
+rustler = "0.37.2"
 static_assertions.workspace = true
+tap = "1.0"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

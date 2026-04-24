@@ -3,6 +3,8 @@ defmodule Tailscale.Tcp.Stream do
   Tailscale TCP sockets (connected).
   """
 
+  require Tailscale.Util
+
   @typedoc """
   A handle to a TCP stream (connected socket).
   """
@@ -15,7 +17,7 @@ defmodule Tailscale.Tcp.Stream do
   Returns the number of bytes actually sent.
   """
   def send(res, msg) do
-    Tailscale.Native.tcp_send(res, msg)
+    Tailscale.Util.await(Tailscale.Native.tcp_send(res, msg))
   end
 
   @spec send_all(t(), binary()) :: :ok | {:error, any()}
@@ -27,7 +29,7 @@ defmodule Tailscale.Tcp.Stream do
 
     case Tailscale.Tcp.Stream.send(res, msg) do
       {:ok, ^len} -> :ok
-      {:ok, n} -> Tailscale.Tcp.Stream.send_all(res, binary_slice(msg, n..len))
+      {:ok, n} -> send_all(res, binary_slice(msg, n..len))
       err -> err
     end
   end
@@ -37,7 +39,7 @@ defmodule Tailscale.Tcp.Stream do
   Receive data from the TCP socket, blocking until at least one byte can be received.
   """
   def recv(res) do
-    Tailscale.Native.tcp_recv(res)
+    Tailscale.Util.await(Tailscale.Native.tcp_recv(res))
   end
 
   @spec local_addr(t()) :: {:inet.ip_address(), :inet.port_number()}
