@@ -29,14 +29,14 @@ pub fn config_from_erl(
         config.key_state = value
             .decode::<Keystate>()?
             .try_into()
-            .map_err(|_| rustler::Error::Atom("badkeys"))?;
+            .map_err(|_| rustler::Error::BadArg)?;
     }
 
     if let Some(value) = erl_config.get(&atoms::control_url()) {
         config.control_server_url = value.decode::<&str>()?.parse().map_err(|e| {
             tracing::error!(error = %e, "parsing control server url");
 
-            rustler::Error::Atom("bad_url")
+            rustler::Error::BadArg
         })?;
     }
 
