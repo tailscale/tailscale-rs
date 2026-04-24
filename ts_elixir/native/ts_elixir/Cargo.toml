@@ -20,6 +20,11 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[features]
+# Additional testing functions that can directly trigger panics and errors to exercise the code in
+# development.
+testing-nifs = []
+
 [lib]
 crate-type = ["cdylib"]
 

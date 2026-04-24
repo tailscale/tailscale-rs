@@ -16,6 +16,8 @@ mod helpers;
 mod ip_or_self;
 mod node_info;
 mod tcp;
+#[cfg(feature = "testing-nifs")]
+mod testing_nifs;
 mod udp;
 
 use async_reply::{AsyncReply, try_reply_async};
