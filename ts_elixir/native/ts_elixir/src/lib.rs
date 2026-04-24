@@ -5,9 +5,11 @@ use std::{
     sync::{Arc, LazyLock, Once},
 };
 
-use rustler::{Encoder, NifResult, ResourceArc, Term};
+use rustler::{NifResult, ResourceArc, Term};
+use tap::Pipe;
 use tracing::level_filters::LevelFilter;
 
+mod async_reply;
 mod config;
 mod erl_ip;
 mod helpers;
@@ -16,23 +18,28 @@ mod node_info;
 mod tcp;
 mod udp;
 
+use async_reply::{AsyncReply, try_reply_async};
 use config::Keystate;
 use erl_ip::ErlIp;
-use helpers::{Result, ok_arc, sockaddr_to_erl, term_err};
+use helpers::{ok_arc, sockaddr_to_erl, term_err};
 use ip_or_self::IpOrSelf;
 use node_info::NodeInfo;
 use tcp::{TcpListener, TcpStream};
 use udp::UdpSocket;
 
-use crate::helpers::erl_result;
-
 mod atoms {
     rustler::atoms! {
         ok,
+        async_ = "async",
         error,
+        nif_panic,
+        badarg,
+        raise,
 
         ip4,
         ip6,
+
+        tailscale,
     }
 }
 
@@ -69,14 +76,14 @@ fn start_tracing() {
     });
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
+#[rustler::nif]
 fn connect<'env>(
     env: rustler::Env<'env>,
     opts: HashMap<rustler::Atom, Term<'_>>,
-) -> NifResult<Term<'env>> {
+) -> NifResult<AsyncReply<'env>> {
     let (config, auth_key) = config::config_from_erl(&opts)?;
 
-    let dev = TOKIO_RUNTIME.block_on(async move {
+    try_reply_async(env, async move {
         let dev = tailscale::Device::new(&config, auth_key)
             .await
             .map_err(term_err)?;
@@ -84,84 +91,92 @@ fn connect<'env>(
         ok_arc(Device {
             inner: Arc::new(dev),
         })
-    });
-
-    dev.map(|d| d.encode(env))
+    })
+    .pipe(Ok)
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn load_key_file(env: rustler::Env, path: &str) -> NifResult<impl Encoder> {
-    let result = TOKIO_RUNTIME
-        .block_on(tailscale::config::load_key_file(path, Default::default()))
-        .map(Keystate::from)
-        .map_err(Into::into);
-
-    erl_result(env, result)
+#[rustler::nif]
+fn load_key_file(env: rustler::Env, path: String) -> AsyncReply {
+    try_reply_async(env, async move {
+        tailscale::config::load_key_file(path, Default::default())
+            .await
+            .map(Keystate::from)
+            .map_err(term_err)
+    })
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn ipv4_addr(env: rustler::Env, dev: ResourceArc<Device>) -> NifResult<impl Encoder> {
-    let dev = dev.inner.clone();
-    let addr = TOKIO_RUNTIME.block_on(dev.ipv4_addr());
-
-    erl_result(env, addr.map(|ip| ErlIp(ip.into())).map_err(Into::into))
-}
-
-#[rustler::nif(schedule = "DirtyIo")]
-fn ipv6_addr(dev: ResourceArc<Device>) -> NifResult<impl Encoder> {
+#[rustler::nif]
+fn ipv4_addr(env: rustler::Env, dev: ResourceArc<Device>) -> AsyncReply {
     let dev = dev.inner.clone();
 
-    TOKIO_RUNTIME
-        .block_on(dev.ipv6_addr())
-        .map(ErlIp::from)
-        .map_err(term_err)
+    try_reply_async(env, async move {
+        dev.ipv4_addr().await.map(ErlIp::from).map_err(term_err)
+    })
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn peer_by_name(env: rustler::Env<'_>, dev: ResourceArc<Device>, name: &str) -> impl Encoder {
+#[rustler::nif]
+fn ipv6_addr(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> AsyncReply<'_> {
+    let dev = dev.inner.clone();
+
+    try_reply_async(env, async move {
+        dev.ipv6_addr().await.map(ErlIp::from).map_err(term_err)
+    })
+}
+
+#[rustler::nif]
+fn peer_by_name<'e>(env: rustler::Env<'e>, dev: ResourceArc<Device>, name: &str) -> AsyncReply<'e> {
     let dev = dev.inner.clone();
     let name = name.to_owned();
 
-    match TOKIO_RUNTIME.block_on(async move { dev.peer_by_name(&name).await }) {
-        Err(e) => (atoms::error(), e.to_string()).encode(env),
-        Ok(None) => (atoms::ok(), Option::<()>::None).encode(env),
-        Ok(Some(peer)) => (atoms::ok(), NodeInfo::from(peer)).encode(env),
-    }
+    try_reply_async(env, async move {
+        dev.peer_by_name(&name)
+            .await
+            .map(|opt| opt.map(NodeInfo::from))
+            .map_err(term_err)
+    })
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn self_node(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> impl Encoder {
+#[rustler::nif]
+fn self_node(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> AsyncReply<'_> {
     let dev = dev.inner.clone();
 
-    match TOKIO_RUNTIME.block_on(async move { dev.self_node().await }) {
-        Err(e) => (atoms::error(), e.to_string()).encode(env),
-        Ok(peer) => (atoms::ok(), NodeInfo::from(peer)).encode(env),
-    }
+    try_reply_async(env, async move {
+        dev.self_node().await.map(NodeInfo::from).map_err(term_err)
+    })
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn peer_by_tailnet_ip(env: rustler::Env<'_>, dev: ResourceArc<Device>, ip: ErlIp) -> impl Encoder {
+#[rustler::nif]
+fn peer_by_tailnet_ip<'e>(
+    env: rustler::Env<'e>,
+    dev: ResourceArc<Device>,
+    ip: ErlIp,
+) -> NifResult<AsyncReply<'e>> {
     let dev = dev.inner.clone();
 
-    match TOKIO_RUNTIME.block_on(async move { dev.peer_by_tailnet_ip(ip.0).await }) {
-        Err(e) => (atoms::error(), e.to_string()).encode(env),
-        Ok(None) => (atoms::ok(), Option::<()>::None).encode(env),
-        Ok(Some(peer)) => (atoms::ok(), NodeInfo::from(peer)).encode(env),
-    }
+    try_reply_async(env, async move {
+        dev.peer_by_tailnet_ip(ip.into())
+            .await
+            .map(|x| x.map(NodeInfo::from))
+            .map_err(term_err)
+    })
+    .pipe(Ok)
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn peers_with_route(env: rustler::Env<'_>, dev: ResourceArc<Device>, ip: ErlIp) -> impl Encoder {
+#[rustler::nif]
+fn peers_with_route<'e>(
+    env: rustler::Env<'e>,
+    dev: ResourceArc<Device>,
+    ip: ErlIp,
+) -> NifResult<AsyncReply<'e>> {
     let dev = dev.inner.clone();
 
-    match TOKIO_RUNTIME.block_on(async move { dev.peers_with_route(ip.0).await }) {
-        Err(e) => (atoms::error(), e.to_string()).encode(env),
-        Ok(peers) => (
-            atoms::ok(),
-            peers.into_iter().map(NodeInfo::from).collect::<Vec<_>>(),
-        )
-            .encode(env),
-    }
+    try_reply_async(env, async move {
+        dev.peers_with_route(ip.into())
+            .await
+            .map(|peers| peers.into_iter().map(NodeInfo::from).collect::<Vec<_>>())
+            .map_err(term_err)
+    })
+    .pipe(Ok)
 }
 
 fn load(env: rustler::Env, _term: Term) -> bool {
