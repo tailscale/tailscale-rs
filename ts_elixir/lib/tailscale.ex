@@ -1,4 +1,6 @@
 defmodule Tailscale do
+  require Tailscale.Util
+
   @moduledoc """
   Elixir bindings for the Tailscale Rust client.
 
@@ -69,8 +71,8 @@ defmodule Tailscale do
 
   See `t:options/0` for details on available options.
   """
-  def connect(key_file_path, options) when is_binary(key_file_path) do
-    case Tailscale.Native.load_key_file(key_file_path) do
+  def connect(key_file_path, options) when is_binary(key_file_path) and is_list(options) do
+    case Tailscale.Util.await(Tailscale.Native.load_key_file(key_file_path)) do
       {:ok, keys} ->
         Keyword.put(options, :keys, keys) |> connect()
 
@@ -89,8 +91,10 @@ defmodule Tailscale do
   """
   def connect(options \\ [])
 
-  def connect(options) when is_list(options),
-    do: :proplists.to_map(options) |> Tailscale.Native.connect()
+  def connect(options) when is_list(options) do
+    options = :proplists.to_map(options)
+    Tailscale.Util.await(Tailscale.Native.connect(options))
+  end
 
   def connect(key_file_path) when is_binary(key_file_path), do: connect(key_file_path, [])
 
@@ -100,7 +104,7 @@ defmodule Tailscale do
 
   Blocks until the address is available.
   """
-  def ipv4_addr(dev), do: Tailscale.Native.ipv4_addr(dev)
+  def ipv4_addr(dev), do: Tailscale.Util.await(Tailscale.Native.ipv4_addr(dev))
 
   @spec ipv6_addr(t()) :: {:ok, :inet.ip6_address()} | {:error, any()}
   @doc """
@@ -111,13 +115,13 @@ defmodule Tailscale do
   Note that this address is in `t::inet.ip6_address/0` format (16-bit segments), which may be
   difficult to read. See `:inet.ntoa/1` to format to a string.
   """
-  def ipv6_addr(dev), do: Tailscale.Native.ipv6_addr(dev)
+  def ipv6_addr(dev), do: Tailscale.Util.await(Tailscale.Native.ipv6_addr(dev))
 
   @spec self_node(t()) :: {:ok, Tailscale.NodeInfo.t()} | {:error, any()}
   @doc """
   Get this node's `m:Tailscale.NodeInfo`.
   """
-  defdelegate self_node(dev), to: Tailscale.Native
+  def self_node(dev), do: Tailscale.Util.await(Tailscale.Native.self_node(dev))
 
   @spec peer_by_name(t(), String.t()) :: {:ok, Tailscale.NodeInfo.t() | nil} | {:error, any()}
   @doc """
@@ -126,7 +130,8 @@ defmodule Tailscale do
   Returns `{:ok, nil}` if there was no such peer, and `{:error, reason}` if the lookup encountered
   an error.
   """
-  def peer_by_name(dev, name), do: Tailscale.Native.peer_by_name(dev, name)
+  def peer_by_name(dev, name),
+    do: Tailscale.Util.await(Tailscale.Native.peer_by_name(dev, name))
 
   @spec peer_by_tailnet_ip(t(), Tailscale.ip_addr()) ::
           {:ok, Tailscale.NodeInfo.t() | nil} | {:error, any()}
@@ -135,12 +140,14 @@ defmodule Tailscale do
 
   Returns `{:ok, nil}` if there was no such peer. `:error` if the lookup encountered an error.
   """
-  defdelegate peer_by_tailnet_ip(dev, ip), to: Tailscale.Native
+  def peer_by_tailnet_ip(dev, ip),
+    do: Tailscale.Util.await(Tailscale.Native.peer_by_tailnet_ip(dev, ip))
 
   @spec peers_with_route(t(), Tailscale.ip_addr()) ::
           {:ok, [Tailscale.NodeInfo.t()]} | {:error, any()}
   @doc """
   Retrieve the most narrow set of peers that accept packets for the specified IP.
   """
-  defdelegate peers_with_route(dev, ip), to: Tailscale.Native
+  def peers_with_route(dev, ip),
+    do: Tailscale.Util.await(Tailscale.Native.peers_with_route(dev, ip))
 end
