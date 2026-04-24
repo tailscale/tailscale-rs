@@ -1,4 +1,6 @@
 defmodule Tailscale.Udp do
+  require Tailscale.Util
+
   @moduledoc """
   Tailscale UDP sockets.
   """
@@ -21,7 +23,7 @@ defmodule Tailscale.Udp do
   - `port`: the port number to bind.
   """
   def bind(dev, addr, port) do
-    Tailscale.Native.udp_bind(dev, addr, port)
+    Tailscale.Util.await(Tailscale.Native.udp_bind(dev, addr, port))
   end
 
   @spec send(t(), Tailscale.ip_addr(), :inet.port_number(), binary()) :: :ok | {:error, any()}
@@ -37,7 +39,7 @@ defmodule Tailscale.Udp do
   - `payload`: the message payload.
   """
   def send(sock, remote, port, payload) do
-    Tailscale.Native.udp_send(sock, remote, port, payload)
+    Tailscale.Util.await(Tailscale.Native.udp_send(sock, remote, port, payload))
   end
 
   @spec recv(t()) :: {:ok, Tailscale.ip_addr(), :inet.port_number(), binary()} | {:error, any()}
@@ -45,7 +47,7 @@ defmodule Tailscale.Udp do
   Receive a packet from the socket, blocking until one is ready.
   """
   def recv(sock) do
-    Tailscale.Native.udp_recv(sock)
+    Tailscale.Util.await(Tailscale.Native.udp_recv(sock))
   end
 
   @doc """
