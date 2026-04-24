@@ -1,4 +1,6 @@
 defmodule Tailscale.Tcp.Listener do
+  require Tailscale.Util
+
   @moduledoc """
   Tailscale TCP listening socket functionality.
   """
@@ -15,7 +17,7 @@ defmodule Tailscale.Tcp.Listener do
   Blocks until a connection is ready.
   """
   def accept(res) do
-    Tailscale.Native.tcp_accept(res)
+    Tailscale.Util.await(Tailscale.Native.tcp_accept(res))
   end
 
   @doc """
