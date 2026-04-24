@@ -159,3 +159,146 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::LazyLock;
+
+    use noise_protocol::Cipher as _;
+    use proptest::{collection::vec, prelude::*};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_util::codec::Framed;
+
+    use super::*;
+
+    type Cipher = crate::ChaCha20Poly1305BigEndian;
+
+    fn init_codec_pair(key: [u8; 32], nonce: u64) -> (Codec<Cipher>, Codec<Cipher>) {
+        let encrypt_state = CipherState::<Cipher>::new(&key, nonce);
+        let decrypt_state = encrypt_state.clone();
+
+        (
+            Codec {
+                cipher_state: encrypt_state,
+            },
+            Codec {
+                cipher_state: decrypt_state,
+            },
+        )
+    }
+
+    fn rand_codec_pair() -> (Codec<Cipher>, Codec<Cipher>) {
+        init_codec_pair(rand::random(), rand::random())
+    }
+
+    const TEST_PAYLOAD: &[u8] = b"hello";
+
+    #[test]
+    fn roundtrip() {
+        let (mut encrypt_codec, mut decrypt_codec) = rand_codec_pair();
+        let mut buf = BytesMut::new();
+
+        encrypt_codec.encode(TEST_PAYLOAD, &mut buf).unwrap();
+        assert_ne!(buf.as_ref(), TEST_PAYLOAD);
+        assert_eq!(buf.len(), TEST_PAYLOAD.len() + Cipher::tag_len() + 3);
+
+        let decoded = decrypt_codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.as_ref(), TEST_PAYLOAD);
+    }
+
+    #[test]
+    fn roundtrip_partial() {
+        let (mut encrypt_codec, mut decrypt_codec) = rand_codec_pair();
+        let mut buf = BytesMut::new();
+
+        encrypt_codec.encode(TEST_PAYLOAD, &mut buf).unwrap();
+        assert_ne!(buf.as_ref(), TEST_PAYLOAD);
+        assert_eq!(buf.len(), TEST_PAYLOAD.len() + Cipher::tag_len() + 3);
+
+        for i in 0..TEST_PAYLOAD.len() - 1 {
+            let mut test_payload = buf.clone().split_to(i);
+            assert_eq!(
+                decrypt_codec.decode(&mut test_payload).unwrap(),
+                None,
+                "i={i}"
+            );
+            assert_eq!(test_payload.len(), i);
+        }
+
+        let decoded = decrypt_codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.as_ref(), TEST_PAYLOAD);
+    }
+
+    static RUNTIME: LazyLock<tokio::runtime::Runtime> =
+        LazyLock::new(|| tokio::runtime::Runtime::new().unwrap());
+
+    #[test]
+    fn read_write() {
+        let (encrypt_codec, decrypt_codec) = rand_codec_pair();
+
+        let (rx, tx) = tokio::io::simplex(32);
+
+        let mut framed_encrypt =
+            crate::framed_io::FramedIo::<_, BytesMut>::new(Framed::new(tx, encrypt_codec));
+        let mut framed_decrypt =
+            crate::framed_io::FramedIo::<_, BytesMut>::new(Framed::new(rx, decrypt_codec));
+
+        let (_, read_payload) = RUNTIME.block_on(async move {
+            tokio::try_join![
+                async move {
+                    framed_encrypt.write_all(TEST_PAYLOAD).await?;
+                    framed_encrypt.flush().await
+                },
+                async move {
+                    let mut read_payload = BytesMut::zeroed(TEST_PAYLOAD.len());
+                    framed_decrypt.read_exact(&mut read_payload).await?;
+                    Ok(read_payload)
+                }
+            ]
+            .unwrap()
+        });
+
+        assert_eq!(read_payload, TEST_PAYLOAD);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn roundtrip_prop(payload in vec(any::<u8>(), 1..=MAX_MESSAGE_SIZE - 3 - 16), key: [u8; 32], nonce: u64) {
+            let (mut encrypt_codec, mut decrypt_codec) = init_codec_pair(key, nonce);
+
+            let mut buf = BytesMut::new();
+            encrypt_codec.encode(&payload, &mut buf).unwrap();
+            let decoded = decrypt_codec.decode(&mut buf).unwrap().unwrap();
+            assert_eq!(decoded.as_ref(), payload.as_slice());
+        }
+
+        #[test]
+        fn read_write_prop(payload in vec(any::<u8>(), 1..=MAX_MESSAGE_SIZE * 4), key: [u8; 32], nonce: u64) {
+            let (encrypt_codec, decrypt_codec) = init_codec_pair(key, nonce);
+
+            let (rx, tx) = tokio::io::simplex(32);
+
+            let mut framed_encrypt = crate::framed_io::FramedIo::<_, BytesMut>::new(Framed::new(tx, encrypt_codec));
+            let mut framed_decrypt = crate::framed_io::FramedIo::<_, BytesMut>::new(Framed::new(rx, decrypt_codec));
+
+            let write_payload = payload.clone();
+            let mut read_payload = BytesMut::zeroed(payload.len());
+
+            let (_, read_payload) = RUNTIME.block_on(async move {
+                tokio::try_join![
+                    async move {
+                        framed_encrypt.write_all(&write_payload).await?;
+                        framed_encrypt.flush().await
+                    },
+                    async move {
+                        framed_decrypt.read_exact(&mut read_payload).await?;
+                        Ok(read_payload)
+                    }
+                ]
+                .unwrap()
+            });
+
+            assert_eq!(read_payload, payload);
+        }
+    }
+}

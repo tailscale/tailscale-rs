@@ -31,5 +31,9 @@ tracing.workspace = true
 zerocopy.workspace = true
 zeroize = "1.8"
 
+[dev-dependencies]
+rand = "0.10"
+proptest = "1.11"
+
 [lints]
 workspace = true

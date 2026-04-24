@@ -4200,6 +4200,8 @@ dependencies = [
  "noise-protocol",
  "noise-rust-crypto",
  "pin-project-lite",
+ "proptest",
+ "rand 0.10.1",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
