@@ -17,6 +17,7 @@ tailscale = { workspace = true }
 
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lib]
 crate-type = ["cdylib"]

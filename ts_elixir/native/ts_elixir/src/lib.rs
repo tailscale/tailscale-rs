@@ -4,10 +4,11 @@ use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Once},
 };
 
 use rustler::{Encoder, NifResult, ResourceArc, Term};
+use tracing::level_filters::LevelFilter;
 
 mod config;
 mod tcp;
@@ -101,6 +102,21 @@ where
     T: rustler::Resource,
 {
     Ok(ResourceArc::new(t))
+}
+
+#[rustler::nif]
+fn start_tracing() {
+    static TRACING_ONCE: Once = Once::new();
+
+    TRACING_ONCE.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(LevelFilter::INFO.into())
+                    .from_env_lossy(),
+            )
+            .init();
+    });
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
