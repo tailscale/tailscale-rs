@@ -1,8 +1,9 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use bytes::BufMut;
+use bytes::{BufMut, BytesMut};
 use noise_protocol::{HandshakeState, HandshakeStateBuilder, patterns::noise_ik};
 use noise_rust_crypto::{Blake2s, X25519, sensitive::Sensitive};
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio_util::codec::Framed;
 use ts_hexdump::{AsHexExt, Case};
 use ts_keys::{MachinePrivateKey, MachinePublicKey};
 use ts_packet::PacketMut;
@@ -10,13 +11,20 @@ use zerocopy::IntoBytes;
 use zeroize::Zeroizing;
 
 use crate::{
-    Error, NoiseIo,
+    ChaCha20Poly1305BigEndian, Error,
+    codec::BiCodec,
+    framed_io::FramedIo,
     messages::{ControlMessageHeader, INITIATION_PAYLOAD_LEN, InitiationMessage, ResponseMessage},
 };
 
+type Cipher = ChaCha20Poly1305BigEndian;
+type Codec = BiCodec<Cipher, Cipher>;
+type NoiseFramed<T> = Framed<T, Codec>;
+type WrappedIo<T> = FramedIo<NoiseFramed<T>, BytesMut>;
+
 /// Noise handshake state.
 pub struct Handshake {
-    state: HandshakeState<X25519, crate::ChaCha20Poly1305BigEndian, Blake2s>,
+    state: HandshakeState<X25519, Cipher, Blake2s>,
 }
 
 impl Handshake {
@@ -58,7 +66,7 @@ impl Handshake {
     pub async fn complete<T: AsyncRead + Unpin>(
         &mut self,
         mut conn: T,
-    ) -> Result<NoiseIo<T>, Error> {
+    ) -> Result<WrappedIo<T>, Error> {
         let mut hdr_bytes = [0u8; 3];
         let mut bytes_read = conn.read_exact(&mut hdr_bytes[..]).await?;
 
@@ -93,6 +101,13 @@ impl Handshake {
         }
 
         let (tx, rx) = self.state.get_ciphers();
-        Ok(NoiseIo::new(conn, rx, tx))
+
+        Ok(FramedIo::new(Framed::new(
+            conn,
+            BiCodec {
+                tx: tx.into(),
+                rx: rx.into(),
+            },
+        )))
     }
 }

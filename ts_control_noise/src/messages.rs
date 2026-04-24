@@ -18,7 +18,7 @@ pub(crate) enum ControlMessageType {
     Record = 0x4,
 }
 
-#[derive(Debug, TryFromBytes, IntoBytes, KnownLayout, Immutable)]
+#[derive(Copy, Clone, Debug, TryFromBytes, IntoBytes, KnownLayout, Immutable)]
 pub(crate) struct ControlMessageHeader {
     pub typ: ControlMessageType,
     pub len: U16,
