@@ -4207,7 +4207,6 @@ dependencies = [
  "ts_capabilityversion",
  "ts_hexdump",
  "ts_keys",
- "ts_packet",
  "zerocopy",
  "zeroize",
 ]

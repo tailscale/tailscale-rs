@@ -15,7 +15,6 @@ rust-version.workspace = true
 ts_capabilityversion.workspace = true
 ts_hexdump.workspace = true
 ts_keys.workspace = true
-ts_packet.workspace = true
 
 # Unconditionally required dependencies.
 base64.workspace = true
