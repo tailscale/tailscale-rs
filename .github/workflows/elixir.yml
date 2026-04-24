@@ -58,11 +58,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Cache mix
         id: cache-mix
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.mix
@@ -72,7 +72,7 @@ jobs:
 
       - name: Install elixir
         id: install-elixir
-        uses: erlef/setup-beam@v1.24.0
+        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # 1.24.0
         with:
           otp-version: ${{ matrix.otp.version }}
           elixir-version: ${{ matrix.elixir.version }}
@@ -117,7 +117,7 @@ jobs:
         run: mix docs --warnings-as-errors
 
       - name: Upload docs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: exdoc-${{ github.sha }}
           path: ts_elixir/doc
@@ -144,7 +144,7 @@ jobs:
           MIX_ENV: prod
 
       - name: Upload package tarball
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.package_artifact }}
           path: ts_elixir/tailscale
@@ -165,11 +165,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Cache mix
         id: cache-mix
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.mix
@@ -179,7 +179,7 @@ jobs:
 
       - name: Install elixir
         id: install-elixir
-        uses: erlef/setup-beam@v1.24.0
+        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # 1.24.0
         with:
           otp-version: ${{ env.latest_otp }}
           elixir-version: ${{ env.latest_elixir }}
@@ -198,13 +198,13 @@ jobs:
         run: mix deps.compile
 
       - name: Download built package
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.package_artifact }}
           path: ts_elixir/tailscale
 
       - name: Generate attestation
-        uses: actions/attest@v4
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: ts_elixir/tailscale
 
