@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use rustler::{Binary, Encoder, ResourceArc, Term};
+use rustler::{Binary, Encoder, NifResult, ResourceArc, Term};
 
 use crate::{
-    Device, IpOrSelf, Result, TOKIO_RUNTIME, atoms, erl_result, ip_from_erl, ip_to_erl, ok_arc,
+    Device, IpOrSelf, Result, TOKIO_RUNTIME, atoms, erl_ip::ErlIp, helpers::term_err, ok_arc,
 };
 
 pub struct UdpSocket {
@@ -14,38 +14,39 @@ pub struct UdpSocket {
 impl rustler::Resource for UdpSocket {}
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn udp_bind(env: rustler::Env, dev: ResourceArc<Device>, ip: Term, port: u16) -> impl Encoder {
+fn udp_bind(
+    env: rustler::Env,
+    dev: ResourceArc<Device>,
+    ip: IpOrSelf,
+    port: u16,
+) -> NifResult<impl Encoder> {
     let dev = dev.inner.clone();
-    let ip = IpOrSelf::new(ip);
 
-    let sock = TOKIO_RUNTIME.block_on(async move {
-        let addr = ip.ok_or("invalid ip addr")?.resolve(&dev).await?;
-        let sock = dev.udp_bind((addr, port).into()).await?;
+    TOKIO_RUNTIME
+        .block_on(async move {
+            let addr = ip.resolve(&dev).await?;
+            let sock = dev.udp_bind((addr, port).into()).await.map_err(term_err)?;
 
-        ok_arc(UdpSocket {
-            inner: Arc::new(sock),
+            ok_arc(UdpSocket {
+                inner: Arc::new(sock),
+            })
         })
-    });
-
-    erl_result(env, sock)
+        .map(|sock| sock.encode(env))
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
 fn udp_send<'env>(
     env: rustler::Env<'env>,
     sock: ResourceArc<UdpSocket>,
-    ip: Term,
+    ip: ErlIp,
     port: u16,
     msg: Binary,
 ) -> Term<'env> {
-    let addr = ip_from_erl(ip);
     let msg = msg.to_vec();
     let sock = sock.inner.clone();
 
     match TOKIO_RUNTIME.block_on(async move {
-        let addr = addr.ok_or("invalid ip addr")?;
-
-        sock.send_to((addr, port).into(), &msg).await?;
+        sock.send_to((ip.0, port).into(), &msg).await?;
 
         Result::<_>::Ok(())
     }) {
@@ -55,22 +56,13 @@ fn udp_send<'env>(
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn udp_recv(env: rustler::Env, sock: ResourceArc<UdpSocket>) -> Term {
-    let (who, msg) = match sock.inner.recv_from_bytes_blocking() {
-        Ok((who, msg)) => (who, msg),
-        Err(e) => return erl_result(env, Result::<()>::Err(e.into())),
-    };
+fn udp_recv(env: rustler::Env, sock: ResourceArc<UdpSocket>) -> NifResult<Term> {
+    let (who, msg) = sock.inner.recv_from_bytes_blocking().map_err(term_err)?;
 
-    (
-        atoms::ok(),
-        ip_to_erl(env, who.ip()),
-        who.port(),
-        msg.to_vec(),
-    )
-        .encode(env)
+    Ok((atoms::ok(), ErlIp(who.ip()), who.port(), msg.to_vec()).encode(env))
 }
 
 #[rustler::nif]
-fn udp_local_addr(env: rustler::Env, sock: ResourceArc<UdpSocket>) -> impl Encoder {
-    crate::sockaddr_to_erl(env, sock.inner.local_addr())
+fn udp_local_addr(sock: ResourceArc<UdpSocket>) -> impl Encoder {
+    crate::sockaddr_to_erl(sock.inner.local_addr())
 }
