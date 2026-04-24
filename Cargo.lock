@@ -6282,9 +6282,11 @@ dependencies = [
 name = "ts_elixir"
 version = "0.6.1"
 dependencies = [
+ "futures-util",
  "rustler",
  "static_assertions",
  "tailscale",
+ "tap",
  "tokio",
  "tracing",
  "tracing-subscriber",
