@@ -1,9 +1,20 @@
 defmodule Tailscale.Native do
+  @moduledoc false
+
+  @testing_nifs Application.compile_env!(:tailscale, :testing_nifs)
+  @profile Application.compile_env!(:tailscale, :profile)
+
+  @features (if @testing_nifs do
+               ["testing-nifs"]
+             else
+               []
+             end)
+
   use Rustler,
     otp_app: :tailscale,
-    crate: :ts_elixir
-
-  @moduledoc false
+    crate: :ts_elixir,
+    mode: @profile,
+    features: @features
 
   # The Elixir side of the Rustler bindings to `tailscale-rs`.
   #
