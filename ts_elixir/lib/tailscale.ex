@@ -110,6 +110,12 @@ defmodule Tailscale do
   """
   def ipv6_addr(dev), do: Tailscale.Native.ipv6_addr(dev)
 
+  @spec self_node(t()) :: {:ok, Tailscale.NodeInfo.t()} | {:error, any()}
+  @doc """
+  Get this node's `m:Tailscale.NodeInfo`.
+  """
+  defdelegate self_node(dev), to: Tailscale.Native
+
   @spec peer_by_name(t(), String.t()) :: {:ok, Tailscale.NodeInfo.t() | nil} | {:error, any()}
   @doc """
   Look up a peer by name.
@@ -119,9 +125,19 @@ defmodule Tailscale do
   """
   def peer_by_name(dev, name), do: Tailscale.Native.peer_by_name(dev, name)
 
-  @spec self_node(t()) :: {:ok, Tailscale.NodeInfo.t()} | {:error, any()}
+  @spec peer_by_tailnet_ip(t(), Tailscale.ip_addr()) ::
+          {:ok, Tailscale.NodeInfo.t() | nil} | {:error, any()}
   @doc """
-  Get this node's `m:Tailscale.NodeInfo`.
+  Look up the peer with the given tailnet IP address.
+
+  Returns `{:ok, nil}` if there was no such peer. `:error` if the lookup encountered an error.
   """
-  defdelegate self_node(dev), to: Tailscale.Native
+  defdelegate peer_by_tailnet_ip(dev, ip), to: Tailscale.Native
+
+  @spec peers_with_route(t(), Tailscale.ip_addr()) ::
+          {:ok, [Tailscale.NodeInfo.t()]} | {:error, any()}
+  @doc """
+  Retrieve the most narrow set of peers that accept packets for the specified IP.
+  """
+  defdelegate peers_with_route(dev, ip), to: Tailscale.Native
 end

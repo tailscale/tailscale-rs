@@ -170,6 +170,18 @@ defmodule Tailscale.Native do
   def self_node(_dev), do: err()
 
   @doc """
+  Retrieve a peer by its tailnet IP.
+  """
+  @spec peer_by_tailnet_ip(device(), Tailscale.ip_addr()) :: {:ok, %{} | nil} | {:error, any()}
+  def peer_by_tailnet_ip(_dev, _ip), do: err()
+
+  @doc """
+  Retrieve the most narrow set of peers that accept packets for the specified IP.
+  """
+  @spec peers_with_route(device(), Tailscale.ip_addr()) :: {:ok, [%{}]} | {:error, any()}
+  def peers_with_route(_dev, _ip), do: err()
+
+  @doc """
   Load key state from the specified path, generating a new state if the file doesn't exist.
   """
   @spec load_key_file(String.t()) :: {:ok, Tailscale.Keystate.t()} | {:error, any()}

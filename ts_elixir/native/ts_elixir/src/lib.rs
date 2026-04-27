@@ -177,6 +177,40 @@ fn self_node(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> impl Encoder {
     }
 }
 
+#[rustler::nif(schedule = "DirtyIo")]
+fn peer_by_tailnet_ip(env: rustler::Env<'_>, dev: ResourceArc<Device>, ip: Term) -> impl Encoder {
+    let dev = dev.inner.clone();
+    let Some(ip) = ip_from_erl(ip) else {
+        return env.error_tuple("invalid ip");
+    };
+
+    match TOKIO_RUNTIME.block_on(async move { dev.peer_by_tailnet_ip(ip).await }) {
+        Err(e) => (atoms::error(), e.to_string()).encode(env),
+        Ok(None) => (atoms::ok(), Option::<()>::None).encode(env),
+        Ok(Some(peer)) => (atoms::ok(), NodeInfo::from_node(env, peer)).encode(env),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+fn peers_with_route(env: rustler::Env<'_>, dev: ResourceArc<Device>, ip: Term) -> impl Encoder {
+    let dev = dev.inner.clone();
+    let Some(ip) = ip_from_erl(ip) else {
+        return env.error_tuple("invalid ip");
+    };
+
+    match TOKIO_RUNTIME.block_on(async move { dev.peers_with_route(ip).await }) {
+        Err(e) => (atoms::error(), e.to_string()).encode(env),
+        Ok(peers) => (
+            atoms::ok(),
+            peers
+                .into_iter()
+                .map(|x| NodeInfo::from_node(env, x))
+                .collect::<Vec<_>>(),
+        )
+            .encode(env),
+    }
+}
+
 fn ip_to_erl(env: rustler::Env, ip: impl Into<IpAddr>) -> Term {
     match ip.into() {
         IpAddr::V4(ip) => {
