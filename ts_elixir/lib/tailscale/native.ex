@@ -163,4 +163,10 @@ defmodule Tailscale.Native do
   """
   @spec peer_by_name(device(), String.t()) :: {:ok, %{} | nil} | {:error, any()}
   def peer_by_name(_dev, _name), do: err()
+
+  @doc """
+  Retrieve this node's info
+  """
+  @spec self_node(device()) :: {:ok, %{}} | {:error, any()}
+  def self_node(_dev), do: err()
 end

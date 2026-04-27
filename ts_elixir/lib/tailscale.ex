@@ -82,4 +82,10 @@ defmodule Tailscale do
   Returns `{:ok, nil}` if there was no such peer. `:error` if the lookup encountered an error.
   """
   def peer_by_name(dev, name), do: Tailscale.Native.peer_by_name(dev, name)
+
+  @spec self_node(t()) :: {:ok, Tailscale.NodeInfo.t()} | {:error, any()}
+  @doc """
+  Get this node's `m:Tailscale.NodeInfo`.
+  """
+  defdelegate self_node(dev), to: Tailscale.Native
 end

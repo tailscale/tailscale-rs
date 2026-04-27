@@ -147,6 +147,16 @@ fn peer_by_name(env: rustler::Env<'_>, dev: ResourceArc<Device>, name: &str) -> 
     }
 }
 
+#[rustler::nif(schedule = "DirtyIo")]
+fn self_node(env: rustler::Env<'_>, dev: ResourceArc<Device>) -> impl Encoder {
+    let dev = dev.inner.clone();
+
+    match TOKIO_RUNTIME.block_on(async move { dev.self_node().await }) {
+        Err(e) => (atoms::error(), e.to_string()).encode(env),
+        Ok(peer) => (atoms::ok(), NodeInfo::from_node(env, peer)).encode(env),
+    }
+}
+
 fn ip_to_erl(env: rustler::Env, ip: impl Into<IpAddr>) -> Term {
     match ip.into() {
         IpAddr::V4(ip) => {
