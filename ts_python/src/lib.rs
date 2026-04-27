@@ -206,6 +206,36 @@ impl Device {
             Ok(NodeInfo::from(&node))
         })
     }
+
+    /// Look up a peer by its tailnet IP address.
+    pub fn peer_by_tailnet_ip<'p>(&self, py: Python<'p>, ip: IpRepr) -> PyFut<'p> {
+        let dev = self.dev.clone();
+
+        future_into_py(py, async move {
+            let ip = ip.try_into().map_err(py_value_err)?;
+            let node = dev.peer_by_tailnet_ip(ip).await.map_err(py_value_err)?;
+
+            Ok(node.map(|node| NodeInfo::from(&node)))
+        })
+    }
+
+    /// Look up peer(s) with the most specific route match for the given address.
+    ///
+    /// If more than one peer has the same route covering the same address, more than one
+    /// result may be returned.
+    pub fn peers_with_route<'p>(&self, py: Python<'p>, ip: IpRepr) -> PyFut<'p> {
+        let dev = self.dev.clone();
+
+        future_into_py(py, async move {
+            let ip = ip.try_into().map_err(py_value_err)?;
+            let nodes = dev.peers_with_route(ip).await.map_err(py_value_err)?;
+
+            Ok(nodes
+                .into_iter()
+                .map(|node| NodeInfo::from(&node))
+                .collect::<Vec<_>>())
+        })
+    }
 }
 
 fn sockaddr_as_tuple(s: SocketAddr) -> (IpAddr, u16) {
