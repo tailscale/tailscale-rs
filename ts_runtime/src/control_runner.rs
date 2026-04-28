@@ -12,7 +12,7 @@ use kameo::{
     reply::DelegatedReply,
 };
 use tokio::sync::watch;
-use ts_control::{AsyncControlClient, Node, StateUpdate};
+use ts_control::{AsyncControlClient, Error as ControlError, Node, StateUpdate};
 
 use crate::derp_latency::{DerpLatencyMeasurement, DerpLatencyMeasurer};
 
@@ -42,7 +42,7 @@ pub struct Params {
 #[derive(Debug, thiserror::Error)]
 pub enum ControlRunnerError {
     #[error(transparent)]
-    Control(#[from] ts_control::Error),
+    Control(#[from] ControlError),
 
     #[error(transparent)]
     Crate(#[from] crate::Error),
@@ -54,19 +54,20 @@ impl kameo::Actor for ControlRunner {
 
     async fn on_start(params: Params, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         loop {
-            let ts_control::AuthResult::AuthRequired(u) = AsyncControlClient::check_auth(
+            match AsyncControlClient::check_auth(
                 &params.config,
                 &params.env.keys,
                 params.auth_key.as_deref(),
             )
             .await
-            .map_err(ts_control::Error::from)?
-            else {
-                break;
-            };
-
-            tracing::info!(auth_url = %u, "please authorize this machine or pass an auth key");
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            {
+                Ok(()) => break,
+                Err(ControlError::MachineNotAuthorized(u)) => {
+                    tracing::info!(auth_url = %u, "please authorize this machine or pass an auth key");
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
 
         let (client, stream) = AsyncControlClient::connect(
@@ -74,8 +75,7 @@ impl kameo::Actor for ControlRunner {
             &params.env.keys,
             params.auth_key.as_deref(),
         )
-        .await
-        .map_err(ts_control::Error::from)?;
+        .await?;
 
         DerpLatencyMeasurer::spawn_link(&slf, params.env.clone()).await;
 
@@ -224,8 +224,6 @@ impl Message<DerpLatencyMeasurement> for ControlRunner {
 
         tracing::debug!(selected_region_id = ?result.id, "updating home region");
 
-        if let Err(e) = self.client.set_home_region(result.id, iter).await {
-            tracing::error!(error = %e, "setting home region");
-        }
+        self.client.set_home_region(result.id, iter).await;
     }
 }
