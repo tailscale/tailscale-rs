@@ -82,7 +82,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain-version: ${{ matrix.rust_toolchain.version }}
-          builder-triple: x86_64-linux-unknown-gnu
+          builder-triple: x86_64-unknown-linux-gnu
 
       - name: Install dependencies
         run: mix deps.get
