@@ -62,6 +62,10 @@ jobs:
             runner: macos-26
             target: aarch64
             triple: aarch64-apple-darwin
+          - os: windows
+            runner: windows-8vcpu
+            target: x86_64
+            triple: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout
@@ -81,7 +85,7 @@ jobs:
         with:
           working-directory: ts_python
           rust-toolchain: ${{ env.rust_toolchain }}
-          target: ${{ matrix.platform.target }}
+          target: ${{ matrix.platform.triple }}
           args: --release --out dist
           sccache: ${{ !env.is_tag_push }}
           manylinux: auto
