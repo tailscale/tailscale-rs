@@ -26,8 +26,14 @@ impl TimeRange {
     }
 
     /// Return a time range centered on `t`, with `plus_minus` time on either side.
+    ///
+    /// If `t` can't add or subtract `plus_minus`, the respective end of the range is
+    /// clamped to `t` instead.
     pub fn new_around(t: Instant, plus_minus: Duration) -> Self {
-        Self::new(t - plus_minus, t + plus_minus)
+        Self::new(
+            t.checked_sub(plus_minus).unwrap_or(t),
+            t.checked_add(plus_minus).unwrap_or(t),
+        )
     }
 
     /// The first [`Instant`] that the interval covers.
