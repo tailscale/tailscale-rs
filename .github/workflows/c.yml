@@ -27,6 +27,8 @@ jobs:
             runner: linux-x86_64-16cpu
           - triple: aarch64-unknown-linux-gnu
             runner: linux-arm64-16cpu
+          - triple: x86_64-pc-windows-gnu
+            runner: windows-8vcpu
           # macos uses clang, not working yet
           # - triple: aarch64-apple-darwin
           #        runner: macos-26
