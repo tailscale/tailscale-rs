@@ -26,6 +26,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_TERM_VERBOSE: true
+  RUST_BACKTRACE: full
+
   crates_environment: &crates_environment ${{ case(inputs.crates_repo == 'prod', 'crates.io', startsWith(github.ref, 'refs/tags/'), 'crates.io', 'staging.crates.io') }}
 
   is_tag_push: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -63,6 +66,11 @@ jobs:
     # status check matching on job name doesn't support regexes, just an exact job name match.
     name: test (rust ${{ matrix.toolchain.label }}, ${{ matrix.target.triple }})
     runs-on: ${{ matrix.target.runner }}
+
+    env:
+      COMMON_FLAGS: --all-features --workspace
+      CARGO_BUILD_TARGET: ${{ matrix.target.triple }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -75,28 +83,28 @@ jobs:
           components: clippy
       - name: Lint lib targets (cargo clippy)
         run: |-
-          cargo +${{ matrix.toolchain.version }} clippy \
-            --all-features --workspace --no-deps \
+          cargo clippy \
+            $COMMON_FLAGS \
+            --no-deps \
             --lib \
-            --target ${{ matrix.target.triple }} \
             -- -D warnings
-        # These are separated from `--lib` to avoid enforcing missing docs in targets that
-        # can't become part of public API
+      # These are separated from `--lib` to avoid enforcing missing docs in targets that
+      # can't become part of public API
       - name: Lint other targets (cargo clippy)
         run: |-
-          cargo +${{ matrix.toolchain.version }} clippy \
-            --all-features --workspace --no-deps \
+          cargo clippy \
+            $COMMON_FLAGS \
+            --no-deps \
             --bins --tests --benches --examples \
-            --target ${{ matrix.target.triple }} \
             -- -D warnings -A missing_docs
       - name: Build (cargo build)
-        run: cargo +${{ matrix.toolchain.version }} build --all-features --workspace --verbose --all-targets --target ${{ matrix.target.triple }}
+        run: cargo build $COMMON_FLAGS --all-targets
       - name: Test (cargo test)
-        run: cargo +${{ matrix.toolchain.version }} test --all-features --workspace --verbose --target ${{ matrix.target.triple }}
+        run: cargo test $COMMON_FLAGS
       - name: Release build (cargo build --release)
-        run: cargo +${{ matrix.toolchain.version }} build --all-features --workspace --release --verbose --all-targets --target ${{ matrix.target.triple }}
+        run: cargo build $COMMON_FLAGS --release --all-targets
       - name: Docs (cargo doc)
-        run: cargo +${{ matrix.toolchain.version }} doc --workspace --no-deps --all-features --target ${{ matrix.target.triple }}
+        run: cargo doc $COMMON_FLAGS --no-deps
 
   arch_independent:
     name: arch-independent checks
@@ -126,7 +134,7 @@ jobs:
       - name: Dependency audit (cargo deny)
         run: cargo deny --workspace --all-features check all
       - name: Check formatting (cargo fmt)
-        run: cargo +nightly fmt --check
+        run: cargo fmt --check
       - name: Custom workspace checks
         run: cargo run -p checks
       - &dry_publish

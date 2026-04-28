@@ -70,3 +70,7 @@ runs:
         key: rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys:
           rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-
+
+    - name: Set toolchain override
+      shell: bash
+      run: rustup override set ${{ inputs.toolchain-version }}
