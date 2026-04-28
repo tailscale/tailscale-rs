@@ -59,7 +59,7 @@ runs:
       with:
         toolchain: ${{ inputs.toolchain-version }}
         components: ${{ inputs.components }}
-        targets: ${{ env.targets }}
+        targets: ${{ inputs.builder-triple }},${{ inputs.targets }}
 
     - name: Cache target/
       id: cache-rust-target
