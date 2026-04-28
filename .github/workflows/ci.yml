@@ -37,6 +37,11 @@ env:
   prev_rust: &prev_rust 1.93.1
   latest_rust: &latest_rust 1.94.0
 
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build_test:
     strategy:
@@ -51,6 +56,10 @@ jobs:
             runner: linux-arm64-16cpu
           - triple: aarch64-apple-darwin
             runner: macos-26
+          - triple: x86_64-pc-windows-gnu
+            runner: windows-8vcpu
+          - triple: x86_64-pc-windows-msvc
+            runner: windows-8vcpu
         toolchain:
           - version: *prev_rust
             label: prev
@@ -70,6 +79,7 @@ jobs:
     env:
       COMMON_FLAGS: --all-features --workspace
       CARGO_BUILD_TARGET: ${{ matrix.target.triple }}
+      is_windows_gnu: ${{ endsWith(matrix.target.triple, '-windows-gnu') }}
 
     steps:
       - name: Checkout
@@ -99,8 +109,16 @@ jobs:
             -- -D warnings -A missing_docs
       - name: Build (cargo build)
         run: cargo build $COMMON_FLAGS --all-targets
-      - name: Test (cargo test)
-        run: cargo test $COMMON_FLAGS
+
+      # `ts_python` has the same lib name as the `tailscale` root crate, which again appears
+      # to just be an issue on `*-windows-gnu` targets, so don't test it here (depend on
+      # python tests instead).
+      - name: Test (cargo test), --all-features
+        run: |-
+          cargo test \
+              $COMMON_FLAGS \
+              ${{ case(env.is_windows_gnu == 'true', '--exclude ts_python', '') }}
+
       - name: Release build (cargo build --release)
         run: cargo build $COMMON_FLAGS --release --all-targets
       - name: Docs (cargo doc)
