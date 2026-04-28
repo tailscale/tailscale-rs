@@ -9,10 +9,9 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use url::Url;
 
 use crate::{
-    ControlDialer,
+    ControlDialer, Error,
     map_request_builder::MapRequestBuilder,
     tokio::{
-        ConnectionError, MapStreamError, RegistrationError,
         map_stream::{StateUpdate, map_stream, send_map_request},
         ping::handle_ping,
     },
@@ -34,16 +33,14 @@ impl AsyncControlClient {
         config: &crate::Config,
         node_keys: &ts_keys::NodeState,
         auth_key: Option<&str>,
-    ) -> Result<crate::AuthResult, ConnectionError> {
+    ) -> Result<(), Error> {
         let control_url = &config.server_url;
 
         let h2_client = crate::tokio::connect(control_url, &node_keys.machine_keys).await?;
 
-        let register_url = control_url.join("machine/register")?;
-        let result =
-            crate::tokio::register(config, &register_url, auth_key, node_keys, &h2_client).await?;
+        crate::tokio::register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
-        Ok(result)
+        Ok(())
     }
 
     /// Connects to the control plane, registers this Tailscale node, and starts handling the
@@ -61,7 +58,7 @@ impl AsyncControlClient {
             Self,
             impl Stream<Item = Arc<StateUpdate>> + Send + Sync + use<>,
         ),
-        ConnectionError,
+        Error,
     > {
         let control_url = &config.server_url;
         let mut tasks = JoinSet::new();
@@ -69,12 +66,7 @@ impl AsyncControlClient {
         let h2_client = crate::tokio::connect(control_url, &node_keys.machine_keys).await?;
         tracing::info!("connected to control, registering");
 
-        let register_url = control_url.join("machine/register")?;
-        if crate::tokio::register(config, &register_url, auth_key, node_keys, &h2_client).await?
-            != crate::AuthResult::Ok
-        {
-            return Err(RegistrationError::MachineNotAuthorized.into());
-        };
+        crate::tokio::register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
         tracing::info!("registered, starting netmap stream");
 
@@ -130,12 +122,12 @@ impl AsyncControlClient {
     }
 
     /// Set the DERP home region for this node.
-    #[tracing::instrument(skip_all, fields(map_url = %self.map_url(), %region_id), err, level = "trace")]
+    #[tracing::instrument(skip_all, fields(map_url = %self.map_url(), %region_id), level = "trace")]
     pub async fn set_home_region<'c>(
         &mut self,
         region_id: ts_transport_derp::RegionId,
         latencies: impl IntoIterator<Item = (&'c str, f64)>,
-    ) -> Result<(), MapStreamError> {
+    ) {
         tracing::trace!(region = %region_id, "reporting home derp to control server");
 
         if let Err(e) = self
@@ -151,8 +143,6 @@ impl AsyncControlClient {
         {
             tracing::error!(error = %e, "setting home derp region");
         }
-
-        Ok(())
     }
 
     /// Construct the URL that should be used to fetch the netmap.
@@ -210,7 +200,7 @@ pub async fn run(
     }
 }
 
-pub async fn run_once(
+async fn run_once(
     state_tx: &broadcast::Sender<Arc<StateUpdate>>,
     command_rx: &mut mpsc::Receiver<Command>,
     control_url: &Url,
@@ -218,17 +208,13 @@ pub async fn run_once(
     auth_key: Option<&str>,
     config: &crate::Config,
     control_dialer: &mut ControlDialer,
-) -> Result<(), crate::Error> {
+) -> Result<(), Error> {
     let h2_client = control_dialer
         .full_connect_next(control_url, &node_keys.machine_keys)
         .await?;
 
     let register_url = control_url.join("machine/register").unwrap();
-    if crate::tokio::register(config, &register_url, auth_key, node_keys, &h2_client).await?
-        != crate::AuthResult::Ok
-    {
-        return Err(RegistrationError::MachineNotAuthorized.into());
-    };
+    crate::tokio::register(config, &register_url, auth_key, node_keys, &h2_client).await?;
 
     let builder = MapRequestBuilder::new(node_keys)
         .keep_alive(true)
@@ -244,9 +230,7 @@ pub async fn run_once(
 
     let map_url = control_url.join("machine/map").unwrap();
 
-    let reader = send_map_request(request, &map_url, &h2_client)
-        .await
-        .map_err(ConnectionError::MapStreamStartFailed)?;
+    let reader = send_map_request(request, &map_url, &h2_client).await?;
 
     let mut stream = core::pin::pin!(map_stream(reader));
     tracing::info!("netmap stream started");
@@ -258,9 +242,7 @@ pub async fn run_once(
                     break;
                 };
 
-                if let Err(e) = handle_ping(&state_update, control_url, &h2_client).await {
-                    tracing::error!(error = %e, "handling ping request");
-                }
+                let _ = handle_ping(&state_update, control_url, &h2_client).await;
 
                 if let Some(dial_plan) = &state_update.dial_plan
                     && control_dialer.update_dial_plan(dial_plan)

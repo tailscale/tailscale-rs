@@ -133,7 +133,7 @@ pub async fn set_closest_derp(
                 )
             }),
         )
-        .await?;
+        .await;
 
     Ok((*id, map.get(id).unwrap().servers.clone()))
 }

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use bytes::Bytes;
 use ts_capabilityversion::CapabilityVersion;
 use ts_control_serde::{HostInfo, RegisterAuth, RegisterRequest, RegisterResponse};
@@ -8,41 +10,94 @@ const LOAD_BALANCER_HEADER_KEY: &str = "Ts-Lb";
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistrationError {
-    #[error("peer config missing auth key; needed for registration")]
-    AuthKeyMissing,
-    #[error("failed to deserialize registration response body: {0}")]
-    DeserializeFailed(serde_json::Error),
-    #[error(transparent)]
-    HttpError(#[from] ts_http_util::Error),
     #[error("machine was not authorized by control to join tailnet")]
-    MachineNotAuthorized,
-    #[error("failed to register node; control returned HTTP {0}")]
-    RegistrationFailed(u16),
-    #[error("failed to construct request")]
-    Request,
-    #[error("failed to serialize registration request body: {0}")]
-    SerializeFailed(serde_json::Error),
-    #[error(transparent)]
-    Utf8Error(#[from] core::str::Utf8Error),
+    MachineNotAuthorized(Option<Url>),
+    #[error("error during registration")]
+    Internal(ErrorKind),
 }
 
-/// Result of authorizing with the control plane.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuthResult {
-    /// Authorization succeeded.
-    Ok,
-    /// Auth failed, user should navigate to the contained URL.
-    AuthRequired(Url),
+#[derive(Debug)]
+pub enum ErrorKind {
+    Url,
+    SerDe,
+    Http,
+    Utf8,
 }
 
-#[tracing::instrument(skip_all, fields(%register_url))]
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrorKind::Url => write!(f, "URL parsing"),
+            ErrorKind::SerDe => write!(f, "serialization/deserialization"),
+            ErrorKind::Http => write!(f, "HTTP"),
+            ErrorKind::Utf8 => write!(f, "UTF8"),
+        }
+    }
+}
+
+impl From<url::ParseError> for RegistrationError {
+    fn from(error: url::ParseError) -> Self {
+        tracing::error!(%error, "bad URL");
+        RegistrationError::Internal(ErrorKind::Url)
+    }
+}
+
+impl From<serde_json::Error> for RegistrationError {
+    fn from(error: serde_json::Error) -> Self {
+        tracing::error!(%error, "serialization/deserialization error in registration");
+        RegistrationError::Internal(ErrorKind::SerDe)
+    }
+}
+
+impl From<ts_http_util::Error> for RegistrationError {
+    fn from(error: ts_http_util::Error) -> Self {
+        tracing::error!(%error, "http error sending registration request");
+        RegistrationError::Internal(ErrorKind::Http)
+    }
+}
+
+impl From<core::str::Utf8Error> for RegistrationError {
+    fn from(error: core::str::Utf8Error) -> Self {
+        tracing::error!(%error, "utf8 error in registration response");
+        RegistrationError::Internal(ErrorKind::Utf8)
+    }
+}
+
+impl From<RegistrationError> for crate::Error {
+    fn from(e: RegistrationError) -> Self {
+        match e {
+            RegistrationError::MachineNotAuthorized(Some(u)) => {
+                crate::Error::MachineNotAuthorized(u)
+            }
+            RegistrationError::MachineNotAuthorized(None) => {
+                crate::Error::Protocol(crate::ProtocolPhase::MachineAuthorization)
+            }
+            RegistrationError::Internal(k) => {
+                crate::Error::Internal(k.into(), crate::ConnectionPhase::Registration)
+            }
+        }
+    }
+}
+
+impl From<ErrorKind> for crate::ErrorKind {
+    fn from(e: ErrorKind) -> Self {
+        match e {
+            ErrorKind::Url => crate::ErrorKind::Url,
+            ErrorKind::SerDe => crate::ErrorKind::SerDe,
+            ErrorKind::Http => crate::ErrorKind::Http,
+            ErrorKind::Utf8 => crate::ErrorKind::Utf8,
+        }
+    }
+}
+
+#[tracing::instrument(skip_all, fields(%control_url))]
 pub async fn register(
     config: &crate::Config,
-    register_url: &Url,
+    control_url: &Url,
     auth_key: Option<&str>,
     node_keystate: &ts_keys::NodeState,
     http2_conn: &Http2<BytesBody>,
-) -> Result<AuthResult, RegistrationError> {
+) -> Result<(), RegistrationError> {
     let node_public_key = node_keystate.node_keys.public;
     let network_lock_public_key = node_keystate.network_lock_keys.public;
 
@@ -62,11 +117,12 @@ pub async fn register(
     };
 
     let body = if cfg!(debug_assertions) {
-        serde_json::to_string_pretty(&register_req).map_err(RegistrationError::SerializeFailed)
+        serde_json::to_string_pretty(&register_req)?
     } else {
-        serde_json::to_string(&register_req).map_err(RegistrationError::SerializeFailed)
-    }?;
+        serde_json::to_string(&register_req)?
+    };
 
+    let register_url = control_url.join("machine/register")?;
     tracing::trace!(
         url = %register_url.as_str(),
         %body,
@@ -75,7 +131,7 @@ pub async fn register(
 
     let response = http2_conn
         .post(
-            register_url,
+            &register_url,
             [(
                 LOAD_BALANCER_HEADER_KEY.parse().unwrap(),
                 node_public_key.to_string().parse().unwrap(),
@@ -95,7 +151,7 @@ pub async fn register(
         let body = core::str::from_utf8(&body).unwrap_or("<invalid utf8>");
         tracing::error!(%body, %status, "registration failed");
 
-        return Err(RegistrationError::RegistrationFailed(status.as_u16()));
+        return Err(RegistrationError::Internal(ErrorKind::Http));
     }
 
     let body = response.collect_bytes().await?;
@@ -103,21 +159,17 @@ pub async fn register(
 
     tracing::trace!(registration_response_body = %body);
 
-    let register_resp: RegisterResponse =
-        serde_json::from_str(body).map_err(RegistrationError::DeserializeFailed)?;
+    let register_resp: RegisterResponse = serde_json::from_str(body)?;
 
     if !register_resp.machine_authorized {
         if !register_resp.auth_url.is_empty() {
-            Ok(AuthResult::AuthRequired(
-                register_resp
-                    .auth_url
-                    .parse()
-                    .map_err(|_e| RegistrationError::MachineNotAuthorized)?,
+            Err(RegistrationError::MachineNotAuthorized(
+                register_resp.auth_url.parse().ok(),
             ))
         } else {
-            Err(RegistrationError::MachineNotAuthorized)
+            Err(RegistrationError::MachineNotAuthorized(None))
         }
     } else {
-        Ok(AuthResult::Ok)
+        Ok(())
     }
 }
