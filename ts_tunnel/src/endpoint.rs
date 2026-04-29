@@ -13,7 +13,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     config::{PeerConfig, PeerId},
-    handshake::{HandshakeState, ReceivedHandshake, SessionPair, initiate_handshake},
+    handshake::{Handshake, ReceivedHandshake, SessionPair, initiate_handshake},
     macs::{MACReceiver, MACSender},
     messages::{CookieReply, HandshakeResponse, Message, SessionId},
     session::{ReceiveSession, TransmitSession},
@@ -262,7 +262,7 @@ impl IdMap {
         self.sessions.remove(&id).unwrap();
     }
 
-    fn remove_handshake_session(&mut self, handshake: &HandshakeState) {
+    fn remove_handshake_session(&mut self, handshake: &Handshake) {
         if let Some(id) = handshake.session_id() {
             self.remove_session(id);
         }
@@ -280,7 +280,7 @@ struct Peer {
     id: PeerId,
     config: PeerConfig,
     session: SessionState,
-    handshake: HandshakeState,
+    handshake: Handshake,
     last_seen_timestamp: Option<TAI64N>,
     cookie_sender: MACSender,
     keepalive: Option<Handle<Event>>,
@@ -294,7 +294,7 @@ impl Peer {
             id,
             config,
             session: SessionState::None(Queue::default()),
-            handshake: HandshakeState::None,
+            handshake: Handshake::None,
             last_seen_timestamp: None,
             cookie_sender: macs,
             keepalive: None,
@@ -380,7 +380,7 @@ impl Peer {
     }
 
     fn recv_cookie_reply(&mut self, packet: &CookieReply) {
-        let HandshakeState::Initiated(_, _, handshake_mac1) = &mut self.handshake else {
+        let Handshake::Initiated(_, _, handshake_mac1) = &mut self.handshake else {
             tracing::trace!("dropping cookie reply received outside of handshake");
             return;
         };
@@ -483,7 +483,7 @@ impl Peer {
         }
 
         endpoint.ids.remove_handshake_session(&self.handshake);
-        self.handshake = HandshakeState::None;
+        self.handshake = Handshake::None;
 
         self.start_handshake(endpoint, out);
     }
@@ -507,7 +507,7 @@ impl Peer {
         self.session.deactivate(endpoint);
 
         endpoint.ids.remove_handshake_session(&self.handshake);
-        self.handshake = HandshakeState::None;
+        self.handshake = Handshake::None;
     }
 
     /// (Soft) precondition: `self.handshake == HandshakeState::None` (previous handshake is lost, but
@@ -534,7 +534,7 @@ impl Peer {
         );
 
         let timeout = endpoint.scheduler.add(tr, Event::HandshakeTimeout(self.id));
-        self.handshake = HandshakeState::Initiated(handshake, timeout, mac);
+        self.handshake = Handshake::Initiated(handshake, timeout, mac);
     }
 }
 

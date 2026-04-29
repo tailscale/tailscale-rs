@@ -31,7 +31,7 @@ struct SessionKeys {
 /// deliberately not Copy, because cloning and allowing potential reuse of the cipher
 /// state is risky and needs to be a deliberate act.
 #[derive(Clone)]
-struct Handshake {
+struct HandshakeState {
     hash: [u8; 32],
     chaining_key: [u8; 32],
     cipher: Option<ChaCha20Poly1305>,
@@ -73,12 +73,12 @@ fn must_hkdf3(chaining_key: &[u8; 32], key: &[u8]) -> ([u8; 32], [u8; 32], [u8; 
     )
 }
 
-impl Handshake {
-    fn new(responder_static: NodePublicKey) -> Handshake {
+impl HandshakeState {
+    fn new(responder_static: NodePublicKey) -> HandshakeState {
         // TODO: precompute initial hash and chaining key, unless the compiler
         // is clever enough to figure it out by itself?
         let init = Blake2s256::digest("Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s");
-        Handshake {
+        HandshakeState {
             hash: init.into(),
             chaining_key: init.into(),
             cipher: None,
@@ -101,9 +101,9 @@ impl Handshake {
     /// cipher able to encrypt/decrypt the next portion of the handshake.
     ///
     /// This is the MixKey() operation in the Noise spec.
-    fn mix_key(self, key: &[u8; 32]) -> Handshake {
+    fn mix_key(self, key: &[u8; 32]) -> HandshakeState {
         let (ck, k) = must_hkdf2(&self.chaining_key, key);
-        Handshake {
+        HandshakeState {
             hash: self.hash,
             chaining_key: ck,
             cipher: Some(must_cipher(&k)),
@@ -113,9 +113,9 @@ impl Handshake {
     /// Derive a one-time AEAD from the pre-shared symmetric key.
     ///
     /// This is the `psk` handshake step.
-    fn mix_psk(self, psk: &Psk) -> Handshake {
+    fn mix_psk(self, psk: &Psk) -> HandshakeState {
         let (ck, h, k) = must_hkdf3(&self.chaining_key, psk.as_ref());
-        Handshake {
+        HandshakeState {
             hash: self.hash,
             chaining_key: ck,
             cipher: Some(must_cipher(&k)),
@@ -143,7 +143,7 @@ impl Handshake {
     /// # Panics
     /// Panics if dst is not exactly 16 bytes longer than cleartext, or if called at an
     /// incorrect stage of the handshake where encryption is forbidden.
-    fn encrypt(mut self, cleartext: &[u8], dst: &mut [u8]) -> Handshake {
+    fn encrypt(mut self, cleartext: &[u8], dst: &mut [u8]) -> HandshakeState {
         assert_eq!(
             dst.len(),
             cleartext.len() + 16,
@@ -175,7 +175,7 @@ impl Handshake {
     /// # Panics
     /// Panics if ciphertext is not exactly 16 bytes longer than dst, or if called at an
     /// incorrect stage of the handshake where decryption is forbidden.
-    fn decrypt(mut self, ciphertext: &[u8], dst: &mut [u8]) -> Option<Handshake> {
+    fn decrypt(mut self, ciphertext: &[u8], dst: &mut [u8]) -> Option<HandshakeState> {
         assert_eq!(
             dst.len(),
             ciphertext.len() - 16,
@@ -210,7 +210,7 @@ pub struct ReceivedHandshake {
     pub timestamp: TAI64N,
 
     // State needed to complete the handshake
-    handshake: Handshake,
+    handshake: HandshakeState,
 }
 
 impl ReceivedHandshake {
@@ -230,7 +230,7 @@ impl ReceivedHandshake {
         let my_static_dalek = x25519_dalek::StaticSecret::from(my_static.private);
         let mut peer_static_bytes = [0; 32];
         let mut timestamp = TAI64N::new_zeroed();
-        let handshake = Handshake::new(my_static.public)
+        let handshake = HandshakeState::new(my_static.public)
             .mix_hash(&pkt.ephemeral_pub) // e
             .mix_key(&pkt.ephemeral_pub) // e (extra mixing required by psk variant)
             .mix_key(my_static_dalek.diffie_hellman(&peer_ephemeral).as_bytes()) // es (reversed because this is the responder)
@@ -313,7 +313,7 @@ pub fn initiate_handshake(
         ..Default::default()
     };
 
-    let handshake = Handshake::new(peer_static)
+    let handshake = HandshakeState::new(peer_static)
         .mix_hash(ephemeral_pub.as_bytes()) // e
         .mix_key(ephemeral_pub.as_bytes()) // e (extra mixing required by psk variant)
         .mix_key(ephemeral.diffie_hellman(&peer_static.into()).as_bytes()) // es
@@ -340,7 +340,7 @@ pub struct SentHandshake {
     pub id: SessionId,
     my_ephemeral: x25519_dalek::ReusableSecret,
     my_static: NodePrivateKey,
-    handshake: Handshake,
+    handshake: HandshakeState,
 }
 
 pub struct SessionPair {
@@ -348,8 +348,8 @@ pub struct SessionPair {
     pub recv: ReceiveSession,
 }
 
-/// State of a handshake with a peer.
-pub(crate) enum HandshakeState {
+/// A handshake with a peer.
+pub(crate) enum Handshake {
     /// No handshake in progress.
     None,
     /// We are the initiator, awaiting a response.
@@ -361,17 +361,17 @@ pub(crate) enum HandshakeState {
     Responded(Box<SessionPair>),
 }
 
-impl HandshakeState {
+impl Handshake {
     pub(crate) fn is_active(&self) -> bool {
-        !matches!(self, HandshakeState::None)
+        !matches!(self, Handshake::None)
     }
 
     /// Return the session id of the handshake, if any.
     pub(crate) fn session_id(&self) -> Option<SessionId> {
         match self {
-            HandshakeState::Initiated(handshake, ..) => Some(handshake.id),
-            HandshakeState::Responded(tentative) => Some(tentative.recv.id()),
-            HandshakeState::None => None,
+            Handshake::Initiated(handshake, ..) => Some(handshake.id),
+            Handshake::Responded(tentative) => Some(tentative.recv.id()),
+            Handshake::None => None,
         }
     }
 
@@ -401,7 +401,7 @@ impl HandshakeState {
         // simultaneously initiator and responder, and temporarily exist in quantum superposition
         // until confirmation packets collapse the state again.
         let (session, packet) = handshake.respond(session_id, psk, cookie_sender, now);
-        *self = HandshakeState::Responded(Box::new(session));
+        *self = Handshake::Responded(Box::new(session));
         packet
     }
 
@@ -417,7 +417,7 @@ impl HandshakeState {
         cookies: &MACReceiver,
         now: Instant,
     ) -> Option<SessionPair> {
-        let HandshakeState::Initiated(sent_handshake, ..) = self else {
+        let Handshake::Initiated(sent_handshake, ..) = self else {
             return None;
         };
 
@@ -448,9 +448,7 @@ impl HandshakeState {
         let send = TransmitSession::new(session_keys.initiator_to_responder, packet.sender_id, now);
         let recv = ReceiveSession::new(session_keys.responder_to_initiator, sent_handshake.id, now);
 
-        let HandshakeState::Initiated(_, timeout, _) =
-            std::mem::replace(self, HandshakeState::None)
-        else {
+        let Handshake::Initiated(_, timeout, _) = std::mem::replace(self, Handshake::None) else {
             unreachable!();
         };
         timeout.cancel();
@@ -472,7 +470,7 @@ impl HandshakeState {
         session_id: SessionId,
         mut packets: Vec<PacketMut>,
     ) -> Option<(SessionPair, Vec<PacketMut>)> {
-        let HandshakeState::Responded(tentative) = self else {
+        let Handshake::Responded(tentative) = self else {
             return None;
         };
 
@@ -485,8 +483,7 @@ impl HandshakeState {
             return None;
         }
 
-        let HandshakeState::Responded(tentative) = std::mem::replace(self, HandshakeState::None)
-        else {
+        let Handshake::Responded(tentative) = std::mem::replace(self, Handshake::None) else {
             unreachable!();
         };
 
@@ -523,7 +520,7 @@ mod tests {
             ts_time::TimeRange::new_around(Instant::now(), std::time::Duration::from_secs(1000)),
             crate::Event::HandshakeTimeout(crate::config::PeerId(0)),
         );
-        let mut a_handshake = HandshakeState::Initiated(a_handshake, timeout, handshake_mac);
+        let mut a_handshake = Handshake::Initiated(a_handshake, timeout, handshake_mac);
 
         // Peer B receives it and responds
         let init_pkt = HandshakeInitiation::try_ref_from_bytes(init_pkt.as_ref())
