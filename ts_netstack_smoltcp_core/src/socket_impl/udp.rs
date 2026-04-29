@@ -23,7 +23,7 @@ impl crate::Netstack {
 
                 if endpoint.port() == 0 {
                     tracing::error!(?endpoint, "udp bind: zero port");
-                    return Response::Error(Error::BadRequest);
+                    return Response::Error(Error::zero_port());
                 }
 
                 // The two possible failure cases for `bind` are that the port is zero or the socket
@@ -49,7 +49,7 @@ impl crate::Netstack {
                         "requested message size overflows socket capacity",
                     );
 
-                    return Response::Error(Error::BadRequest);
+                    return Response::Error(Error::big_packet());
                 }
 
                 match sock.send_slice(&buf, endpoint) {
@@ -63,7 +63,7 @@ impl crate::Netstack {
                     },
                     Err(udp::SendError::Unaddressable) => {
                         tracing::error!(?endpoint, "invalid endpoint");
-                        Response::Error(Error::BadRequest)
+                        Response::Error(Error::unaddressable())
                     }
                 }
             }

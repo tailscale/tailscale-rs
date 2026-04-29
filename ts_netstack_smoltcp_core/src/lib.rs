@@ -35,8 +35,8 @@ mod wake_device;
 
 #[doc(inline)]
 pub use command::{
-    Channel, Command, Error, HasChannel, Request, Response, raw, request, request_blocking,
-    request_nonblocking, stack_control, tcp, udp,
+    Channel, ChannelClosedError, Command, Error, HasChannel, InternalErrorKind, Request, Response,
+    raw, request, request_blocking, request_nonblocking, stack_control, tcp, udp,
 };
 pub use config::Config;
 pub use pipe::{Pipe, PipeDev};

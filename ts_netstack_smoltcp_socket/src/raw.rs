@@ -67,7 +67,7 @@ impl RawSocket {
 
     /// Receive a raw packet into `buf` from the network.
     pub fn recv_blocking(&self, buf: &mut [u8]) -> Result<usize, netcore::Error> {
-        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::BadRequest)?;
+        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::BadBuffer)?;
         let resp = self.request_blocking(raw::Command::Recv { max_len: Some(len) })?;
 
         self._recv(buf, resp)
@@ -75,7 +75,7 @@ impl RawSocket {
 
     /// Receive a raw packet into `buf` from the network.
     pub async fn recv(&self, buf: &mut [u8]) -> Result<usize, netcore::Error> {
-        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::BadRequest)?;
+        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::BadBuffer)?;
         let resp = self
             .request(raw::Command::Recv { max_len: Some(len) })
             .await?;

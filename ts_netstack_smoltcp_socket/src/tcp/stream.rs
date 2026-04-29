@@ -190,7 +190,7 @@ impl TcpStream {
                         match resp.try_into()? {
                             tcp::stream::Response::Recv { buf } => Ok(buf),
                             tcp::stream::Response::Finished => Ok(Bytes::new()),
-                            _ => Err(netcore::Error::WrongType),
+                            _ => Err(netcore::Error::wrong_type()),
                         }
                     }));
                 }
