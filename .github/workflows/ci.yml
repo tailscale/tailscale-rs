@@ -119,8 +119,12 @@ jobs:
               $COMMON_FLAGS \
               ${{ case(env.is_windows_gnu == 'true', '--exclude ts_python', '') }}
 
+      # Release builds on Windows specifically take forever: disable them on PRs to speed
+      # the check (the dev build is sufficient to establish that the code compiles)
       - name: Release build (cargo build --release)
+        if: ${{ runner.os != 'Windows' || github.event_name != 'pull_request' }}
         run: cargo build $COMMON_FLAGS --release --all-targets
+
       - name: Docs (cargo doc)
         run: cargo doc $COMMON_FLAGS --no-deps
 
