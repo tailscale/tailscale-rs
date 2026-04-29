@@ -11,6 +11,7 @@ use ts_transport_derp::{RegionId, ServerConnInfo};
 /// Result with a boxed [`core::error::Error`] trait object.
 pub type Result<T> = core::result::Result<T, Box<dyn core::error::Error + Send + Sync + 'static>>;
 
+#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 #[cfg(feature = "tracy")]
 #[global_allocator]
 static GLOBAL_ALLOC: tracy_client::ProfiledAllocator<std::alloc::System> =
@@ -93,7 +94,13 @@ pub fn init_tracing() {
 
     #[cfg(feature = "tracy")]
     {
-        layers.push(tracing_tracy::TracyLayer::default().boxed());
+        cfg_if::cfg_if! {
+            if #[cfg(not(all(target_os = "windows", target_env = "gnu")))] {
+                layers.push(tracing_tracy::TracyLayer::default().boxed());
+            } else {
+                eprintln!("warning: ts_cli_util/tracy feature enabled but this is a noop on *-windows-gnu");
+            }
+        }
     }
 
     tracing_subscriber::registry().with(layers).init();
