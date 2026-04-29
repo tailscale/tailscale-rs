@@ -5,9 +5,7 @@ use crate::{
     Netstack,
     command::{
         Error, Response,
-        tcp::stream::{
-            Command as TcpStreamCommand, Error as TcpStreamError, Response as TcpStreamResponse,
-        },
+        tcp::stream::{Command as TcpStreamCommand, Response as TcpStreamResponse},
     },
 };
 
@@ -67,7 +65,7 @@ impl Netstack {
                     Ok(n) => TcpStreamResponse::Sent { n }.into(),
                     Err(tcp::SendError::InvalidState) => {
                         tracing::error!(state = %sock.state(), "invalid socket state for send");
-                        Error::InvariantViolated.into()
+                        Response::Error(Error::invalid_socket_state())
                     }
                 }
             }
@@ -93,7 +91,7 @@ impl Netstack {
                     Err(tcp::RecvError::Finished) => TcpStreamResponse::Finished.into(),
                     Err(tcp::RecvError::InvalidState) => {
                         tracing::error!(state = %sock.state(), "invalid socket state for recv");
-                        Error::InvariantViolated.into()
+                        Response::Error(Error::invalid_socket_state())
                     }
                 }
             }
@@ -146,7 +144,7 @@ impl Netstack {
             _ => {
                 tracing::warn!("connecting socket was reset or closed");
                 self.pending_tcp_closes.push(handle);
-                Response::Error(TcpStreamError::Reset.into())
+                Response::Error(Error::ConnectionReset)
             }
         }
     }

@@ -2,7 +2,7 @@ use core::borrow::Borrow;
 
 use smoltcp::iface::SocketHandle;
 
-use crate::{Command, Error, Netstack, Response, command::Request};
+use crate::{ChannelClosedError, Command, Error, Netstack, Response, command::Request};
 
 /// Channel type through which commands to the netstack flow.
 // NOTE(npry): command channels are weak because the netstack holds a strong sender handle
@@ -31,7 +31,7 @@ pub trait HasChannel {
         &self,
         handle: Option<SocketHandle>,
         command: impl Into<Command>,
-    ) -> Result<Response, Error> {
+    ) -> Result<Response, ChannelClosedError> {
         crate::request_blocking(self.borrow_channel().borrow(), handle, command)
     }
 
@@ -59,7 +59,7 @@ pub trait HasChannel {
         &self,
         handle: Option<SocketHandle>,
         command: impl Into<Command>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ChannelClosedError> {
         crate::request_nonblocking(self.borrow_channel().borrow(), handle, command)
     }
 }

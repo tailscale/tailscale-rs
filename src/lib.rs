@@ -133,7 +133,7 @@ use std::{
 #[doc(inline)]
 pub use config::Config;
 #[doc(inline)]
-pub use error::Error;
+pub use error::{Error, InternalErrorKind};
 #[doc(inline)]
 pub use ts_control::Node as NodeInfo;
 use ts_netstack_smoltcp::{CreateSocket, netcore::Channel};
@@ -190,7 +190,7 @@ impl Device {
             .ask(ts_runtime::control_runner::Ipv4)
             .await
             .map_err(ts_runtime::Error::from)?
-            .ok_or(Error::InternalFailure)
+            .ok_or(Error::Internal(InternalErrorKind::Actor))
     }
 
     /// Get this [`Device`]'s IPv6 tailnet address.
@@ -200,7 +200,7 @@ impl Device {
             .ask(ts_runtime::control_runner::Ipv6)
             .await
             .map_err(ts_runtime::Error::from)?
-            .ok_or(Error::InternalFailure)
+            .ok_or(Error::Internal(InternalErrorKind::Actor))
     }
 
     /// Bind a UDP socket to the specified [`SocketAddr`].
@@ -242,7 +242,7 @@ impl Device {
             .ask(ts_runtime::control_runner::SelfNode)
             .await
             .map_err(ts_runtime::Error::from)?
-            .ok_or(Error::RuntimeDegraded)
+            .ok_or(Error::Internal(InternalErrorKind::Actor))
     }
 
     /// Look up a peer by name.
@@ -251,7 +251,7 @@ impl Device {
             .runtime
             .peer_tracker
             .upgrade()
-            .ok_or(Error::RuntimeDegraded)?;
+            .ok_or(Error::Internal(InternalErrorKind::Actor))?;
 
         pt.ask(ts_runtime::peer_tracker::PeerByName {
             name: name.to_string(),
@@ -267,7 +267,7 @@ impl Device {
             .runtime
             .peer_tracker
             .upgrade()
-            .ok_or(Error::RuntimeDegraded)?;
+            .ok_or(Error::Internal(InternalErrorKind::Actor))?;
 
         pt.ask(ts_runtime::peer_tracker::PeerByTailnetIp { ip })
             .await
@@ -281,7 +281,7 @@ impl Device {
             .runtime
             .peer_tracker
             .upgrade()
-            .ok_or(Error::RuntimeDegraded)?;
+            .ok_or(Error::Internal(InternalErrorKind::Actor))?;
 
         pt.ask(ts_runtime::peer_tracker::PeerByAcceptedRoute { ip })
             .await
@@ -307,6 +307,8 @@ impl Device {
 pub mod netstack {
     #[doc(inline)]
     pub use ts_netstack_smoltcp::netcore::Error;
+    #[doc(inline)]
+    pub use ts_netstack_smoltcp::netcore::InternalErrorKind;
     #[doc(inline)]
     pub use ts_netstack_smoltcp::netsock::{TcpListener, TcpStream, UdpSocket};
 }
@@ -336,7 +338,7 @@ guarantees.
 
         eprintln!("{}", warning.trim());
 
-        return Err(Error::InternalFailure);
+        return Err(Error::UnstableEnvVar);
     };
 
     Ok(())

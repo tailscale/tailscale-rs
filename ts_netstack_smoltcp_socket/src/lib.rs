@@ -19,7 +19,7 @@ macro_rules! socket_requestor_impl {
         fn request_blocking(
             &self,
             command: impl Into<$crate::netcore::Command>,
-        ) -> Result<$crate::netcore::Response, $crate::netcore::Error> {
+        ) -> Result<$crate::netcore::Response, $crate::netcore::ChannelClosedError> {
             ::netcore::HasChannel::request_blocking(&self.sender, Some(self.handle), command)
         }
 

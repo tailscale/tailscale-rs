@@ -11,7 +11,7 @@ macro_rules! unwrap_handle {
             None => {
                 tracing::error!(?handle, "no socket handle");
 
-                return $crate::command::Error::BadRequest.into();
+                return $crate::command::Error::missing_socket().into();
             }
         }
     }};

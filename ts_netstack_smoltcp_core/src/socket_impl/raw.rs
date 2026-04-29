@@ -44,7 +44,7 @@ impl Netstack {
                         "send can never succeed, packet size is greater than socket buffer cap"
                     );
 
-                    return Response::Error(Error::BadRequest);
+                    return Response::Error(Error::big_packet());
                 }
 
                 match sock.send_slice(&buf) {

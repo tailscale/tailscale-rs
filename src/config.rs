@@ -209,7 +209,7 @@ where
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "creating parent dirs for key file");
-            crate::Error::InternalFailure
+            crate::Error::KeyFileWrite
         })?;
 
     match tokio::fs::read(path).await {
@@ -232,7 +232,7 @@ where
             Err(e) => match bad_format_behavior {
                 BadFormatBehavior::Error => {
                     tracing::error!(error = %e, "parsing key file");
-                    return Err(crate::Error::InternalFailure);
+                    return Err(crate::Error::KeyFileRead);
                 }
                 BadFormatBehavior::Overwrite => {
                     tracing::warn!(
@@ -246,7 +246,7 @@ where
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
             tracing::error!(error = %e, path = %path.display(), "reading key file");
-            return Err(crate::Error::InternalFailure);
+            return Err(crate::Error::KeyFileRead);
         }
     }
 
@@ -263,13 +263,13 @@ async fn try_write(
         path,
         serde_json::to_vec(value).map_err(|e| {
             tracing::error!(error = %e, "serializing key state");
-            crate::Error::InternalFailure
+            crate::Error::KeyFileWrite
         })?,
     )
     .await
     .map_err(|e| {
         tracing::error!(error = %e, "saving key state");
-        crate::Error::InternalFailure
+        crate::Error::KeyFileWrite
     })?;
 
     Ok(())
