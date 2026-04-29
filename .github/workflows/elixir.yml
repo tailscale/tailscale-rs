@@ -24,7 +24,7 @@ env:
   # cached state
   cache_key: init
 
-  package_artifact: ts_elixir-${{ github.sha }}
+  package_artifact_base: ts_elixir-${{ github.sha }}
 
   is_tag_push: ${{ startsWith(github.ref, 'refs/tags/') }}
   is_dispatch: ${{ github.event_name == 'workflow_dispatch' }}
@@ -38,11 +38,12 @@ env:
 defaults:
   run:
     working-directory: ts_elixir
+    shell: bash
 
 jobs:
   build_test:
-    name: compile, test, static checks (elixir ${{ matrix.elixir.label }}, otp ${{ matrix.otp.label }}, rust ${{ matrix.rust_toolchain.label }})
-    runs-on: linux-x86_64-16cpu
+    name: compile, test, static checks (elixir ${{ matrix.elixir.label }}, otp ${{ matrix.otp.label }}, rust ${{ matrix.rust_toolchain.label }}, platform ${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.runner }}
 
     strategy:
       matrix:
@@ -55,6 +56,19 @@ jobs:
         rust_toolchain:
           - version: *latest_rust
             label: latest
+        platform:
+          - name: linux (x86_64)
+            runner: linux-x86_64-16cpu
+            triple: x86_64-unknown-linux-gnu
+          - name: linux (aarch64)
+            runner: linux-arm64-16cpu
+            triple: aarch64-unknown-linux-gnu
+          - name: macos
+            runner: macos-26
+            triple: aarch64-apple-darwin
+          - name: windows (x86_64)
+            runner: windows-8vcpu
+            triple: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout
@@ -68,7 +82,7 @@ jobs:
             ~/.mix
             ts_elixir/_build/
             ts_elixir/deps/
-          key: ${{ runner.os }}-mix-${{ env.cache_key }}-elixir-${{ matrix.elixir.version }}-otp-${{ matrix.otp.version }}-${{ hashFiles('**/mix.lock') }}
+          key: ${{ matrix.platform.triple }}-mix-${{ env.cache_key }}-elixir-${{ matrix.elixir.version }}-otp-${{ matrix.otp.version }}-${{ hashFiles('**/mix.lock') }}
 
       - name: Install elixir
         id: install-elixir
@@ -82,7 +96,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain-version: ${{ matrix.rust_toolchain.version }}
-          builder-triple: x86_64-unknown-linux-gnu
+          builder-triple: ${{ matrix.platform.triple }}
 
       - name: Install dependencies
         run: mix deps.get
@@ -98,30 +112,11 @@ jobs:
         env:
           MIX_ENV: prod
 
-      - name: Format
-        run: mix format --check-formatted
-
       - name: Test
         run: mix test
         env:
           # TODO(npry): testing tailnet + set TS_RS_TEST_AUTHKEY
           TS_RS_TEST_NET: 0
-
-      - name: Dialyzer
-        run: mix dialyzer --format github
-
-      - name: Credo
-        run: mix credo list --format oneline
-
-      - name: Docs
-        run: mix docs --warnings-as-errors
-
-      - name: Upload docs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: exdoc-${{ github.sha }}
-          path: ts_elixir/doc
-          retention-days: 7
 
       - &detach_cargo_toml
         name: Detach Cargo.toml from workspace
@@ -146,16 +141,81 @@ jobs:
       - name: Upload package tarball
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ env.package_artifact }}
+          name: ${{ env.package_artifact_base }}-${{ matrix.platform.triple }}
           path: ts_elixir/tailscale
+
+  arch_independent:
+    name: arch-independent checks
+    runs-on: linux-x86_64-16cpu
+
+    env:
+      target_triple: x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Cache mix
+        id: cache-mix
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.mix
+            ts_elixir/_build/
+            ts_elixir/deps/
+          key: ${{ env.target_triple }}-mix-${{ env.cache_key }}-elixir-${{ env.latest_elixir }}-otp-${{ env.latest_otp }}-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install elixir
+        id: install-elixir
+        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # 1.24.0
+        with:
+          otp-version: ${{ env.latest_otp }}
+          elixir-version: ${{ env.latest_elixir }}
+
+      - name: Setup rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain-version: ${{ env.latest_rust }}
+          builder-triple: ${{ env.target_triple }}
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
+
+      - name: Format
+        run: mix format --check-formatted
+
+      - name: Dialyzer
+        run: mix dialyzer --format github
+
+      - name: Credo
+        run: mix credo list --format oneline
+
+      - name: Docs
+        run: mix docs --warnings-as-errors
+
+      - name: Upload docs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exdoc-${{ github.sha }}
+          path: ts_elixir/doc
+          retention-days: 7
 
   publish:
     name: publish
     runs-on: linux-x86_64-16cpu
-    needs: build_test
+    needs:
+      - build_test
+      - arch_independent
+
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
 
     environment: *hex_environment
+    env:
+      target_triple: x86_64-unknown-linux-gnu
 
     # Artifact generation, signing, upload, respectively
     permissions:
@@ -189,7 +249,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain-version: ${{ matrix.rust_toolchain.version }}
-          builder-triple: x86_64-linux-unknown-gnu
+          builder-triple: ${{ env.target_triple }}
 
       - name: Install dependencies
         run: mix deps.get
@@ -200,7 +260,7 @@ jobs:
       - name: Download built package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: ${{ env.package_artifact }}
+          name: ${{ env.package_artifact_base }}-${{ env.target_triple }}
           path: ts_elixir/tailscale
 
       - name: Generate attestation
