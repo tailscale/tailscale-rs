@@ -28,6 +28,8 @@ pub struct Header {
     pub len: U16,
 }
 
+static_assertions::const_assert_eq!(size_of::<Header>(), 3);
+
 /// An initiation message.
 ///
 /// Distinct from other message types in that it starts with the capability version.

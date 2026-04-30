@@ -4202,6 +4202,7 @@ dependencies = [
  "pin-project-lite",
  "proptest",
  "rand 0.10.1",
+ "static_assertions",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

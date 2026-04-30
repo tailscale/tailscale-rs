@@ -81,7 +81,7 @@ where
 
     fn encode(&mut self, b: B, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let b = b.as_ref();
-        let max_data_chunk = MAX_MESSAGE_SIZE - (3 + C::tag_len()); // 3 = header len
+        let max_data_chunk = MAX_MESSAGE_SIZE - (size_of::<Header>() + C::tag_len());
 
         for chunk in b.chunks(max_data_chunk) {
             let hdr = Header {
@@ -126,7 +126,7 @@ where
             return Ok(None);
         }
 
-        src.advance(3);
+        src.advance(size_of::<Header>());
         let mut body = src.split_to(len);
 
         match header.typ {
@@ -200,7 +200,10 @@ mod test {
 
         encrypt_codec.encode(TEST_PAYLOAD, &mut buf).unwrap();
         assert_ne!(buf.as_ref(), TEST_PAYLOAD);
-        assert_eq!(buf.len(), TEST_PAYLOAD.len() + Cipher::tag_len() + 3);
+        assert_eq!(
+            buf.len(),
+            TEST_PAYLOAD.len() + Cipher::tag_len() + size_of::<Header>()
+        );
 
         let decoded = decrypt_codec.decode(&mut buf).unwrap().unwrap();
         assert_eq!(decoded.as_ref(), TEST_PAYLOAD);
@@ -213,7 +216,10 @@ mod test {
 
         encrypt_codec.encode(TEST_PAYLOAD, &mut buf).unwrap();
         assert_ne!(buf.as_ref(), TEST_PAYLOAD);
-        assert_eq!(buf.len(), TEST_PAYLOAD.len() + Cipher::tag_len() + 3);
+        assert_eq!(
+            buf.len(),
+            TEST_PAYLOAD.len() + Cipher::tag_len() + size_of::<Header>()
+        );
 
         for i in 0..TEST_PAYLOAD.len() - 1 {
             let mut test_payload = buf.clone().split_to(i);
@@ -263,7 +269,7 @@ mod test {
 
     proptest::proptest! {
         #[test]
-        fn roundtrip_prop(payload in vec(any::<u8>(), 1..=MAX_MESSAGE_SIZE - 3 - 16), key: [u8; 32], nonce: u64) {
+        fn roundtrip_prop(payload in vec(any::<u8>(), 1..=MAX_MESSAGE_SIZE - size_of::<Header>() - Cipher::tag_len()), key: [u8; 32], nonce: u64) {
             let (mut encrypt_codec, mut decrypt_codec) = init_codec_pair(key, nonce);
 
             let mut buf = BytesMut::new();
