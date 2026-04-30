@@ -33,83 +33,45 @@ pub use node::{Id as NodeId, Node, StableId as StableNodeId, TailnetAddress};
 #[cfg(feature = "async_tokio")]
 pub use crate::tokio::{AsyncControlClient, FilterUpdate, PeerUpdate, StateUpdate};
 
-/// An error connecting to the control server or control plane.
-#[derive(Debug, thiserror::Error)]
+/// An error which occured while connecting to the control server or control plane.
+#[derive(Debug, thiserror::Error, Clone, Eq, PartialEq)]
 pub enum Error {
-    /// A machine was not authorized by control to join tailnet, authorize via the supplied URL.
+    /// A machine was not authorized by control to join tailnet; authorize via the supplied URL.
     #[error("machine was not authorized by control to join tailnet")]
     MachineNotAuthorized(url::Url),
 
+    /// Some kind of networking error, e.g., HTTP, TLS.
+    ///
+    /// These might be addressed by retrying, or might be an unresolvable error.
+    ///
+    /// [`Operation`] is intended to be informational, rather then inspected during handling.
+    #[error("A networking error occurred in {0}")]
+    NetworkError(Operation),
+
     /// An internal error that users of the library are not expected to handle.
+    ///
+    /// [`InternalErrorKind`] and [`Operation`] are intended to be informational, rather then
+    /// inspected during handling.
     #[error("{0} error in {1}")]
-    Internal(ErrorKind, ConnectionPhase),
-    /// An internal error with protocol implementation that users of the library are not expected to handle.
-    #[error("{0}")]
-    Protocol(ProtocolPhase),
+    Internal(InternalErrorKind, Operation),
 }
 
 /// What kind of internal error has occured.
 ///
 /// This is intended to be useful for reporting a crash to an end user, rather than being handled.
-#[derive(Debug)]
-pub enum ErrorKind {
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum InternalErrorKind {
     /// An error in URL parsing.
     Url,
-    /// An error in serialization/deserialization.
+    /// An error in serialization or deserialization.
     SerDe,
-    /// An error with an HTTP connection.
-    Http,
-    /// An error with a TLS connection.
-    Tls,
     /// An error in I/O.
     Io,
     /// An invalid message format.
     MessageFormat,
     /// An error parsing a string as UTF8.
     Utf8,
-}
-
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorKind::Url => write!(f, "URL parsing"),
-            ErrorKind::SerDe => write!(f, "serialization/deserialization"),
-            ErrorKind::Http => write!(f, "HTTP error"),
-            ErrorKind::Tls => write!(f, "TLS error"),
-            ErrorKind::Io => write!(f, "I/O"),
-            ErrorKind::MessageFormat => write!(f, "message format"),
-            ErrorKind::Utf8 => write!(f, "UTF8"),
-        }
-    }
-}
-
-/// The phase of connecting the control plane to a Tailnet in which an internal error occurs.
-#[derive(Debug)]
-pub enum ConnectionPhase {
-    /// Requesting a net map.
-    MapRequest,
-    /// Connecting to a control server.
-    ConnectToControlServer,
-    /// Registering the user's device with a Tailnet.
-    Registration,
-    /// Handling a ping.
-    Ping,
-}
-
-impl fmt::Display for ConnectionPhase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConnectionPhase::MapRequest => write!(f, "net map request"),
-            ConnectionPhase::ConnectToControlServer => write!(f, "connection to control server"),
-            ConnectionPhase::Registration => write!(f, "registration"),
-            ConnectionPhase::Ping => write!(f, "ping"),
-        }
-    }
-}
-
-/// The phase in which a protocol error occurs.
-#[derive(Debug)]
-pub enum ProtocolPhase {
     /// Noise framework handshake.
     NoiseHandshake,
     /// Tailscale challenge packet.
@@ -119,14 +81,40 @@ pub enum ProtocolPhase {
     MachineAuthorization,
 }
 
-impl fmt::Display for ProtocolPhase {
+impl fmt::Display for InternalErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProtocolPhase::NoiseHandshake => write!(f, "Noise handshakes"),
-            ProtocolPhase::Challenge => write!(f, "Tailscale challenge packet"),
-            ProtocolPhase::MachineAuthorization => {
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::SerDe => write!(f, "serialization/deserialization error"),
+            InternalErrorKind::Io => write!(f, "I/O error"),
+            InternalErrorKind::MessageFormat => write!(f, "message format error"),
+            InternalErrorKind::Utf8 => write!(f, "invalid UTF8"),
+            InternalErrorKind::NoiseHandshake => write!(f, "error in Noise handshake"),
+            InternalErrorKind::Challenge => write!(f, "error with Tailscale challenge packet"),
+            InternalErrorKind::MachineAuthorization => {
                 write!(f, "Machine not authorized to register with Tailnet")
             }
+        }
+    }
+}
+
+/// The phase of connecting the control plane to a Tailnet in which an error occurs.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Operation {
+    /// Requesting a net map.
+    MapRequest,
+    /// Connecting to a control server.
+    ConnectToControlServer,
+    /// Registering the user's device with a Tailnet.
+    Registration,
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operation::MapRequest => write!(f, "net map request"),
+            Operation::ConnectToControlServer => write!(f, "connection to control server"),
+            Operation::Registration => write!(f, "registration"),
         }
     }
 }
@@ -134,6 +122,6 @@ impl fmt::Display for ProtocolPhase {
 impl From<ts_http_util::Error> for Error {
     fn from(error: ts_http_util::Error) -> Self {
         tracing::error!(%error, "http error");
-        Error::Internal(ErrorKind::Http, ConnectionPhase::ConnectToControlServer)
+        Error::NetworkError(Operation::ConnectToControlServer)
     }
 }

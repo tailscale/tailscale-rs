@@ -12,11 +12,11 @@ use url::Url;
 
 use crate::{DialPlan, NodeId};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
 #[error("Error sending map request")]
 pub(crate) enum MapStreamError {
     SerDe,
-    Http,
+    NetworkError,
 }
 
 impl From<serde_json::Error> for MapStreamError {
@@ -29,18 +29,19 @@ impl From<serde_json::Error> for MapStreamError {
 impl From<ts_http_util::Error> for MapStreamError {
     fn from(error: ts_http_util::Error) -> Self {
         tracing::error!(%error, "http error sending map request");
-        MapStreamError::Http
+        MapStreamError::NetworkError
     }
 }
 
 impl From<MapStreamError> for crate::Error {
     fn from(e: MapStreamError) -> Self {
         match e {
-            MapStreamError::SerDe => {
-                crate::Error::Internal(crate::ErrorKind::SerDe, crate::ConnectionPhase::MapRequest)
-            }
-            MapStreamError::Http => {
-                crate::Error::Internal(crate::ErrorKind::Http, crate::ConnectionPhase::MapRequest)
+            MapStreamError::SerDe => crate::Error::Internal(
+                crate::InternalErrorKind::SerDe,
+                crate::Operation::MapRequest,
+            ),
+            MapStreamError::NetworkError => {
+                crate::Error::NetworkError(crate::Operation::MapRequest)
             }
         }
     }
@@ -189,7 +190,7 @@ fn packet_filter(map_response: &MapResponse<'_>) -> Option<FilterUpdate> {
 }
 
 #[tracing::instrument(skip_all, fields(map_url = %url.as_str()))]
-pub(super) async fn send_map_request(
+pub(crate) async fn send_map_request(
     map_request: MapRequest<'_>,
     url: &Url,
     http2_conn: &Http2<BytesBody>,
@@ -216,7 +217,7 @@ pub(super) async fn send_map_request(
             status = status.as_u16(),
             "failed to register map updates with unsuccesful HTTP status code"
         );
-        return Err(MapStreamError::Http);
+        return Err(MapStreamError::NetworkError);
     }
 
     Ok(resp.into_read())

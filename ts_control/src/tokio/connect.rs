@@ -22,33 +22,33 @@ lazy_static::lazy_static! {
     pub static ref CONTROL_PROTOCOL_VERSION: String = format!("Tailscale Control Protocol v{}", CapabilityVersion::CURRENT);
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ConnectionError {
-    #[error("internal error during connection")]
-    Internal(ErrorKind),
-    #[error("challenge too long")]
+    #[error("internal error during connection: {0}")]
+    Internal(InternalErrorKind),
+    #[error("HTTP error")]
+    NetworkError,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum InternalErrorKind {
+    Url,
+    SerDe,
+    MessageFormat,
+    Io,
     ChallengeLength,
-    #[error("error encountered with Noise communication")]
     NoiseHandshake,
 }
 
-#[derive(Debug)]
-pub enum ErrorKind {
-    Url,
-    SerDe,
-    Http,
-    MessageFormat,
-    Io,
-}
-
-impl fmt::Display for ErrorKind {
+impl fmt::Display for InternalErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ErrorKind::Url => write!(f, "URL parsing"),
-            ErrorKind::SerDe => write!(f, "serialization/deserialization"),
-            ErrorKind::Http => write!(f, "HTTP"),
-            ErrorKind::MessageFormat => write!(f, "message format"),
-            ErrorKind::Io => write!(f, "I/O"),
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::SerDe => write!(f, "serialization/deserialization error"),
+            InternalErrorKind::MessageFormat => write!(f, "message format error"),
+            InternalErrorKind::Io => write!(f, "I/O error"),
+            InternalErrorKind::ChallengeLength => write!(f, "challenge too long"),
+            InternalErrorKind::NoiseHandshake => write!(f, "error in Noise handshake"),
         }
     }
 }
@@ -56,28 +56,39 @@ impl fmt::Display for ErrorKind {
 impl ConnectionError {
     fn io_error(field: &'static str, stage: &'static str, err: std::io::Error) -> Self {
         tracing::error!("could not read {field} from {stage} message: {err}");
-        ConnectionError::Internal(ErrorKind::Io)
+
+        match err.kind() {
+            std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::HostUnreachable
+            | std::io::ErrorKind::NetworkUnreachable
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::NotConnected
+            | std::io::ErrorKind::NetworkDown => ConnectionError::NetworkError,
+            // REVIEW: TimedOut AddrInUse AddrNotAvailable Interrupted
+            _ => ConnectionError::Internal(InternalErrorKind::Io),
+        }
     }
 }
 
 impl From<serde_json::Error> for ConnectionError {
     fn from(error: serde_json::Error) -> Self {
         tracing::error!(%error, "deserialization error");
-        ConnectionError::Internal(ErrorKind::SerDe)
+        ConnectionError::Internal(InternalErrorKind::SerDe)
     }
 }
 
 impl From<ts_http_util::Error> for ConnectionError {
     fn from(error: ts_http_util::Error) -> Self {
         tracing::error!(%error, "http error");
-        ConnectionError::Internal(ErrorKind::Http)
+        ConnectionError::NetworkError
     }
 }
 
 impl From<url::ParseError> for ConnectionError {
     fn from(error: url::ParseError) -> Self {
         tracing::error!(%error, "bad URL");
-        ConnectionError::Internal(ErrorKind::Url)
+        ConnectionError::Internal(InternalErrorKind::Url)
     }
 }
 
@@ -85,12 +96,14 @@ impl From<ts_control_noise::Error> for ConnectionError {
     fn from(error: ts_control_noise::Error) -> Self {
         match error {
             ts_control_noise::Error::BadFormat => {
-                ConnectionError::Internal(ErrorKind::MessageFormat)
+                ConnectionError::Internal(InternalErrorKind::MessageFormat)
             }
-            ts_control_noise::Error::HandshakeFailed => ConnectionError::NoiseHandshake,
+            ts_control_noise::Error::HandshakeFailed => {
+                ConnectionError::Internal(InternalErrorKind::NoiseHandshake)
+            }
             ts_control_noise::Error::Io(error) => {
                 tracing::error!(%error, "IO error in Noise communication");
-                ConnectionError::Internal(ErrorKind::Io)
+                ConnectionError::Internal(InternalErrorKind::Io)
             }
         }
     }
@@ -100,26 +113,24 @@ impl From<ConnectionError> for crate::Error {
     fn from(e: ConnectionError) -> Self {
         match e {
             ConnectionError::Internal(k) => {
-                crate::Error::Internal(k.into(), crate::ConnectionPhase::ConnectToControlServer)
+                crate::Error::Internal(k.into(), crate::Operation::ConnectToControlServer)
             }
-            ConnectionError::ChallengeLength => {
-                crate::Error::Protocol(crate::ProtocolPhase::Challenge)
-            }
-            ConnectionError::NoiseHandshake => {
-                crate::Error::Protocol(crate::ProtocolPhase::NoiseHandshake)
+            ConnectionError::NetworkError => {
+                crate::Error::NetworkError(crate::Operation::ConnectToControlServer)
             }
         }
     }
 }
 
-impl From<ErrorKind> for crate::ErrorKind {
-    fn from(e: ErrorKind) -> Self {
+impl From<InternalErrorKind> for crate::InternalErrorKind {
+    fn from(e: InternalErrorKind) -> Self {
         match e {
-            ErrorKind::Url => crate::ErrorKind::Url,
-            ErrorKind::SerDe => crate::ErrorKind::SerDe,
-            ErrorKind::Http => crate::ErrorKind::Http,
-            ErrorKind::MessageFormat => crate::ErrorKind::MessageFormat,
-            ErrorKind::Io => crate::ErrorKind::Io,
+            InternalErrorKind::Url => crate::InternalErrorKind::Url,
+            InternalErrorKind::SerDe => crate::InternalErrorKind::SerDe,
+            InternalErrorKind::MessageFormat => crate::InternalErrorKind::MessageFormat,
+            InternalErrorKind::Io => crate::InternalErrorKind::Io,
+            InternalErrorKind::ChallengeLength => crate::InternalErrorKind::Challenge,
+            InternalErrorKind::NoiseHandshake => crate::InternalErrorKind::NoiseHandshake,
         }
     }
 }
@@ -138,7 +149,7 @@ impl fmt::Display for ControlPublicKeys {
 }
 
 #[tracing::instrument(skip_all, fields(%control_url), err)]
-pub(super) async fn connect(
+pub(crate) async fn connect(
     control_url: &Url,
     machine_keys: &MachineKeyPair,
 ) -> Result<Http2<BytesBody>, ConnectionError> {
@@ -199,7 +210,7 @@ pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, Co
             "failed to retrieve control server machine public key"
         );
 
-        return Err(ConnectionError::Internal(ErrorKind::Http));
+        return Err(ConnectionError::NetworkError);
     }
 
     let control_keys: ControlPublicKeys = serde_json::from_slice(&response.collect_bytes().await?)?;
@@ -235,7 +246,7 @@ pub async fn upgrade_ts2021(
 
     let upgraded = ts_http_util::do_upgrade(resp).await.map_err(|error| {
         tracing::error!(%error, "could not upgrade control connection to TS2021 protocol");
-        ConnectionError::Internal(ErrorKind::Http)
+        ConnectionError::NetworkError
     })?;
 
     let conn = handshake.complete(upgraded).await?;
@@ -280,7 +291,9 @@ where
             challenge_len,
             "invalid challenge length; must be less than {MAX_CHALLENGE_LENGTH} bytes"
         );
-        return Err(ConnectionError::ChallengeLength);
+        return Err(ConnectionError::Internal(
+            InternalErrorKind::ChallengeLength,
+        ));
     }
 
     // Read and discard the challenge JSON.

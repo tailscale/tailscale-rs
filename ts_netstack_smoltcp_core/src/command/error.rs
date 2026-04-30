@@ -10,25 +10,26 @@ use smoltcp::socket::{
 use crate::command;
 
 /// Error while interacting with the netstack.
-#[derive(thiserror::Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Error {
     /// The request contained invalid parameters. Retrying will not resolve this issue.
     ///
-    /// Common causes for this error are that a specified address was invalid, the socket
-    /// a handle refers to no longer exists, or the packet to be sent was too large for the
-    /// socket's buffer capacity.
+    /// Common causes for this error are that a specified address was invalid, there is not enough
+    /// memory available in the current configuration to complete the request, or the packet to be
+    /// sent was too large for the socket's buffer capacity.
     #[error("invalid request ({0})")]
     BadRequest(BadRequestReason),
 
-    /// The supplied buffer was unsuitable (e.g., zero-size).
-    #[error("the supplied buffer was unsuitable")]
-    BadBuffer,
-
     /// An internal error occured.
+    ///
+    /// These errors are either unrevocerable, due to a bug in our code, or caused by a rare
+    /// and intermittent issue.
     #[error("An internal error occured: {0}")]
     Internal(InternalErrorKind),
 
     /// A TCP connection was reset.
+    ///
+    /// These errors can often be handled by retrying.
     #[error("connection reset")]
     ConnectionReset,
 }
@@ -60,23 +61,29 @@ impl Error {
     }
 
     /// Error constructor for out-of-memory (likely in a specific component, rather than a system OOM).
-    pub fn oom() -> Self {
-        Error::BadRequest(BadRequestReason::OutOfMemory)
-    }
-
-    /// Error constructor for zero port number.
-    pub fn zero_port() -> Self {
-        Error::BadRequest(BadRequestReason::ZeroPort)
+    pub fn buffer_full() -> Self {
+        Error::Internal(InternalErrorKind::BufferFull)
     }
 
     /// Error constructor for an unaddressable packet.
     pub fn unaddressable() -> Self {
         Error::BadRequest(BadRequestReason::Unaddressable)
     }
+
+    /// Error constructor for a zero-sized buffer.
+    pub fn zero_buffer() -> Self {
+        Error::BadRequest(BadRequestReason::ZeroSizeBuffer)
+    }
 }
 
 /// Informational detail on the kind of internal error.
-#[derive(Debug, Clone)]
+///
+/// This detail is unlikely to help in error recovery but could be used in logs or user-facing
+/// reporting to add detail to an error report.
+// If adding variants, be sure to add them to `tailscale::error::InternalErrorKind` too (including
+// the `From` impl, which will panic otherwise).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum InternalErrorKind {
     /// Invalid socket state.
     InvalidSocketState,
@@ -88,6 +95,8 @@ pub enum InternalErrorKind {
     BadListenerHandle,
     /// Handle to invalid socket.
     BadSocketHandle,
+    /// UDP buffer full
+    BufferFull,
 }
 
 impl fmt::Display for InternalErrorKind {
@@ -100,30 +109,29 @@ impl fmt::Display for InternalErrorKind {
             InternalErrorKind::InternalChannelClosed => write!(f, "channel closed"),
             InternalErrorKind::BadListenerHandle => write!(f, "handle to invalid TCP listener"),
             InternalErrorKind::BadSocketHandle => write!(f, "handle to invalid socket"),
+            InternalErrorKind::BufferFull => write!(f, "buffer full"),
         }
     }
 }
 
 /// The reason for an [`Error::BadRequest`] error.
-#[derive(Debug, Clone)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BadRequestReason {
     /// Packet unaddressable.
     Unaddressable,
-    /// Packet too large.
+    /// Packet is too large to fit in socket buffer".
     BigPacket,
-    /// Not enough memory to complete operation.
-    OutOfMemory,
-    /// 0 port specified.
-    ZeroPort,
+    /// The size of a user-supplied is zero, so cannot store a packet.
+    ZeroSizeBuffer,
 }
 
 impl fmt::Display for BadRequestReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BadRequestReason::Unaddressable => write!(f, "packet unaddressable"),
-            BadRequestReason::BigPacket => write!(f, "packet too large"),
-            BadRequestReason::OutOfMemory => write!(f, "not enough memory to complete operation"),
-            BadRequestReason::ZeroPort => write!(f, "0 port specified"),
+            BadRequestReason::BigPacket => write!(f, "packet is too large to fit in socket buffer"),
+            BadRequestReason::ZeroSizeBuffer => write!(f, "the size of a user-supplied is zero"),
         }
     }
 }
@@ -203,7 +211,7 @@ impl From<UdpSendError> for Error {
     fn from(value: UdpSendError) -> Self {
         match value {
             UdpSendError::Unaddressable => Error::unaddressable(),
-            UdpSendError::BufferFull => Error::oom(),
+            UdpSendError::BufferFull => Error::buffer_full(),
         }
     }
 }
@@ -211,14 +219,10 @@ impl From<UdpSendError> for Error {
 #[cfg(feature = "std")]
 impl From<Error> for std::io::Error {
     fn from(value: Error) -> Self {
-        use std::io::{Error as StdErr, ErrorKind};
-
         match value {
-            Error::BadRequest(_) => StdErr::new(ErrorKind::InvalidInput, value),
-            Error::ConnectionReset => {
-                std::io::Error::new(std::io::ErrorKind::ConnectionReset, value)
-            }
-            other => StdErr::other(other),
+            Error::BadRequest(_) => std::io::ErrorKind::InvalidInput.into(),
+            Error::ConnectionReset => std::io::ErrorKind::ConnectionReset.into(),
+            other => std::io::Error::other(other),
         }
     }
 }

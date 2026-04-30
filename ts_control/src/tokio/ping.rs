@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::{fmt, string::String};
 
 use ts_control_serde::PingType;
 use ts_http_util::{BytesBody, ClientExt, Http2, Request};
@@ -15,44 +15,41 @@ const C2N_PATH_UNKNOWN: &str = "HTTP/1.1 400 Bad Request\r\n\r\nunknown c2n path
 /// with C2N echo responses, which can append the request body.
 const C2N_RESPONSE_ECHO_PREAMBLE: &str = "HTTP/1.1 200 OK\r\n\r\n";
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum PingError {
-    #[error("URL parsing error")]
-    Url,
     #[error("HTTP error")]
-    Http,
-    #[error("Ping request with invalid format (missing payload)")]
-    InvalidRequest,
+    NetworkError,
+    #[error("internal error during ping: {0}")]
+    InternalError(InternalErrorKind),
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) enum InternalErrorKind {
+    Url,
+    MessageFormat,
+}
+
+impl fmt::Display for InternalErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::MessageFormat => {
+                write!(f, "Ping request with invalid format (missing payload)")
+            }
+        }
+    }
+}
 impl From<ts_http_util::Error> for PingError {
     fn from(error: ts_http_util::Error) -> Self {
         tracing::error!(%error, "Error parsing HTTP request");
-        PingError::Http
+        PingError::NetworkError
     }
 }
 
 impl From<url::ParseError> for PingError {
     fn from(error: url::ParseError) -> Self {
         tracing::error!(%error, "Error parsing URL");
-        PingError::Url
-    }
-}
-
-impl From<PingError> for crate::Error {
-    fn from(e: PingError) -> Self {
-        match e {
-            PingError::Url => {
-                crate::Error::Internal(crate::ErrorKind::Url, crate::ConnectionPhase::Ping)
-            }
-            PingError::Http => {
-                crate::Error::Internal(crate::ErrorKind::Http, crate::ConnectionPhase::Ping)
-            }
-            PingError::InvalidRequest => crate::Error::Internal(
-                crate::ErrorKind::MessageFormat,
-                crate::ConnectionPhase::Ping,
-            ),
-        }
+        PingError::InternalError(InternalErrorKind::Url)
     }
 }
 
@@ -108,7 +105,7 @@ pub async fn handle_ping(
         let ping_request_body = ping_request
             .payload
             .as_ref()
-            .ok_or(PingError::InvalidRequest)?;
+            .ok_or(PingError::InternalError(InternalErrorKind::MessageFormat))?;
         let c2n_request = match parse_c2n_ping(ping_request_body) {
             Ok(c2n_request) => {
                 tracing::trace!(?c2n_request, "parsed c2n ping");

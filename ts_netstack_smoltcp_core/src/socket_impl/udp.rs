@@ -23,7 +23,7 @@ impl crate::Netstack {
 
                 if endpoint.port() == 0 {
                     tracing::error!(?endpoint, "udp bind: zero port");
-                    return Response::Error(Error::zero_port());
+                    return Response::Error(Error::unaddressable());
                 }
 
                 // The two possible failure cases for `bind` are that the port is zero or the socket
