@@ -101,13 +101,13 @@ pub fn make_upgrade_req(
     // GET and POST, but others (e.g. Go's testcontrol) only accept POST. POST
     // is what Go's controlhttp client sends, so use it for widest compatibility.
     let mut req = Request::post(u.as_str())
-        .header(HOST, u.host_str().ok_or(Error::InvalidParam)?)
+        .header(HOST, u.host_str().ok_or(Error::InvalidInput)?)
         .header(UPGRADE, protocol)
         .header(CONNECTION, "Upgrade")
         .body(EmptyBody::new())
         .map_err(|e| {
             tracing::error!(error = %e, "creating upgrade request");
-            Error::InvalidParam
+            Error::InvalidInput
         })?;
 
     req.headers_mut().extend(extra_headers);
@@ -124,9 +124,9 @@ pub fn host_header(u: &url::Url) -> Option<(HeaderName, HeaderValue)> {
 
 async fn dial_tcp(url: &url::Url) -> Result<TcpStream, Error> {
     let conn = TcpStream::connect((
-        url.host_str().ok_or(Error::InvalidParam)?,
+        url.host_str().ok_or(Error::InvalidInput)?,
         url.port_or_known_default()
-            .ok_or(Error::InvalidParam)
+            .ok_or(Error::InvalidInput)
             .inspect_err(|_err| tracing::error!("unknown url port"))?,
     ))
     .await
@@ -145,7 +145,7 @@ async fn dial_tls(
     let server_name = ts_tls_util::server_name(url)
         .ok_or_else(|| {
             tracing::error!(%url, "parsing server name");
-            Error::InvalidParam
+            Error::InvalidInput
         })?
         .to_owned();
 

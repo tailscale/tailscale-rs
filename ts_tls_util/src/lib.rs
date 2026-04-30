@@ -25,7 +25,7 @@ static ROOT_CERT_STORE: LazyLock<Arc<RootCertStore>> = LazyLock::new(|| {
 /// Establishes a TLS stream with a server over an existing connection.
 ///
 /// See module-level documentation for information on root certificates.
-pub async fn connect<Io>(server_name: ServerName<'_>, io: Io) -> tokio::io::Result<TlsStream<Io>>
+pub async fn connect<Io>(server_name: ServerName<'_>, io: Io) -> std::io::Result<TlsStream<Io>>
 where
     Io: AsyncRead + AsyncWrite + Unpin,
 {

@@ -16,7 +16,7 @@ pub trait UpgradableChannel {
 }
 
 /// An error signifying that the remote end of the channel has closed.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
 #[error("the remote end of the channel has closed")]
 pub struct ChannelClosedError;
 
@@ -29,7 +29,7 @@ impl From<ChannelClosedError> for Error {
 #[cfg(feature = "std")]
 impl From<ChannelClosedError> for std::io::Error {
     fn from(_: ChannelClosedError) -> Self {
-        std::io::Error::new(std::io::ErrorKind::ConnectionReset, ChannelClosedError)
+        std::io::ErrorKind::BrokenPipe.into()
     }
 }
 

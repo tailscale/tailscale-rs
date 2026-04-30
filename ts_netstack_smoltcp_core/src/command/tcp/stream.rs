@@ -17,8 +17,8 @@ pub struct ConnectionResetOrClosed;
 
 #[cfg(feature = "std")]
 impl From<ConnectionResetOrClosed> for std::io::Error {
-    fn from(value: ConnectionResetOrClosed) -> Self {
-        std::io::Error::new(std::io::ErrorKind::ConnectionReset, value)
+    fn from(_: ConnectionResetOrClosed) -> Self {
+        std::io::ErrorKind::ConnectionReset.into()
     }
 }
 

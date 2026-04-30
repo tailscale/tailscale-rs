@@ -22,6 +22,10 @@ pub enum Error {
     /// Invalid parameter.
     #[error("invalid parameter")]
     InvalidParam,
+
+    /// Something went wrong which shouldn't have.
+    #[error("something went wrong")]
+    Unexpected,
 }
 
 impl From<io::Error> for Error {
@@ -33,8 +37,9 @@ impl From<io::Error> for Error {
 impl From<ts_http_util::Error> for Error {
     fn from(err: ts_http_util::Error) -> Self {
         match err {
-            ts_http_util::Error::InvalidParam => Error::InvalidParam,
+            ts_http_util::Error::InvalidInput => Error::InvalidParam,
             ts_http_util::Error::Io | ts_http_util::Error::Timeout => Error::Io,
+            _ => Error::Unexpected,
         }
     }
 }

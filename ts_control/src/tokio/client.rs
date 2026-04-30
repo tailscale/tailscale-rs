@@ -213,8 +213,7 @@ async fn run_once(
         .full_connect_next(control_url, &node_keys.machine_keys)
         .await?;
 
-    let register_url = control_url.join("machine/register").unwrap();
-    crate::tokio::register(config, &register_url, auth_key, node_keys, &h2_client).await?;
+    crate::tokio::register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
     let builder = MapRequestBuilder::new(node_keys)
         .keep_alive(true)

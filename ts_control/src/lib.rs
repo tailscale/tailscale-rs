@@ -33,83 +33,61 @@ pub use node::{Id as NodeId, Node, StableId as StableNodeId, TailnetAddress};
 #[cfg(feature = "async_tokio")]
 pub use crate::tokio::{AsyncControlClient, FilterUpdate, PeerUpdate, StateUpdate};
 
-/// An error connecting to the control server or control plane.
-#[derive(Debug, thiserror::Error)]
+/// An error which occurred while connecting to the control server or control plane.
+#[derive(Debug, thiserror::Error, Clone, Eq, PartialEq)]
 pub enum Error {
-    /// A machine was not authorized by control to join tailnet, authorize via the supplied URL.
-    #[error("machine was not authorized by control to join tailnet")]
+    /// A machine was not authorized by control to join tailnet; authorize via the supplied URL.
+    #[error("machine was not authorized by control to join tailnet, authorize at {0}")]
     MachineNotAuthorized(url::Url),
 
+    /// The user supplied an invalid URL.
+    #[error("invalid URL: {0}")]
+    InvalidUrl(url::Url),
+
+    /// Some kind of networking error.
+    ///
+    /// These might be addressed by retrying, or might be an unresolvable error.
+    ///
+    /// [`Operation`] is intended to be informational, rather then inspected during handling.
+    #[error("a networking error occurred in {0}")]
+    NetworkError(Operation),
+
     /// An internal error that users of the library are not expected to handle.
+    ///
+    /// [`InternalErrorKind`] and [`Operation`] are intended to be informational, rather then
+    /// inspected during handling.
     #[error("{0} error in {1}")]
-    Internal(ErrorKind, ConnectionPhase),
-    /// An internal error with protocol implementation that users of the library are not expected to handle.
-    #[error("{0}")]
-    Protocol(ProtocolPhase),
+    Internal(InternalErrorKind, Operation),
 }
 
-/// What kind of internal error has occured.
+impl Error {
+    fn io_error(err: std::io::Error, op: Operation) -> Self {
+        if crate::is_network_error(&err) {
+            Error::NetworkError(op)
+        } else {
+            Error::Internal(InternalErrorKind::Io, op)
+        }
+    }
+}
+
+/// What kind of internal error has occurred.
 ///
 /// This is intended to be useful for reporting a crash to an end user, rather than being handled.
-#[derive(Debug)]
-pub enum ErrorKind {
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum InternalErrorKind {
     /// An error in URL parsing.
     Url,
-    /// An error in serialization/deserialization.
-    SerDe,
-    /// An error with an HTTP connection.
+    /// An unsuccessful HTTP request or upgrade.
     Http,
-    /// An error with a TLS connection.
-    Tls,
+    /// An error in serialization or deserialization.
+    SerDe,
     /// An error in I/O.
     Io,
     /// An invalid message format.
     MessageFormat,
     /// An error parsing a string as UTF8.
     Utf8,
-}
-
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorKind::Url => write!(f, "URL parsing"),
-            ErrorKind::SerDe => write!(f, "serialization/deserialization"),
-            ErrorKind::Http => write!(f, "HTTP error"),
-            ErrorKind::Tls => write!(f, "TLS error"),
-            ErrorKind::Io => write!(f, "I/O"),
-            ErrorKind::MessageFormat => write!(f, "message format"),
-            ErrorKind::Utf8 => write!(f, "UTF8"),
-        }
-    }
-}
-
-/// The phase of connecting the control plane to a Tailnet in which an internal error occurs.
-#[derive(Debug)]
-pub enum ConnectionPhase {
-    /// Requesting a net map.
-    MapRequest,
-    /// Connecting to a control server.
-    ConnectToControlServer,
-    /// Registering the user's device with a Tailnet.
-    Registration,
-    /// Handling a ping.
-    Ping,
-}
-
-impl fmt::Display for ConnectionPhase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConnectionPhase::MapRequest => write!(f, "net map request"),
-            ConnectionPhase::ConnectToControlServer => write!(f, "connection to control server"),
-            ConnectionPhase::Registration => write!(f, "registration"),
-            ConnectionPhase::Ping => write!(f, "ping"),
-        }
-    }
-}
-
-/// The phase in which a protocol error occurs.
-#[derive(Debug)]
-pub enum ProtocolPhase {
     /// Noise framework handshake.
     NoiseHandshake,
     /// Tailscale challenge packet.
@@ -119,14 +97,41 @@ pub enum ProtocolPhase {
     MachineAuthorization,
 }
 
-impl fmt::Display for ProtocolPhase {
+impl fmt::Display for InternalErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProtocolPhase::NoiseHandshake => write!(f, "Noise handshakes"),
-            ProtocolPhase::Challenge => write!(f, "Tailscale challenge packet"),
-            ProtocolPhase::MachineAuthorization => {
-                write!(f, "Machine not authorized to register with Tailnet")
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::Http => write!(f, "unsuccessful HTTP request or upgrade"),
+            InternalErrorKind::SerDe => write!(f, "serialization/deserialization error"),
+            InternalErrorKind::Io => write!(f, "I/O error"),
+            InternalErrorKind::MessageFormat => write!(f, "message format error"),
+            InternalErrorKind::Utf8 => write!(f, "invalid UTF8"),
+            InternalErrorKind::NoiseHandshake => write!(f, "error in Noise handshake"),
+            InternalErrorKind::Challenge => write!(f, "error with Tailscale challenge packet"),
+            InternalErrorKind::MachineAuthorization => {
+                write!(f, "machine not authorized to register with Tailnet")
             }
+        }
+    }
+}
+
+/// The phase of connecting the control plane to a Tailnet in which an error occurs.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Operation {
+    /// Requesting a net map.
+    MapRequest,
+    /// Connecting to a control server.
+    ConnectToControlServer,
+    /// Registering the user's device with a Tailnet.
+    Registration,
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operation::MapRequest => write!(f, "net map request"),
+            Operation::ConnectToControlServer => write!(f, "connection to control server"),
+            Operation::Registration => write!(f, "registration"),
         }
     }
 }
@@ -134,6 +139,43 @@ impl fmt::Display for ProtocolPhase {
 impl From<ts_http_util::Error> for Error {
     fn from(error: ts_http_util::Error) -> Self {
         tracing::error!(%error, "http error");
-        Error::Internal(ErrorKind::Http, ConnectionPhase::ConnectToControlServer)
+
+        if http_error_is_recoverable(error) {
+            Error::NetworkError(Operation::ConnectToControlServer)
+        } else {
+            Error::Internal(InternalErrorKind::Http, Operation::ConnectToControlServer)
+        }
+    }
+}
+
+/// Returns true if the input io error should be classed as a network error.
+fn is_network_error(err: &std::io::Error) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        err.kind(),
+        ConnectionRefused
+            | ConnectionReset
+            | HostUnreachable
+            | NetworkUnreachable
+            | ConnectionAborted
+            | NotConnected
+            | TimedOut
+            | AddrNotAvailable
+            | Interrupted
+            | NetworkDown
+    )
+}
+
+/// Returns true if the error is likely to be a transient network error.
+fn http_error_is_recoverable(error: ts_http_util::Error) -> bool {
+    match error {
+        ts_http_util::Error::Io => true,
+        ts_http_util::Error::InvalidInput
+        // A TCP timeout (recoverable) should get classed as an IO error, so any other kind of
+        // timeout is probably not.
+        | ts_http_util::Error::Timeout
+        | ts_http_util::Error::InvalidResponse => false,
+        // In the future, this might be recoverable with a reset.
+        ts_http_util::Error::ConnectionClosed => false,
     }
 }

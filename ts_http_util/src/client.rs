@@ -59,7 +59,7 @@ where
         async move {
             let req = req.body(Default::default()).map_err(|e| {
                 tracing::error!(error = %e, "constructing request");
-                Error::InvalidParam
+                Error::InvalidInput
             })?;
 
             self.send(req).await
@@ -87,7 +87,7 @@ where
         async move {
             let req = req.body(body).map_err(|e| {
                 tracing::error!(error = %e, "constructing request");
-                Error::InvalidParam
+                Error::InvalidInput
             })?;
 
             self.send(req).await

@@ -8,29 +8,33 @@ use url::Url;
 
 const LOAD_BALANCER_HEADER_KEY: &str = "Ts-Lb";
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, Eq, PartialEq)]
 pub enum RegistrationError {
     #[error("machine was not authorized by control to join tailnet")]
     MachineNotAuthorized(Option<Url>),
-    #[error("error during registration")]
-    Internal(ErrorKind),
+
+    #[error("Network error")]
+    NetworkError,
+
+    #[error("error during registration: {0}")]
+    Internal(InternalErrorKind),
 }
 
-#[derive(Debug)]
-pub enum ErrorKind {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum InternalErrorKind {
     Url,
     SerDe,
-    Http,
     Utf8,
+    Http,
 }
 
-impl fmt::Display for ErrorKind {
+impl fmt::Display for InternalErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ErrorKind::Url => write!(f, "URL parsing"),
-            ErrorKind::SerDe => write!(f, "serialization/deserialization"),
-            ErrorKind::Http => write!(f, "HTTP"),
-            ErrorKind::Utf8 => write!(f, "UTF8"),
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::SerDe => write!(f, "serialization/deserialization error"),
+            InternalErrorKind::Utf8 => write!(f, "invalid UTF8"),
+            InternalErrorKind::Http => write!(f, "unsuccessful HTTP request or upgrade"),
         }
     }
 }
@@ -38,28 +42,33 @@ impl fmt::Display for ErrorKind {
 impl From<url::ParseError> for RegistrationError {
     fn from(error: url::ParseError) -> Self {
         tracing::error!(%error, "bad URL");
-        RegistrationError::Internal(ErrorKind::Url)
+        RegistrationError::Internal(InternalErrorKind::Url)
     }
 }
 
 impl From<serde_json::Error> for RegistrationError {
     fn from(error: serde_json::Error) -> Self {
         tracing::error!(%error, "serialization/deserialization error in registration");
-        RegistrationError::Internal(ErrorKind::SerDe)
+        RegistrationError::Internal(InternalErrorKind::SerDe)
     }
 }
 
 impl From<ts_http_util::Error> for RegistrationError {
     fn from(error: ts_http_util::Error) -> Self {
         tracing::error!(%error, "http error sending registration request");
-        RegistrationError::Internal(ErrorKind::Http)
+
+        if crate::http_error_is_recoverable(error) {
+            RegistrationError::NetworkError
+        } else {
+            RegistrationError::Internal(InternalErrorKind::Http)
+        }
     }
 }
 
 impl From<core::str::Utf8Error> for RegistrationError {
     fn from(error: core::str::Utf8Error) -> Self {
         tracing::error!(%error, "utf8 error in registration response");
-        RegistrationError::Internal(ErrorKind::Utf8)
+        RegistrationError::Internal(InternalErrorKind::Utf8)
     }
 }
 
@@ -69,23 +78,27 @@ impl From<RegistrationError> for crate::Error {
             RegistrationError::MachineNotAuthorized(Some(u)) => {
                 crate::Error::MachineNotAuthorized(u)
             }
-            RegistrationError::MachineNotAuthorized(None) => {
-                crate::Error::Protocol(crate::ProtocolPhase::MachineAuthorization)
-            }
+            RegistrationError::MachineNotAuthorized(None) => crate::Error::Internal(
+                crate::InternalErrorKind::MachineAuthorization,
+                crate::Operation::Registration,
+            ),
             RegistrationError::Internal(k) => {
-                crate::Error::Internal(k.into(), crate::ConnectionPhase::Registration)
+                crate::Error::Internal(k.into(), crate::Operation::Registration)
+            }
+            RegistrationError::NetworkError => {
+                crate::Error::NetworkError(crate::Operation::Registration)
             }
         }
     }
 }
 
-impl From<ErrorKind> for crate::ErrorKind {
-    fn from(e: ErrorKind) -> Self {
+impl From<InternalErrorKind> for crate::InternalErrorKind {
+    fn from(e: InternalErrorKind) -> Self {
         match e {
-            ErrorKind::Url => crate::ErrorKind::Url,
-            ErrorKind::SerDe => crate::ErrorKind::SerDe,
-            ErrorKind::Http => crate::ErrorKind::Http,
-            ErrorKind::Utf8 => crate::ErrorKind::Utf8,
+            InternalErrorKind::Url => crate::InternalErrorKind::Url,
+            InternalErrorKind::SerDe => crate::InternalErrorKind::SerDe,
+            InternalErrorKind::Utf8 => crate::InternalErrorKind::Utf8,
+            InternalErrorKind::Http => crate::InternalErrorKind::Http,
         }
     }
 }
@@ -151,7 +164,7 @@ pub async fn register(
         let body = core::str::from_utf8(&body).unwrap_or("<invalid utf8>");
         tracing::error!(%body, %status, "registration failed");
 
-        return Err(RegistrationError::Internal(ErrorKind::Http));
+        return Err(RegistrationError::Internal(InternalErrorKind::Http));
     }
 
     let body = response.collect_bytes().await?;
@@ -163,9 +176,9 @@ pub async fn register(
 
     if !register_resp.machine_authorized {
         if !register_resp.auth_url.is_empty() {
-            Err(RegistrationError::MachineNotAuthorized(
-                register_resp.auth_url.parse().ok(),
-            ))
+            Err(RegistrationError::MachineNotAuthorized(Some(
+                register_resp.auth_url.parse()?,
+            )))
         } else {
             Err(RegistrationError::MachineNotAuthorized(None))
         }

@@ -132,11 +132,11 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
 
     let res = req.parse(buf).map_err(|err| {
         tracing::trace!(error = %err, "error parsing http request");
-        Error::InvalidParam
+        Error::InvalidInput
     })?;
     if res.is_partial() {
         tracing::trace!(request = ?req, "incomplete http request");
-        return Err(Error::InvalidParam);
+        return Err(Error::InvalidInput);
     }
 
     let httparse::Request {
@@ -148,7 +148,7 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
     } = req
     else {
         tracing::trace!("invalid http request");
-        return Err(Error::InvalidParam);
+        return Err(Error::InvalidInput);
     };
 
     // We verified req.{method/path} are both Some(_) above - it's okay to unwrap here.
@@ -159,11 +159,11 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
     for hdr in headers {
         let name = HeaderName::from_str(hdr.name).map_err(|err| {
             tracing::trace!(error = %err, "error parsing http header name");
-            Error::InvalidParam
+            Error::InvalidInput
         })?;
         let value = HeaderValue::from_bytes(hdr.value).map_err(|err| {
             tracing::trace!(error = %err, "error parsing http header value");
-            Error::InvalidParam
+            Error::InvalidInput
         })?;
         builder = builder.header(name, value);
     }
@@ -172,7 +172,7 @@ fn parse_request_parts(buf: &[u8]) -> Result<(Parts, usize), Error> {
         .body(())
         .map_err(|err| {
             tracing::trace!(error = %err, "error building, invalid http request");
-            Error::InvalidParam
+            Error::InvalidInput
         })?
         .into_parts();
     Ok((parts, res.unwrap()))
@@ -204,7 +204,7 @@ fn parse_body(headers: &HeaderMap, body: &[u8]) -> Result<Bytes, Error> {
         }
         Some(encoding) => {
             tracing::trace!(?encoding, "unsupported transfer encoding");
-            Err(Error::InvalidParam)
+            Err(Error::InvalidInput)
         }
     }
 }
@@ -217,6 +217,6 @@ fn parse_body(headers: &HeaderMap, body: &[u8]) -> Result<Bytes, Error> {
 pub fn parse_request(buf: &[u8]) -> Result<Request<String>, Error> {
     let (parts, offset) = parse_request_parts(buf)?;
     let bytes = parse_body(&parts.headers, &buf[offset..])?;
-    let body = String::from_utf8(bytes.to_vec()).map_err(|_| Error::InvalidParam)?;
+    let body = String::from_utf8(bytes.to_vec()).map_err(|_| Error::InvalidInput)?;
     Ok(Request::from_parts(parts, body))
 }
