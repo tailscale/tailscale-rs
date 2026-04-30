@@ -5,14 +5,14 @@ use kameo::{
     message::{Context, Message},
 };
 use tokio::sync::mpsc;
-use ts_keys::NodePublicKey;
 use ts_packet::PacketMut;
-use ts_transport::{OverlayTransportId, UnderlayTransportId};
+use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
 
 use crate::{
     Error,
     env::Env,
     packetfilter::PacketFilterState,
+    peer_tracker::PeerState,
     route_updater::{PeerRouteUpdate, SelfRouteUpdate},
     src_filter::SourceFilterState,
 };
@@ -24,10 +24,10 @@ pub type OverlayToDataplane = mpsc::UnboundedSender<Vec<PacketMut>>;
 pub type OverlayFromDataplane = mpsc::UnboundedReceiver<Vec<PacketMut>>;
 
 /// Queue for packets leaving the underlay to the dataplane.
-pub type UnderlayToDataplane = mpsc::UnboundedSender<(NodePublicKey, Vec<PacketMut>)>;
+pub type UnderlayToDataplane = mpsc::UnboundedSender<(PeerId, Vec<PacketMut>)>;
 
 /// Queue for packets entering an underlay from the dataplane.
-pub type UnderlayFromDataplane = mpsc::UnboundedReceiver<(NodePublicKey, Vec<PacketMut>)>;
+pub type UnderlayFromDataplane = mpsc::UnboundedReceiver<(PeerId, Vec<PacketMut>)>;
 
 pub struct DataplaneActor {
     dataplane: Arc<ts_dataplane::async_tokio::DataPlane>,
@@ -74,6 +74,7 @@ impl kameo::Actor for DataplaneActor {
         env.subscribe::<SelfRouteUpdate>(&slf).await?;
         env.subscribe::<PacketFilterState>(&slf).await?;
         env.subscribe::<SourceFilterState>(&slf).await?;
+        env.subscribe::<Arc<PeerState>>(&slf).await?;
 
         let task_dataplane = dataplane.clone();
 
@@ -136,5 +137,34 @@ impl Message<SourceFilterState> for DataplaneActor {
         }
 
         tracing::trace!("applied new source filter");
+    }
+}
+
+impl Message<Arc<PeerState>> for DataplaneActor {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
+        {
+            let mut dp = self.dataplane.inner().await;
+            let wg = &mut dp.wireguard;
+
+            for &upsert in &msg.upserts {
+                let (_, node) = msg.peers.get(&upsert).unwrap();
+
+                wg.upsert_peer(
+                    ts_tunnel::PeerId(upsert.0),
+                    ts_tunnel::PeerConfig {
+                        key: node.node_key,
+                        psk: [0u8; 32].into(),
+                    },
+                );
+            }
+
+            for delete in &msg.deletions {
+                wg.remove_peer(ts_tunnel::PeerId(delete.0));
+            }
+        }
+
+        tracing::trace!("applied new peer state");
     }
 }

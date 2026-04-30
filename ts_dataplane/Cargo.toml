@@ -16,7 +16,6 @@ async_tokio = ["dep:tokio"]
 
 [dependencies]
 # Our crates.
-ts_keys.workspace = true
 ts_overlay_router.workspace = true
 ts_packet.workspace = true
 ts_packetfilter.workspace = true

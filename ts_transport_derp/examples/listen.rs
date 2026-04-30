@@ -16,7 +16,12 @@ async fn main() -> ts_cli_util::Result<()> {
 
     let keypair = NodeKeyPair::new();
 
-    let client = ts_transport_derp::Client::connect(region, &keypair).await?;
+    let client = ts_transport_derp::Client::connect(
+        region,
+        &keypair,
+        ts_transport_derp::DummyStaticLookup::default(),
+    )
+    .await?;
     tracing::info!("derp handshake done");
 
     loop {

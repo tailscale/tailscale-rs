@@ -8,6 +8,7 @@ use tokio::task::JoinSet;
 use ts_keys::NodePublicKey;
 use ts_packet::PacketMut;
 use ts_transport::UnderlayTransport;
+use ts_transport_derp::PeerLookup;
 
 /// Authenticate with control, load the derp map, and attempt to exchange derp pings with
 /// a selected peer.
@@ -38,19 +39,26 @@ async fn main() -> ts_cli_util::Result<()> {
 
     let mut tasks = JoinSet::new();
 
-    tracing::info!(?region_id, "starting derp transport");
-
-    let derp = ts_transport_derp::Client::connect(&derp_servers, &config.key_state.node_key.into())
-        .await?;
-    let derp = Arc::new(derp);
-
     let peer = args
         .send_to_self
         .then_some(config.key_state.node_key.public_key())
         .or(args.peer);
 
+    let lookup = ts_transport_derp::DummyStaticLookup::default();
+
+    let peer = peer.map(|x| lookup.key_to_id(&x));
+
+    tracing::info!(?region_id, "starting derp transport");
+    let derp = ts_transport_derp::Client::connect(
+        &derp_servers,
+        &config.key_state.node_key.into(),
+        lookup,
+    )
+    .await?;
+    let derp = Arc::new(derp);
+
     if let Some(peer) = peer {
-        tasks.spawn(derp_send_ping(peer, derp.clone()));
+        tasks.spawn(derp_send_ping(peer.unwrap(), derp.clone()));
     } else {
         tracing::info!("not sending derp pings, no peer configured");
     }
@@ -64,7 +72,9 @@ async fn main() -> ts_cli_util::Result<()> {
 
 static PING_MAX: AtomicU32 = AtomicU32::new(0);
 
-async fn derp_receive_ping(derp: impl Borrow<ts_transport_derp::DefaultClient>) {
+async fn derp_receive_ping(
+    derp: impl Borrow<ts_transport_derp::DefaultClient<ts_transport_derp::DummyStaticLookup>>,
+) {
     use bytes::Buf;
 
     let derp = derp.borrow();
@@ -84,7 +94,10 @@ async fn derp_receive_ping(derp: impl Borrow<ts_transport_derp::DefaultClient>) 
 }
 
 #[tracing::instrument(skip(derp), fields(%peer))]
-async fn derp_send_ping(peer: NodePublicKey, derp: impl Borrow<ts_transport_derp::DefaultClient>) {
+async fn derp_send_ping(
+    peer: ts_transport::PeerId,
+    derp: impl Borrow<ts_transport_derp::DefaultClient<ts_transport_derp::DummyStaticLookup>>,
+) {
     use bytes::BufMut;
 
     let mut ticker = tokio::time::interval(Duration::from_secs(1));

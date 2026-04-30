@@ -40,7 +40,7 @@ pub struct Runtime {
     pub control: ActorRef<ControlRunner>,
     dataplane: ActorRef<DataplaneActor>,
     netstack: WeakActorRef<NetstackActor>,
-    /// Reference to the peer state tracker actor, used for lookup.
+    /// Reference to the peer tracker for peer lookups.
     pub peer_tracker: WeakActorRef<PeerTracker>,
     env: Env,
     shutdown: watch::Sender<bool>,

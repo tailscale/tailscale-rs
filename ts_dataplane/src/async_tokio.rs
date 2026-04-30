@@ -3,9 +3,8 @@
 use std::{collections::HashMap, convert::Infallible, ops::DerefMut, sync::atomic::AtomicU32};
 
 use tokio::sync::{Mutex, mpsc};
-use ts_keys::NodePublicKey;
 use ts_packet::PacketMut;
-use ts_transport::{OverlayTransportId, UnderlayTransportId};
+use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
 use ts_tunnel::NodeKeyPair;
 
 use crate::{EventResult, InboundResult, OutboundResult};
@@ -17,10 +16,10 @@ pub type DataplaneToOverlay = mpsc::UnboundedSender<Vec<PacketMut>>;
 pub type DataplaneFromOverlay = mpsc::UnboundedReceiver<Vec<PacketMut>>;
 
 /// Queue for packets leaving the data plane "down" into an underlay transport.
-pub type DataplaneToUnderlay = mpsc::UnboundedSender<(NodePublicKey, Vec<PacketMut>)>;
+pub type DataplaneToUnderlay = mpsc::UnboundedSender<(PeerId, Vec<PacketMut>)>;
 
 /// Queue for packets entering the data plane "up" from an underlay transport.
-pub type DataplaneFromUnderlay = mpsc::UnboundedReceiver<(NodePublicKey, Vec<PacketMut>)>;
+pub type DataplaneFromUnderlay = mpsc::UnboundedReceiver<(PeerId, Vec<PacketMut>)>;
 
 // TODO: wire in overlay/underlay transport traits
 
@@ -147,7 +146,7 @@ impl DataPlane {
     pub async fn step(&self) {
         enum SelectResult {
             OverlayDown(Vec<PacketMut>),
-            UnderlayUp(NodePublicKey, Vec<PacketMut>),
+            UnderlayUp(PeerId, Vec<PacketMut>),
             TransportsChanged,
             Event,
         }
@@ -186,10 +185,10 @@ impl DataPlane {
                 }
 
                 underlay_pkts = underlay_up.recv() => {
-                    let (node_key, underlay_pkts) = underlay_pkts.unwrap();
-                    tracing::trace!(%node_key, n_underlay_pkts = underlay_pkts.len());
+                    let (peer_id, underlay_pkts) = underlay_pkts.unwrap();
+                    tracing::trace!(%peer_id, n_underlay_pkts = underlay_pkts.len());
 
-                    SelectResult::UnderlayUp(node_key, underlay_pkts)
+                    SelectResult::UnderlayUp(peer_id, underlay_pkts)
                 }
 
                 _ = self.transports_changed.notified() => {
@@ -215,14 +214,7 @@ impl DataPlane {
 
                 (Some(to_peers), Some(loopback))
             }
-            SelectResult::UnderlayUp(node_key, underlay_up) => {
-                if core.sync.wireguard.peer_id(node_key).is_none() {
-                    core.sync.wireguard.add_peer(ts_tunnel::PeerConfig {
-                        key: node_key,
-                        psk: [0u8; 32].into(),
-                    });
-                }
-
+            SelectResult::UnderlayUp(_peer_id, underlay_up) => {
                 let InboundResult { to_local, to_peers } = core.sync.process_inbound(underlay_up);
 
                 (Some(to_peers), Some(to_local))
@@ -265,13 +257,13 @@ async fn write_to_overlay(slf: &CoreState, packets: HashMap<OverlayTransportId, 
 
 async fn write_to_underlay(
     slf: &CoreState,
-    packets: impl IntoIterator<Item = ((UnderlayTransportId, NodePublicKey), Vec<PacketMut>)>,
+    packets: impl IntoIterator<Item = ((UnderlayTransportId, PeerId), Vec<PacketMut>)>,
 ) {
-    for ((tid, node_key), packets) in packets {
-        tracing::trace!(underlay_id = ?tid, %node_key, n_packets = packets.len());
+    for ((tid, peer_id), packets) in packets {
+        tracing::trace!(underlay_id = ?tid, %peer_id, n_packets = packets.len());
 
         if let Some(queue) = slf.underlay_transports.get(&tid) {
-            queue.send((node_key, packets)).unwrap();
+            queue.send((peer_id, packets)).unwrap();
         }
     }
 }

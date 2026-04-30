@@ -12,9 +12,11 @@ mod async_tokio;
 pub mod dial;
 mod error;
 pub mod frame;
+mod peer_lookup;
 
 pub use async_tokio::{Client, DefaultClient};
 pub use error::Error;
+pub use peer_lookup::{DummyStaticLookup, PeerLookup};
 
 /// A 24-byte nonce for symmetric encryption with ChaCha20Poly1305.
 #[repr(C)]

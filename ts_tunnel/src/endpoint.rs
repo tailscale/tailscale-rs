@@ -215,7 +215,6 @@ struct IdMap {
     // TODO: track recently abandoned session IDs, avoid reusing them for
     // one or two session lifetimes to avoid confusion with reordered packets.
     node_keys: HashMap<NodePublicKey, PeerId>,
-    next_peer_id: u32,
 }
 
 impl IdMap {
@@ -229,17 +228,16 @@ impl IdMap {
         self.sessions.get(key)
     }
 
-    /// Allocate a new peer handle for communicating with the given peer pubkey.
+    /// Add a peer handle for communicating with the given peer pubkey.
     ///
-    /// Returns None if a peer already exists for the key.
-    fn allocate_peer(&mut self, key: &NodePublicKey) -> Option<PeerId> {
+    /// Returns `false` if a peer already exists for the key.
+    fn add_peer(&mut self, id: PeerId, key: &NodePublicKey) -> bool {
         if self.node_keys.contains_key(key) {
-            return None;
+            return false;
         }
-        self.next_peer_id += 1;
-        let ret = PeerId(self.next_peer_id);
-        self.node_keys.insert(*key, ret);
-        Some(ret)
+
+        self.node_keys.insert(*key, id);
+        true
     }
 
     /// Allocate a new session ID for communication with the given peer.
@@ -568,14 +566,35 @@ impl Endpoint {
         }
     }
 
-    /// Add a new peer.
+    /// Insert a peer if it doesn't exist, otherwise update the peer with the given `id`
+    /// with the given config.
     ///
-    /// Returns a handle to the newly configured peer, or None if a peer is already configured
-    /// with the given node key.
-    pub fn add_peer(&mut self, cfg: PeerConfig) -> Option<PeerId> {
-        let ret = self.state.ids.allocate_peer(&cfg.key)?;
-        self.peers.insert(ret, Peer::new(ret, cfg));
-        Some(ret)
+    /// Returns the old [`PeerConfig`] if there was one.
+    ///
+    /// # Panics
+    ///
+    /// If the [`NodePublicKey`] in the new [`PeerConfig`] collides with an existing key
+    /// for a different [`PeerId`].
+    pub fn upsert_peer(&mut self, id: PeerId, mut cfg: PeerConfig) -> Option<PeerConfig> {
+        match self.peers.get_mut(&id) {
+            Some(peer) => {
+                if peer.config.key != cfg.key {
+                    self.state.ids.remove_peer(&peer.config.key);
+                    self.state.ids.add_peer(id, &cfg.key);
+                }
+
+                core::mem::swap(&mut peer.config, &mut cfg);
+                Some(cfg)
+            }
+            None => {
+                if !self.state.ids.add_peer(id, &cfg.key) {
+                    panic!("nodekey collision");
+                }
+
+                self.peers.insert(id, Peer::new(id, cfg));
+                None
+            }
+        }
     }
 
     /// Remove the given peer.
@@ -803,19 +822,30 @@ mod tests {
 
         let (mut a_ep, mut b_ep) = (Endpoint::new(a_static), Endpoint::new(b_static));
 
-        let a_peer = a_ep
-            .add_peer(PeerConfig {
-                key: b_static.public,
-                psk,
-            })
-            .unwrap();
+        let a_peer = PeerId(1);
+        let b_peer = PeerId(1);
 
-        let b_peer = b_ep
-            .add_peer(PeerConfig {
-                key: a_static.public,
-                psk,
-            })
-            .unwrap();
+        assert!(
+            a_ep.upsert_peer(
+                a_peer,
+                PeerConfig {
+                    key: b_static.public,
+                    psk,
+                },
+            )
+            .is_none()
+        );
+
+        assert!(
+            b_ep.upsert_peer(
+                b_peer,
+                PeerConfig {
+                    key: a_static.public,
+                    psk,
+                },
+            )
+            .is_none()
+        );
 
         let a_to_b_packets = [
             PacketMut::from(vec![1, 2, 3, 4]),

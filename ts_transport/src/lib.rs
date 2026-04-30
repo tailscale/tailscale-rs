@@ -3,9 +3,11 @@
 
 extern crate alloc;
 
-use core::error::Error;
+use core::{
+    error::Error,
+    fmt::{Debug, Display, Formatter},
+};
 
-use ts_keys::NodePublicKey;
 use ts_packet::PacketMut;
 
 /// The unique id of an overlay transport.
@@ -40,6 +42,16 @@ impl From<UnderlayTransportId> for u32 {
     }
 }
 
+/// The unique id of a peer.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PeerId(pub u32);
+
+impl Display for PeerId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
 /// An abstract transport that can carry packets to configurable destinations.
 pub trait UnderlayTransport {
     /// The error type that this transport may produce.
@@ -48,16 +60,16 @@ pub trait UnderlayTransport {
     /// Send packets through the transport.
     ///
     /// The return type should be interpreted as meaning essentially
-    /// `HashMap<NodePublicKey, Vec<PacketMut>>`. It is set up this way to enable the caller
+    /// `HashMap<PeerId, Vec<PacketMut>>`. It is set up this way to enable the caller
     /// to use iterators to transform a collection of a slightly different shape, or e.g.
-    /// look up `NodePublicKey`s on-the-fly, without having to `.collect()` into an
+    /// look up `PeerId`s on-the-fly, without having to `.collect()` into an
     /// intermediary collection.
     fn send<BatchIter, PacketIter>(
         &self,
         packet_batch: BatchIter,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send
     where
-        BatchIter: IntoIterator<Item = (NodePublicKey, PacketIter)> + Send,
+        BatchIter: IntoIterator<Item = (PeerId, PacketIter)> + Send,
         BatchIter::IntoIter: Send,
         PacketIter: IntoIterator<Item = PacketMut> + Send,
         PacketIter::IntoIter: Send;
@@ -65,15 +77,15 @@ pub trait UnderlayTransport {
     /// Receive packets from the transport.
     ///
     /// The return type should be interpreted as meaning essentially
-    /// `HashMap<NodePublicKey, Vec<PacketMut>>`, but allows for the implementation to
+    /// `HashMap<PeerId, Vec<PacketMut>>`, but allows for the implementation to
     /// use iterators to map a collection of a slightly different shape, or e.g. look up
-    /// `NodePublicKey`s on-the-fly, without having to `.collect()` into an intermediary
+    /// `PeerId`s on-the-fly, without having to `.collect()` into an intermediary
     /// collection.
     fn recv(
         &self,
     ) -> impl Future<
         Output = impl IntoIterator<
-            Item = Result<(NodePublicKey, impl IntoIterator<Item = PacketMut>), Self::Error>,
+            Item = Result<(PeerId, impl IntoIterator<Item = PacketMut>), Self::Error>,
         >,
     > + Send;
 }

@@ -12,7 +12,6 @@ rust-version.workspace = true
 
 [dependencies]
 ts_bart.workspace = true
-ts_keys.workspace = true
 ts_packet.workspace = true
 ts_transport.workspace = true
 

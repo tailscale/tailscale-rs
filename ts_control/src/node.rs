@@ -7,7 +7,7 @@ use ts_keys::{DiscoPublicKey, MachinePublicKey, NodePublicKey};
 pub type Id = i64;
 
 /// The stable ID of a node.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StableId(pub String);
 
 /// A node in a tailnet.
@@ -65,6 +65,17 @@ impl Node {
             Some(tailnet) => format!("{}.{tailnet}{dot}", self.hostname),
             None => format!("{}{dot}", self.hostname),
         }
+    }
+
+    /// The fully-qualified domain name of the node, only returning `Some` if the tailnet
+    /// component is present.
+    ///
+    /// See [`Node::fqdn`].
+    pub fn fqdn_opt(&self, trailing_dot: bool) -> Option<String> {
+        let dot = if trailing_dot { "." } else { "" };
+        let tailnet = self.tailnet.as_deref()?;
+
+        Some(format!("{}.{tailnet}{dot}", self.hostname))
     }
 
     /// Report whether this node matches the given `name`.

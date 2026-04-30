@@ -84,12 +84,18 @@ async fn main() -> BoxResult<()> {
 
     let mut ep = Endpoint::new(privkey.into());
 
-    let peer_id = ep
-        .add_peer(ts_tunnel::PeerConfig {
-            key: peer_key,
-            psk: [0; 32].into(),
-        })
-        .ok_or("couldn't add peer")?;
+    let peer_id = ts_tunnel::PeerId(1);
+
+    assert!(
+        ep.upsert_peer(
+            peer_id,
+            ts_tunnel::PeerConfig {
+                key: peer_key,
+                psk: [0; 32].into(),
+            }
+        )
+        .is_none()
+    );
 
     let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
     eprintln!("socket bound to {}", sock.local_addr()?.port());
