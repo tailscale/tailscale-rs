@@ -11,7 +11,7 @@ use ts_capabilityversion::CapabilityVersion;
 use ts_http_util::{BytesBody, Http2};
 use url::Url;
 
-use crate::{DialCandidate, DialMode, DialPlan, tokio::ConnectionError};
+use crate::{DialCandidate, DialMode, DialPlan, Error, InternalErrorKind, Operation};
 
 /// Manages state for control dial plan and handles selection of successive dial candidates.
 pub struct ControlDialer {
@@ -189,18 +189,22 @@ impl ControlDialer {
         &mut self,
         url: &Url,
         machine_keys: &ts_keys::MachineKeyPair,
-    ) -> Result<Http2<BytesBody>, ConnectionError> {
+    ) -> Result<Http2<BytesBody>, Error> {
         let next = self.next_dialer();
         tracing::trace!(selected_control_dialer = ?next);
 
-        let host = url.host_str().ok_or(ConnectionError::ConnectionFailed)?;
-        let port = url
-            .port_or_known_default()
-            .ok_or(ConnectionError::ConnectionFailed)?;
+        let host = url.host_str().ok_or(Error::Internal(
+            InternalErrorKind::Url,
+            Operation::ConnectToControlServer,
+        ))?;
+        let port = url.port_or_known_default().ok_or(Error::Internal(
+            InternalErrorKind::Url,
+            Operation::ConnectToControlServer,
+        ))?;
 
         let conn = next.dial(host, port).await.map_err(|e| {
             tracing::error!(error = %e, %url, %host, port, "dialing tcp");
-            ConnectionError::ConnectionFailed
+            Error::Internal(InternalErrorKind::Io, Operation::ConnectToControlServer)
         })?;
 
         tracing::debug!(
@@ -223,27 +227,28 @@ pub async fn complete_connection<Io>(
     url: &Url,
     machine_keys: &ts_keys::MachineKeyPair,
     stream: Io,
-) -> Result<Http2<BytesBody>, ConnectionError>
+) -> Result<Http2<BytesBody>, Error>
 where
     Io: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     let h1_client = match url.scheme() {
         "https" => {
             let conn = ts_tls_util::connect(
-                ts_tls_util::server_name(url).ok_or(ConnectionError::ConnectionFailed)?,
+                ts_tls_util::server_name(url)
+                    .ok_or(Error::NetworkError(Operation::ConnectToControlServer))?,
                 stream,
             )
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "establishing tls connection");
-                ConnectionError::ConnectionFailed
+                Error::NetworkError(Operation::ConnectToControlServer)
             })?;
             ts_http_util::http1::connect(conn).await?
         }
         "http" => ts_http_util::http1::connect(stream).await?,
         other => {
             tracing::error!(invalid_scheme = other);
-            return Err(ConnectionError::ConnectionFailed);
+            return Err(Error::NetworkError(Operation::ConnectToControlServer));
         }
     };
     let control_public_key = crate::tokio::fetch_control_key(url).await?;

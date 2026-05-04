@@ -14,8 +14,8 @@ pub mod tcp;
 pub mod udp;
 
 pub use channel::{Channel, HasChannel};
-pub use error::Error;
-pub use request::{request, request_blocking, request_nonblocking};
+pub use error::{Error, InternalErrorKind};
+pub use request::{ChannelClosedError, request, request_blocking, request_nonblocking};
 
 /// Request to a netstack bearing a command to execute.
 ///
@@ -86,7 +86,7 @@ macro_rules! impl_try_from {
                 match response {
                     Response::$variant(resp) => Ok(resp),
                     Response::Error(e) => Err(e),
-                    _ => Err(Error::WrongType),
+                    _ => Err(Error::wrong_type()),
                 }
             }
         }
@@ -100,13 +100,11 @@ impl_try_from!(tcp::listen::Response, TcpListen);
 
 impl Response {
     /// Check if this response is the `Ok` variant, returning an error if not.
-    ///
-    /// The error is [`Error::WrongType`] on a type mismatch, otherwise the contained error.
     pub fn to_ok(self) -> Result<(), Error> {
         match self {
             Response::Ok => Ok(()),
             Response::Error(e) => Err(e),
-            _ => Err(Error::WrongType),
+            _ => Err(Error::wrong_type()),
         }
     }
 }
@@ -114,8 +112,6 @@ impl Response {
 /// Attempt to convert a [`Response`] into a specific variant.
 ///
 /// The second argument is a pattern, as if it were being used in a match expression.
-///
-/// Traces an error and returns [`Error::WrongType`] if the response is the wrong variant.
 ///
 /// # Example
 ///
@@ -136,7 +132,7 @@ macro_rules! try_response_as {
         let $pat = $resp.try_into()? else {
             ::tracing::error!("invalid response type");
 
-            return Err($crate::Error::WrongType.into());
+            return Err($crate::Error::wrong_type().into());
         };
     };
 }

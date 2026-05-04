@@ -90,7 +90,7 @@ impl Netstack {
             TcpListenCommand::Accept { handle } => {
                 let Some(listener) = self.tcp_listeners.get_mut(&handle) else {
                     tracing::error!(?handle, "listener does not exist");
-                    return Error::BadRequest.into();
+                    return Error::missing_listener().into();
                 };
 
                 // Iterate the half-open queue, re-queueing any sockets that are still in
@@ -175,7 +175,7 @@ impl Netstack {
             TcpListenCommand::Close { handle } => {
                 let Some(listener) = self.tcp_listeners.remove(&handle) else {
                     tracing::error!(?handle, "listener does not exist");
-                    return Error::BadRequest.into();
+                    return Error::missing_listener().into();
                 };
 
                 let sock = self

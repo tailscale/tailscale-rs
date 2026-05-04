@@ -53,7 +53,7 @@ impl Netstack {
                         "not enough address storage space configured in smoltcp"
                     );
 
-                    return Error::BadRequest.into();
+                    return Error::buffer_full().into();
                 }
 
                 Response::Ok

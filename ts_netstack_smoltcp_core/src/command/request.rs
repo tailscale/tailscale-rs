@@ -12,24 +12,36 @@ use crate::{
 /// Helper trait to abstract over [`flume::Sender`] and [`flume::WeakSender`].
 pub trait UpgradableChannel {
     /// Attempt to upgrade this value to [`flume::Sender`].
-    fn upgrade(&self) -> Option<impl Borrow<flume::Sender<Request>>>;
+    fn upgrade(&self) -> Result<impl Borrow<flume::Sender<Request>>, ChannelClosedError>;
+}
 
-    /// Attempt to upgrade this value to [`flume::Sender`], returning
-    /// [`Error::ChannelClosed`] on failure.
-    fn upgrade_or_err(&self) -> Result<impl Borrow<flume::Sender<Request>>, Error> {
-        self.upgrade().ok_or(Error::ChannelClosed)
+/// An error signifying that the remote end of the channel has closed.
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
+#[error("the remote end of the channel has closed")]
+pub struct ChannelClosedError;
+
+impl From<ChannelClosedError> for Error {
+    fn from(_: ChannelClosedError) -> Self {
+        Error::Internal(crate::InternalErrorKind::InternalChannelClosed)
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<ChannelClosedError> for std::io::Error {
+    fn from(_: ChannelClosedError) -> Self {
+        std::io::ErrorKind::BrokenPipe.into()
     }
 }
 
 impl UpgradableChannel for flume::Sender<Request> {
-    fn upgrade(&self) -> Option<impl Borrow<flume::Sender<Request>>> {
-        Some(self)
+    fn upgrade(&self) -> Result<impl Borrow<flume::Sender<Request>>, ChannelClosedError> {
+        Ok(self)
     }
 }
 
 impl UpgradableChannel for flume::WeakSender<Request> {
-    fn upgrade(&self) -> Option<impl Borrow<flume::Sender<Request>>> {
-        self.upgrade()
+    fn upgrade(&self) -> Result<impl Borrow<flume::Sender<Request>>, ChannelClosedError> {
+        flume::WeakSender::<Request>::upgrade(self).ok_or(ChannelClosedError)
     }
 }
 
@@ -37,7 +49,7 @@ impl<T> UpgradableChannel for &T
 where
     T: UpgradableChannel + ?Sized,
 {
-    fn upgrade(&self) -> Option<impl Borrow<flume::Sender<Request>>> {
+    fn upgrade(&self) -> Result<impl Borrow<flume::Sender<Request>>, ChannelClosedError> {
         T::upgrade(self)
     }
 }
@@ -49,25 +61,27 @@ pub fn request_blocking(
     command_tx: impl UpgradableChannel,
     handle: Option<SocketHandle>,
     command: impl Into<Command>,
-) -> Result<Response, Error> {
+) -> Result<Response, ChannelClosedError> {
     // wrapper to minimize monomorphization impact
     fn _request_blocking(
         command_tx: &flume::Sender<Request>,
         handle: Option<SocketHandle>,
         command: Command,
-    ) -> Result<Response, Error> {
+    ) -> Result<Response, ChannelClosedError> {
         let (resp_tx, resp_rx) = flume::bounded(1);
 
-        command_tx.send(Request {
-            handle,
-            command,
-            resp: resp_tx,
-        })?;
+        command_tx
+            .send(Request {
+                handle,
+                command,
+                resp: resp_tx,
+            })
+            .map_err(|_| ChannelClosedError)?;
 
-        resp_rx.recv().map_err(Error::from)
+        resp_rx.recv().map_err(|_| ChannelClosedError)
     }
 
-    let ch = command_tx.upgrade_or_err()?;
+    let ch = command_tx.upgrade()?;
     let ch = ch.borrow();
 
     _request_blocking(ch, handle, command.into())
@@ -102,7 +116,7 @@ pub fn request(
 
     // impl Future and the returned async block below are required to do this bit of work upgrading
     // the channel and converting the command outside the async context for lifetime reasons
-    let ch = command_tx.upgrade_or_err().map(|x| x.borrow().clone());
+    let ch = command_tx.upgrade().map(|x| x.borrow().clone());
     let command = command.into();
 
     async move {
@@ -113,7 +127,7 @@ pub fn request(
 
 /// Send a request without blocking on the response.
 ///
-/// Returns an error only if the request can't be sent ([`Error::ChannelClosed`]).
+/// Returns an error only if the request can't be sent.
 ///
 /// Mainly intended for use in [`Drop`] implementations, as they can't be `async`
 /// and it would be frequently be surprising if they blocked the calling thread.
@@ -121,13 +135,13 @@ pub fn request_nonblocking(
     command_tx: impl UpgradableChannel,
     handle: Option<SocketHandle>,
     command: impl Into<Command>,
-) -> Result<(), Error> {
+) -> Result<(), ChannelClosedError> {
     // wrapper to minimize monomorphization impact
     fn _request_nonblocking(
         command_tx: &flume::Sender<Request>,
         handle: Option<SocketHandle>,
         command: Command,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ChannelClosedError> {
         let (resp_tx, _resp_rx) = flume::bounded(1);
 
         match command_tx.try_send(Request {
@@ -136,11 +150,11 @@ pub fn request_nonblocking(
             resp: resp_tx,
         }) {
             Ok(_) | Err(flume::TrySendError::Full(_)) => Ok(()),
-            Err(flume::TrySendError::Disconnected(_)) => Err(Error::ChannelClosed),
+            Err(flume::TrySendError::Disconnected(_)) => Err(ChannelClosedError),
         }
     }
 
-    let ch = command_tx.upgrade_or_err()?;
+    let ch = command_tx.upgrade()?;
     let ch = ch.borrow();
 
     _request_nonblocking(ch, handle, command.into())

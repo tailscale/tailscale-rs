@@ -55,7 +55,7 @@ impl UdpSocket {
         &self,
         buf: &mut [u8],
     ) -> Result<(SocketAddr, usize), netcore::Error> {
-        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::BadRequest)?;
+        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::zero_buffer())?;
 
         let resp = self.request_blocking(udp::Command::Recv { max_len: Some(len) })?;
 
@@ -70,7 +70,7 @@ impl UdpSocket {
 
     /// Receive a packet into the given buffer.
     pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(SocketAddr, usize), netcore::Error> {
-        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::BadRequest)?;
+        let len = NonZeroUsize::new(buf.len()).ok_or(netcore::Error::zero_buffer())?;
 
         let resp = self
             .request(udp::Command::Recv { max_len: Some(len) })

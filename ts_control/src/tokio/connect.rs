@@ -9,7 +9,7 @@ use ts_keys::{MachineKeyPair, MachinePublicKey};
 use url::Url;
 use zerocopy::network_endian::U32;
 
-use crate::tokio::{MapStreamError, RegistrationError, prefixed_reader::PrefixedReader};
+use crate::tokio::prefixed_reader::PrefixedReader;
 
 const CHALLENGE_MAGIC: [u8; 5] = [0xFF, 0xFF, 0xFF, b'T', b'S'];
 const HANDSHAKE_HEADER_KEY: &str = "X-Tailscale-Handshake";
@@ -22,35 +22,117 @@ lazy_static::lazy_static! {
     pub static ref CONTROL_PROTOCOL_VERSION: String = format!("Tailscale Control Protocol v{}", CapabilityVersion::CURRENT);
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConnectionError {
-    #[error(transparent)]
-    BadUrl(#[from] url::ParseError),
-    #[error("could not read {field:?} from {stage} message: {err}")]
-    Io {
-        field: Option<&'static str>,
-        stage: &'static str,
-        err: std::io::Error,
-    },
-    #[error("could not connect to control server")]
-    ConnectionFailed,
-    #[error(transparent)]
-    DeserializeFailed(#[from] serde_json::Error),
-    #[error("invalid challenge length ({0} bytes); must be less than {MAX_CHALLENGE_LENGTH} bytes")]
-    InvalidChallengeLength(usize),
-    #[error("invalid magic value {0:X?} (expected {CHALLENGE_MAGIC:X?})")]
-    InvalidChallengeMagic([u8; 5]),
-    #[error("failed to start map stream: {0}")]
-    MapStreamStartFailed(MapStreamError),
-    #[error(transparent)]
-    Noise(#[from] ts_control_noise::Error),
-    #[error(transparent)]
-    RegistrationFailed(#[from] RegistrationError),
-    #[error("could not upgrade control connection to TS2021 protocol")]
-    UpgradeFailed,
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum ConnectionError {
+    #[error("internal error during connection: {0}")]
+    Internal(InternalErrorKind),
+    #[error("HTTP error")]
+    NetworkError,
+}
 
-    #[error(transparent)]
-    Http(#[from] ts_http_util::Error),
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum InternalErrorKind {
+    Url,
+    SerDe,
+    MessageFormat,
+    Io,
+    ChallengeLength,
+    NoiseHandshake,
+}
+
+impl fmt::Display for InternalErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::SerDe => write!(f, "serialization/deserialization error"),
+            InternalErrorKind::MessageFormat => write!(f, "message format error"),
+            InternalErrorKind::Io => write!(f, "I/O error"),
+            InternalErrorKind::ChallengeLength => write!(f, "challenge too long"),
+            InternalErrorKind::NoiseHandshake => write!(f, "error in Noise handshake"),
+        }
+    }
+}
+
+impl ConnectionError {
+    fn io_error(field: &'static str, stage: &'static str, err: std::io::Error) -> Self {
+        tracing::error!("could not read {field} from {stage} message: {err}");
+
+        match err.kind() {
+            std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::HostUnreachable
+            | std::io::ErrorKind::NetworkUnreachable
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::NotConnected
+            | std::io::ErrorKind::NetworkDown => ConnectionError::NetworkError,
+            // REVIEW: TimedOut AddrInUse AddrNotAvailable Interrupted
+            _ => ConnectionError::Internal(InternalErrorKind::Io),
+        }
+    }
+}
+
+impl From<serde_json::Error> for ConnectionError {
+    fn from(error: serde_json::Error) -> Self {
+        tracing::error!(%error, "deserialization error");
+        ConnectionError::Internal(InternalErrorKind::SerDe)
+    }
+}
+
+impl From<ts_http_util::Error> for ConnectionError {
+    fn from(error: ts_http_util::Error) -> Self {
+        tracing::error!(%error, "http error");
+        ConnectionError::NetworkError
+    }
+}
+
+impl From<url::ParseError> for ConnectionError {
+    fn from(error: url::ParseError) -> Self {
+        tracing::error!(%error, "bad URL");
+        ConnectionError::Internal(InternalErrorKind::Url)
+    }
+}
+
+impl From<ts_control_noise::Error> for ConnectionError {
+    fn from(error: ts_control_noise::Error) -> Self {
+        match error {
+            ts_control_noise::Error::BadFormat => {
+                ConnectionError::Internal(InternalErrorKind::MessageFormat)
+            }
+            ts_control_noise::Error::HandshakeFailed => {
+                ConnectionError::Internal(InternalErrorKind::NoiseHandshake)
+            }
+            ts_control_noise::Error::Io(error) => {
+                tracing::error!(%error, "IO error in Noise communication");
+                ConnectionError::Internal(InternalErrorKind::Io)
+            }
+        }
+    }
+}
+
+impl From<ConnectionError> for crate::Error {
+    fn from(e: ConnectionError) -> Self {
+        match e {
+            ConnectionError::Internal(k) => {
+                crate::Error::Internal(k.into(), crate::Operation::ConnectToControlServer)
+            }
+            ConnectionError::NetworkError => {
+                crate::Error::NetworkError(crate::Operation::ConnectToControlServer)
+            }
+        }
+    }
+}
+
+impl From<InternalErrorKind> for crate::InternalErrorKind {
+    fn from(e: InternalErrorKind) -> Self {
+        match e {
+            InternalErrorKind::Url => crate::InternalErrorKind::Url,
+            InternalErrorKind::SerDe => crate::InternalErrorKind::SerDe,
+            InternalErrorKind::MessageFormat => crate::InternalErrorKind::MessageFormat,
+            InternalErrorKind::Io => crate::InternalErrorKind::Io,
+            InternalErrorKind::ChallengeLength => crate::InternalErrorKind::Challenge,
+            InternalErrorKind::NoiseHandshake => crate::InternalErrorKind::NoiseHandshake,
+        }
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -67,7 +149,7 @@ impl fmt::Display for ControlPublicKeys {
 }
 
 #[tracing::instrument(skip_all, fields(%control_url), err)]
-pub async fn connect(
+pub(crate) async fn connect(
     control_url: &Url,
     machine_keys: &MachineKeyPair,
 ) -> Result<Http2<BytesBody>, ConnectionError> {
@@ -128,7 +210,7 @@ pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, Co
             "failed to retrieve control server machine public key"
         );
 
-        return Err(ConnectionError::ConnectionFailed);
+        return Err(ConnectionError::NetworkError);
     }
 
     let control_keys: ControlPublicKeys = serde_json::from_slice(&response.collect_bytes().await?)?;
@@ -162,9 +244,10 @@ pub async fn upgrade_ts2021(
         )?)
         .await?;
 
-    let upgraded = ts_http_util::do_upgrade(resp)
-        .await
-        .map_err(|_e| ConnectionError::UpgradeFailed)?;
+    let upgraded = ts_http_util::do_upgrade(resp).await.map_err(|error| {
+        tracing::error!(%error, "could not upgrade control connection to TS2021 protocol");
+        ConnectionError::NetworkError
+    })?;
 
     let conn = handshake.complete(upgraded).await?;
 
@@ -190,11 +273,7 @@ where
 
     conn.read_exact(&mut magic)
         .await
-        .map_err(|err| ConnectionError::Io {
-            field: Some("header"),
-            stage: "early_payload",
-            err,
-        })?;
+        .map_err(|err| ConnectionError::io_error("header", "early_payload", err))?;
 
     // This isn't an early challenge payload, it's the start of the HTTP/2 header -- chain it back
     if magic != CHALLENGE_MAGIC {
@@ -204,26 +283,24 @@ where
     let mut challenge_len: U32 = 0.into();
     conn.read_exact(challenge_len.as_mut())
         .await
-        .map_err(|err| ConnectionError::Io {
-            field: Some("length"),
-            stage: "challenge",
-            err,
-        })?;
+        .map_err(|err| ConnectionError::io_error("length", "challenge", err))?;
 
     let challenge_len = challenge_len.get() as usize;
     if challenge_len > MAX_CHALLENGE_LENGTH {
-        return Err(ConnectionError::InvalidChallengeLength(challenge_len));
+        tracing::error!(
+            challenge_len,
+            "invalid challenge length; must be less than {MAX_CHALLENGE_LENGTH} bytes"
+        );
+        return Err(ConnectionError::Internal(
+            InternalErrorKind::ChallengeLength,
+        ));
     }
 
     // Read and discard the challenge JSON.
     let mut limited = conn.take(challenge_len as _);
     tokio::io::copy(&mut limited, &mut tokio::io::sink())
         .await
-        .map_err(|err| ConnectionError::Io {
-            field: Some("body"),
-            stage: "challenge",
-            err,
-        })?;
+        .map_err(|err| ConnectionError::io_error("body", "challenge", err))?;
 
     tracing::trace!(
         n_bytes = challenge_len,

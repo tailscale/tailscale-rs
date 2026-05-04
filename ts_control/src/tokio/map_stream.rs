@@ -2,10 +2,7 @@ use alloc::collections::BTreeMap;
 
 use bytes::Bytes;
 use futures_util::Stream;
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    sync::watch,
-};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use ts_control_serde::{MapRequest, MapResponse, PingRequest};
 use ts_http_util::{BytesBody, ClientExt, Http2, ResponseExt};
 use ts_packet::PacketMut;
@@ -15,35 +12,38 @@ use url::Url;
 
 use crate::{DialPlan, NodeId};
 
-#[derive(Debug, thiserror::Error)]
-pub enum MapStreamError {
-    #[error("failed to deserialize map response message: {0}")]
-    DeserializeFailed(serde_json::Error),
-    #[error("failed to forward ping request to handler; channel was not initialized")]
-    InvalidPingChannel,
-    #[error(transparent)]
-    JoinFailed(#[from] tokio::task::JoinError),
-    #[error("map stream message was missing length: {0}")]
-    LengthMissing(std::io::Error),
-    #[error("failed to register for map updates; control returned HTTP {0}")]
-    MapRequestFailed(u16),
-    #[error("failed to construct request")]
-    Request,
-    #[error("failed to serialize map request message: {0}")]
-    SerializeFailed(serde_json::Error),
-    #[error("map stream encountered unexpected EOF: {0}")]
-    UnexpectedEof(std::io::Error),
-    #[error(transparent)]
-    Utf8Error(#[from] core::str::Utf8Error),
-    #[error(transparent)]
-    WatchRecv(#[from] watch::error::RecvError),
-    #[error(transparent)]
-    Http(#[from] ts_http_util::Error),
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
+#[error("Error sending map request")]
+pub(crate) enum MapStreamError {
+    SerDe,
+    NetworkError,
 }
 
-impl From<MapStreamError> for std::io::Error {
-    fn from(value: MapStreamError) -> Self {
-        std::io::Error::other(value.to_string())
+impl From<serde_json::Error> for MapStreamError {
+    fn from(error: serde_json::Error) -> Self {
+        tracing::error!(%error, "serialization error sending map request");
+        MapStreamError::SerDe
+    }
+}
+
+impl From<ts_http_util::Error> for MapStreamError {
+    fn from(error: ts_http_util::Error) -> Self {
+        tracing::error!(%error, "http error sending map request");
+        MapStreamError::NetworkError
+    }
+}
+
+impl From<MapStreamError> for crate::Error {
+    fn from(e: MapStreamError) -> Self {
+        match e {
+            MapStreamError::SerDe => crate::Error::Internal(
+                crate::InternalErrorKind::SerDe,
+                crate::Operation::MapRequest,
+            ),
+            MapStreamError::NetworkError => {
+                crate::Error::NetworkError(crate::Operation::MapRequest)
+            }
+        }
     }
 }
 
@@ -86,7 +86,7 @@ pub struct StateUpdate {
     pub dial_plan: Option<DialPlan>,
 }
 
-pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpdate> {
+pub(crate) fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpdate> {
     futures_util::stream::unfold(reader, async |mut reader| {
         let msg_len = reader
             .read_u32_le()
@@ -190,7 +190,7 @@ fn packet_filter(map_response: &MapResponse<'_>) -> Option<FilterUpdate> {
 }
 
 #[tracing::instrument(skip_all, fields(map_url = %url.as_str()))]
-pub async fn send_map_request(
+pub(crate) async fn send_map_request(
     map_request: MapRequest<'_>,
     url: &Url,
     http2_conn: &Http2<BytesBody>,
@@ -198,10 +198,10 @@ pub async fn send_map_request(
     tracing::debug!("sending map request to control server...");
 
     let body = if cfg!(debug_assertions) {
-        serde_json::to_string_pretty(&map_request).map_err(MapStreamError::SerializeFailed)
+        serde_json::to_string_pretty(&map_request)?
     } else {
-        serde_json::to_string(&map_request).map_err(MapStreamError::SerializeFailed)
-    }?;
+        serde_json::to_string(&map_request)?
+    };
     tracing::trace!(
         %body,
         "sending map request"
@@ -213,7 +213,11 @@ pub async fn send_map_request(
     tracing::trace!(?status, "received map response");
 
     if !status.is_success() {
-        return Err(MapStreamError::MapRequestFailed(status.as_u16()));
+        tracing::error!(
+            status = status.as_u16(),
+            "failed to register map updates with unsuccesful HTTP status code"
+        );
+        return Err(MapStreamError::NetworkError);
     }
 
     Ok(resp.into_read())

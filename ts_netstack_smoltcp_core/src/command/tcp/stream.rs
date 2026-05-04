@@ -10,20 +10,15 @@ use smoltcp::iface::SocketHandle;
 
 use crate::command;
 
-/// Errors that may occur on TCP socket operations.
+/// The connection was reset or closed.
 #[derive(thiserror::Error, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Error {
-    /// The connection was reset or closed.
-    #[error("connection reset or closed")]
-    Reset,
-}
+#[error("connection reset or closed")]
+pub struct ConnectionResetOrClosed;
 
 #[cfg(feature = "std")]
-impl From<Error> for std::io::Error {
-    fn from(value: Error) -> Self {
-        match value {
-            Error::Reset => std::io::Error::new(std::io::ErrorKind::ConnectionReset, value),
-        }
+impl From<ConnectionResetOrClosed> for std::io::Error {
+    fn from(_: ConnectionResetOrClosed) -> Self {
+        std::io::ErrorKind::ConnectionReset.into()
     }
 }
 

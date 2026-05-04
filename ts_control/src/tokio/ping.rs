@@ -1,6 +1,5 @@
-use alloc::string::String;
+use alloc::{fmt, string::String};
 
-use tokio::sync::watch;
 use ts_control_serde::PingType;
 use ts_http_util::{BytesBody, ClientExt, Http2, Request};
 use url::Url;
@@ -16,22 +15,48 @@ const C2N_PATH_UNKNOWN: &str = "HTTP/1.1 400 Bad Request\r\n\r\nunknown c2n path
 /// with C2N echo responses, which can append the request body.
 const C2N_RESPONSE_ECHO_PREAMBLE: &str = "HTTP/1.1 200 OK\r\n\r\n";
 
-#[derive(Debug, thiserror::Error)]
-pub enum PingError {
-    #[error(transparent)]
-    Http(#[from] ts_http_util::Error),
-    #[error(transparent)]
-    JoinFailed(#[from] tokio::task::JoinError),
-    #[error("C2N ping request is missing payload")]
-    MissingPayload,
-    #[error(transparent)]
-    WatchRecv(#[from] watch::error::RecvError),
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum PingError {
+    #[error("HTTP error")]
+    NetworkError,
+    #[error("internal error during ping: {0}")]
+    InternalError(InternalErrorKind),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) enum InternalErrorKind {
+    Url,
+    MessageFormat,
+}
+
+impl fmt::Display for InternalErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::MessageFormat => {
+                write!(f, "Ping request with invalid format (missing payload)")
+            }
+        }
+    }
+}
+impl From<ts_http_util::Error> for PingError {
+    fn from(error: ts_http_util::Error) -> Self {
+        tracing::error!(%error, "Error parsing HTTP request");
+        PingError::NetworkError
+    }
+}
+
+impl From<url::ParseError> for PingError {
+    fn from(error: url::ParseError) -> Self {
+        tracing::error!(%error, "Error parsing URL");
+        PingError::InternalError(InternalErrorKind::Url)
+    }
 }
 
 /// Parses the payload of a Control-to-Node (C2N) [`ts_control_serde::PingRequest`] as an HTTP/1.1
 /// request, or returns an error.
 fn parse_c2n_ping(payload: &str) -> Result<Request<String>, PingError> {
-    let req = ts_http_util::http1::parse_request(payload.as_bytes()).map_err(PingError::Http)?;
+    let req = ts_http_util::http1::parse_request(payload.as_bytes())?;
     tracing::trace!(
         payload_len = req.body().len(),
         payload = req.body(),
@@ -80,7 +105,7 @@ pub async fn handle_ping(
         let ping_request_body = ping_request
             .payload
             .as_ref()
-            .ok_or(PingError::MissingPayload)?;
+            .ok_or(PingError::InternalError(InternalErrorKind::MessageFormat))?;
         let c2n_request = match parse_c2n_ping(ping_request_body) {
             Ok(c2n_request) => {
                 tracing::trace!(?c2n_request, "parsed c2n ping");
@@ -104,9 +129,7 @@ pub async fn handle_ping(
             }
         };
 
-        let ping_response_url = control_url
-            .join(ping_request.url.path())
-            .map_err(|_| PingError::MissingPayload)?;
+        let ping_response_url = control_url.join(ping_request.url.path())?;
         tracing::trace!(%ping_response_url, ?c2n_response, "posting c2n response");
         let response = http2_client
             .post(&ping_response_url, None, c2n_response.into())

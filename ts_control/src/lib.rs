@@ -21,6 +21,8 @@ mod node;
 #[cfg(feature = "async_tokio")]
 mod tokio;
 
+use std::fmt;
+
 #[doc(inline)]
 pub use config::{Config, DEFAULT_CONTROL_SERVER};
 pub use control_dialer::{ControlDialer, TcpDialer, complete_connection};
@@ -29,25 +31,97 @@ pub use dial_plan::{DialCandidate, DialMode, DialPlan};
 pub use node::{Id as NodeId, Node, StableId as StableNodeId, TailnetAddress};
 
 #[cfg(feature = "async_tokio")]
-pub use crate::tokio::{AsyncControlClient, AuthResult, FilterUpdate, PeerUpdate, StateUpdate};
+pub use crate::tokio::{AsyncControlClient, FilterUpdate, PeerUpdate, StateUpdate};
 
-/// Errors that may occur while communicating with control.
-#[derive(Debug, thiserror::Error)]
+/// An error which occured while connecting to the control server or control plane.
+#[derive(Debug, thiserror::Error, Clone, Eq, PartialEq)]
 pub enum Error {
-    /// Error connecting to control.
-    #[error(transparent)]
-    #[cfg(feature = "async_tokio")]
-    Connect(#[from] tokio::ConnectionError),
-    /// Error processing streaming netmap results.
-    #[error(transparent)]
-    #[cfg(feature = "async_tokio")]
-    MapStream(#[from] tokio::MapStreamError),
-    /// Error executing a ping.
-    #[error(transparent)]
-    #[cfg(feature = "async_tokio")]
-    Ping(#[from] tokio::PingError),
-    /// Error registering with control.
-    #[error(transparent)]
-    #[cfg(feature = "async_tokio")]
-    Register(#[from] tokio::RegistrationError),
+    /// A machine was not authorized by control to join tailnet; authorize via the supplied URL.
+    #[error("machine was not authorized by control to join tailnet")]
+    MachineNotAuthorized(url::Url),
+
+    /// Some kind of networking error, e.g., HTTP, TLS.
+    ///
+    /// These might be addressed by retrying, or might be an unresolvable error.
+    ///
+    /// [`Operation`] is intended to be informational, rather then inspected during handling.
+    #[error("A networking error occurred in {0}")]
+    NetworkError(Operation),
+
+    /// An internal error that users of the library are not expected to handle.
+    ///
+    /// [`InternalErrorKind`] and [`Operation`] are intended to be informational, rather then
+    /// inspected during handling.
+    #[error("{0} error in {1}")]
+    Internal(InternalErrorKind, Operation),
+}
+
+/// What kind of internal error has occured.
+///
+/// This is intended to be useful for reporting a crash to an end user, rather than being handled.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum InternalErrorKind {
+    /// An error in URL parsing.
+    Url,
+    /// An error in serialization or deserialization.
+    SerDe,
+    /// An error in I/O.
+    Io,
+    /// An invalid message format.
+    MessageFormat,
+    /// An error parsing a string as UTF8.
+    Utf8,
+    /// Noise framework handshake.
+    NoiseHandshake,
+    /// Tailscale challenge packet.
+    Challenge,
+    /// The user's machine was not authorized to register with a Tailnet and there is no URL for
+    /// the user to authorize at.
+    MachineAuthorization,
+}
+
+impl fmt::Display for InternalErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InternalErrorKind::Url => write!(f, "URL parsing error"),
+            InternalErrorKind::SerDe => write!(f, "serialization/deserialization error"),
+            InternalErrorKind::Io => write!(f, "I/O error"),
+            InternalErrorKind::MessageFormat => write!(f, "message format error"),
+            InternalErrorKind::Utf8 => write!(f, "invalid UTF8"),
+            InternalErrorKind::NoiseHandshake => write!(f, "error in Noise handshake"),
+            InternalErrorKind::Challenge => write!(f, "error with Tailscale challenge packet"),
+            InternalErrorKind::MachineAuthorization => {
+                write!(f, "Machine not authorized to register with Tailnet")
+            }
+        }
+    }
+}
+
+/// The phase of connecting the control plane to a Tailnet in which an error occurs.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Operation {
+    /// Requesting a net map.
+    MapRequest,
+    /// Connecting to a control server.
+    ConnectToControlServer,
+    /// Registering the user's device with a Tailnet.
+    Registration,
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operation::MapRequest => write!(f, "net map request"),
+            Operation::ConnectToControlServer => write!(f, "connection to control server"),
+            Operation::Registration => write!(f, "registration"),
+        }
+    }
+}
+
+impl From<ts_http_util::Error> for Error {
+    fn from(error: ts_http_util::Error) -> Self {
+        tracing::error!(%error, "http error");
+        Error::NetworkError(Operation::ConnectToControlServer)
+    }
 }
