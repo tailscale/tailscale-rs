@@ -4614,6 +4614,7 @@ dependencies = [
  "hex",
  "hkdf",
  "itertools",
+ "proptest",
  "rand 0.10.1",
  "tokio",
  "tracing",

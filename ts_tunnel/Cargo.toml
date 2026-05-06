@@ -35,6 +35,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 hex = "0.4"
 tokio = { workspace = true, features = ["full", "macros"] }
 ts_cli_util.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

@@ -12,7 +12,10 @@ use zerocopy::{
     little_endian::{U32, U64},
 };
 
-use crate::messages::{SessionId, TransportDataHeader};
+use crate::{
+    messages::{SessionId, TransportDataHeader},
+    replay::ReplayWindow,
+};
 
 type SessionKey = chacha20poly1305::Key;
 
@@ -151,7 +154,7 @@ pub struct ReceiveSession {
     cipher: ChaCha20Poly1305,
     id: SessionId,
     created: Instant,
-    // TODO: nonce sliding window for replay protection
+    window: ReplayWindow,
 }
 
 impl Debug for ReceiveSession {
@@ -168,13 +171,14 @@ impl ReceiveSession {
             cipher: ChaCha20Poly1305::new(&key),
             id,
             created: now,
+            window: ReplayWindow::default(),
         }
     }
 
     /// Decrypt wireguard transport data messages in place.
     ///
     /// Returns the packets which successfully decrypted.
-    pub fn decrypt(&self, mut packets: Vec<PacketMut>) -> Vec<PacketMut> {
+    pub fn decrypt(&mut self, mut packets: Vec<PacketMut>) -> Vec<PacketMut> {
         packets.retain_mut(|packet| self.decrypt_one(packet));
         packets
     }
@@ -182,7 +186,7 @@ impl ReceiveSession {
     /// Decrypt a wireguard transport data message in place.
     #[tracing::instrument(skip_all, fields(session_id = ?self.id))]
     #[must_use]
-    fn decrypt_one(&self, pkt: &mut PacketMut) -> bool {
+    fn decrypt_one(&mut self, pkt: &mut PacketMut) -> bool {
         let Ok((header, _)) = TransportDataHeader::try_ref_from_prefix(pkt.as_ref()) else {
             tracing::warn!("decode as transport packet failed");
             return false;
@@ -209,16 +213,25 @@ impl ReceiveSession {
             return false;
         }
 
+        let counter = header.nonce.into();
+        if !self.window.check(counter) {
+            tracing::trace!("reject old/replayed packet");
+            return false;
+        }
+
         let nonce = Nonce::from(header.nonce);
         pkt.truncate_front(size_of::<TransportDataHeader>());
 
-        let result = self.cipher.decrypt_in_place(nonce.as_ref(), &[], pkt);
-
-        if let Err(e) = &result {
-            tracing::error!(err = %e, "decryption failed");
+        match self.cipher.decrypt_in_place(nonce.as_ref(), &[], pkt) {
+            Ok(_) => {
+                self.window.set(counter);
+                true
+            }
+            Err(e) => {
+                tracing::error!(err = %e, "decryption failed");
+                false
+            }
         }
-
-        result.is_ok()
     }
 
     pub fn id(&self) -> SessionId {
@@ -241,7 +254,7 @@ mod tests {
         let session = SessionId::random();
         let now = Instant::now();
         let send = TransmitSession::new(k.into(), session, now);
-        let recv = ReceiveSession::new(k.into(), session, now);
+        let mut recv = ReceiveSession::new(k.into(), session, now);
 
         const CLEARTEXT: &[u8] = b"foobar";
         let mut pkt = [PacketMut::from(CLEARTEXT)];
