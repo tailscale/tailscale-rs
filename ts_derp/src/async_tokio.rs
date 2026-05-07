@@ -10,7 +10,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use ts_http_util::Client as _;
 use ts_keys::NodeKeyPair;
 use ts_packet::PacketMut;
-use ts_transport::{PeerId, UnderlayTransport};
+use ts_transport::{BatchRecvIter, BatchSendIter, PeerId, UnderlayTransport};
 use url::Url;
 
 use crate::{
@@ -296,25 +296,20 @@ where
     Io: AsyncRead + AsyncWrite + Send,
     Lookup: PeerLookup,
 {
+    type PeerKey = PeerId;
     type Error = Error;
 
     #[tracing::instrument(fields(%self))]
-    async fn recv(
-        &self,
-    ) -> impl IntoIterator<Item = Result<(PeerId, impl IntoIterator<Item = PacketMut>), Self::Error>>
-    {
+    async fn recv(&self) -> impl BatchRecvIter<Self::PeerKey, Error = Self::Error> {
         [self.recv_one().await.map(|(k, pkt)| (k, [pkt]))]
     }
 
     /// Send a batch of packets to a peer via this DERP server.
-    async fn send<BatchIter, PacketIter>(&self, peer_packets: BatchIter) -> Result<(), Self::Error>
-    where
-        BatchIter: IntoIterator<Item = (PeerId, PacketIter)> + Send,
-        BatchIter::IntoIter: Send,
-        PacketIter: IntoIterator<Item = PacketMut> + Send,
-        PacketIter::IntoIter: Send,
-    {
-        for (peer, packets) in peer_packets {
+    async fn send(
+        &self,
+        peer_packets: impl BatchSendIter<Self::PeerKey>,
+    ) -> Result<(), Self::Error> {
+        for (peer, packets) in peer_packets.batch_iter() {
             let Some(node_key) = self.peer_lookup.id_to_key(peer) else {
                 tracing::warn!(peer_id = %peer, "no node key known for peer");
                 continue;
