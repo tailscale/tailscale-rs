@@ -107,6 +107,7 @@ We support the following platforms and architectures:
 
 - Linux (`x86_64`/`ARM64`)
 - macOS (`ARM64`)
+- Windows (`x86_64`)
 
 ## Status
 
@@ -134,7 +135,6 @@ no guarantees on timeline or completion:
 - Direct connections (NAT traversal, STUN, and Disco)
 - Peer lookups (addressing peers by hostname)
 - Third-party code and cryptography audit
-- Official Windows support
 
 ### Unsupported
 
