@@ -1,5 +1,5 @@
 [package]
-name = "ts_transport_derp"
+name = "ts_derp"
 version.workspace = true
 description = "tailscale derp client"
 categories = ["network-programming", "encoding", "asynchronous"]

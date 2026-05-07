@@ -67,7 +67,7 @@ impl<'a> MapRequestBuilder<'a> {
 
     /// Set the [`NetInfo::preferred_derp`] field (inside [`MapRequest::host_info`] ->
     /// [`HostInfo::net_info`]).
-    pub fn preferred_derp(mut self, value: ts_transport_derp::RegionId) -> Self {
+    pub fn preferred_derp(mut self, value: ts_derp::RegionId) -> Self {
         self.net_info_mut().preferred_derp = Some(value.0.into());
         self
     }

@@ -3,7 +3,7 @@
 use core::{fmt::Debug, net::SocketAddr, time::Duration};
 
 use ts_control::DerpMap;
-use ts_transport_derp::RegionId;
+use ts_derp::RegionId;
 
 /// Configuration for probing derp map latency.
 #[derive(Debug, Copy, Clone)]

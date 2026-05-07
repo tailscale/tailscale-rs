@@ -4140,8 +4140,8 @@ dependencies = [
  "tracing-tracy",
  "tracy-client",
  "ts_control",
+ "ts_derp",
  "ts_netcheck",
- "ts_transport_derp",
 ]
 
 [[package]]
@@ -4166,6 +4166,7 @@ dependencies = [
  "ts_capabilityversion",
  "ts_control_noise",
  "ts_control_serde",
+ "ts_derp",
  "ts_dynbitset",
  "ts_http_util",
  "ts_keys",
@@ -4173,7 +4174,6 @@ dependencies = [
  "ts_packetfilter",
  "ts_packetfilter_state",
  "ts_tls_util",
- "ts_transport_derp",
  "url",
  "zerocopy",
 ]
@@ -4239,6 +4239,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_derp"
+version = "0.2.0"
+dependencies = [
+ "bytes",
+ "crypto_box",
+ "futures",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ts_cli_util",
+ "ts_control_serde",
+ "ts_hexdump",
+ "ts_http_util",
+ "ts_keys",
+ "ts_packet",
+ "ts_tls_util",
+ "ts_transport",
+ "url",
+ "yoke",
+ "zerocopy",
+]
+
+[[package]]
 name = "ts_devtools"
 version = "0.2.0"
 dependencies = [
@@ -4248,12 +4276,12 @@ dependencies = [
  "tokio",
  "tracing",
  "ts_cli_util",
+ "ts_derp",
  "ts_keys",
  "ts_packet",
  "ts_packetfilter",
  "ts_packetfilter_state",
  "ts_transport",
- "ts_transport_derp",
 ]
 
 [[package]]
@@ -4355,9 +4383,9 @@ dependencies = [
  "tracing-test",
  "ts_control",
  "ts_control_serde",
+ "ts_derp",
  "ts_http_util",
  "ts_test_util",
- "ts_transport_derp",
  "url",
 ]
 
@@ -4508,6 +4536,7 @@ dependencies = [
  "ts_bart_packetfilter",
  "ts_control",
  "ts_dataplane",
+ "ts_derp",
  "ts_keys",
  "ts_netcheck",
  "ts_netstack_smoltcp",
@@ -4516,7 +4545,6 @@ dependencies = [
  "ts_packetfilter",
  "ts_packetfilter_state",
  "ts_transport",
- "ts_transport_derp",
  "ts_tunnel",
 ]
 
@@ -4547,34 +4575,6 @@ name = "ts_transport"
 version = "0.2.0"
 dependencies = [
  "ts_packet",
-]
-
-[[package]]
-name = "ts_transport_derp"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "crypto_box",
- "futures",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "ts_cli_util",
- "ts_control_serde",
- "ts_hexdump",
- "ts_http_util",
- "ts_keys",
- "ts_packet",
- "ts_tls_util",
- "ts_transport",
- "url",
- "yoke",
- "zerocopy",
 ]
 
 [[package]]

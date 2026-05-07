@@ -46,7 +46,7 @@ pub struct Node {
     pub underlay_addresses: Vec<SocketAddr>,
 
     /// The DERP region for this node, if known.
-    pub derp_region: Option<ts_transport_derp::RegionId>,
+    pub derp_region: Option<ts_derp::RegionId>,
 }
 
 impl Node {
@@ -166,7 +166,7 @@ impl From<&ts_control_serde::Node<'_>> for Node {
                 .home_derp
                 .or(value.legacy_derp_string)
                 .or_else(|| value.host_info.net_info.as_ref()?.preferred_derp)
-                .map(|x| ts_transport_derp::RegionId(x.into())),
+                .map(|x| ts_derp::RegionId(x.into())),
         }
     }
 }

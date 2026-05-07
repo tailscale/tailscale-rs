@@ -521,7 +521,7 @@ mod test {
             underlay_addresses: vec![],
             derp_region: rng
                 .random::<bool>()
-                .then_some(ts_transport_derp::RegionId(rng.random())),
+                .then_some(ts_derp::RegionId(rng.random())),
 
             tags: (0..rng.random_range(0..8))
                 .map(|_| rand_string(&mut rng, 32))
@@ -768,7 +768,7 @@ mod test {
                     },
                     tags: tags.into_iter().collect(),
 
-                    derp_region: derp_region.map(ts_transport_derp::RegionId),
+                    derp_region: derp_region.map(ts_derp::RegionId),
 
                     accepted_routes: accepted_routes.into_iter().collect(),
                     underlay_addresses: underlay_addrs.into_iter().collect(),

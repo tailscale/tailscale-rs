@@ -24,7 +24,7 @@ ts_packet.workspace = true
 ts_packetfilter = { workspace = true, features = ["checking-filter"] }
 ts_packetfilter_state.workspace = true
 ts_transport.workspace = true
-ts_transport_derp.workspace = true
+ts_derp.workspace = true
 ts_tunnel.workspace = true
 
 # Unconditionally required dependencies.
