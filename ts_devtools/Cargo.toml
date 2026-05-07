@@ -20,10 +20,8 @@ tracing.workspace = true
 
 ts_cli_util.workspace = true
 ts_keys.workspace = true
-ts_packet.workspace = true
 ts_packetfilter.workspace = true
 ts_packetfilter_state.workspace = true
-ts_transport.workspace = true
 ts_derp.workspace = true
 
 [lints]

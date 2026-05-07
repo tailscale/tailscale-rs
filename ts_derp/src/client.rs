@@ -8,27 +8,25 @@ use tokio::{
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
 use ts_http_util::Client as _;
-use ts_keys::NodeKeyPair;
+use ts_keys::{NodeKeyPair, NodePublicKey};
 use ts_packet::PacketMut;
-use ts_transport::{BatchRecvIter, BatchSendIter, PeerId, UnderlayTransport};
+use ts_transport::{BatchRecvIter, BatchSendIter, UnderlayTransport};
 use url::Url;
 
 use crate::{
     Error, ServerConnInfo, frame,
     frame::{ClientInfo, FrameType, PeerGone, Ping, RawFrame, ServerInfo, ServerKey},
-    peer_lookup::PeerLookup,
 };
 
 type DefaultIo = ts_http_util::Upgraded;
 
 /// Type alias for the default derp client over upgraded HTTP on a tokio executor.
-pub type DefaultClient<Lookup> = Client<DefaultIo, Lookup>;
+pub type DefaultClient = Client<DefaultIo>;
 
-/// Asynchronous DERP transport for a single DERP region.
-pub struct Client<Io, Lookup> {
+/// Single-region DERP client.
+pub struct Client<Io> {
     read_conn: Mutex<FramedRead<ReadHalf<Io>, frame::Codec>>,
     write_conn: Mutex<FramedWrite<WriteHalf<Io>, frame::Codec>>,
-    peer_lookup: Lookup,
 }
 
 /// Establish and upgrade a http connection to the derp region.
@@ -56,18 +54,13 @@ pub async fn connect<'c>(
     Ok(Some(upgraded))
 }
 
-impl<Io, Lookup> Client<Io, Lookup>
+impl<Io> Client<Io>
 where
     Io: AsyncRead + AsyncWrite,
-    Lookup: PeerLookup,
 {
     /// Perform a derp handshake over the given transport and return a [`Client`].
     #[tracing::instrument(skip_all)]
-    pub async fn handshake(
-        conn: Io,
-        node_keypair: &NodeKeyPair,
-        peer_lookup: Lookup,
-    ) -> Result<Self, Error> {
+    pub async fn handshake(conn: Io, node_keypair: &NodeKeyPair) -> Result<Self, Error> {
         let (read_conn, write_conn) = tokio::io::split(conn);
 
         let mut fw = FramedWrite::new(write_conn, frame::Codec);
@@ -121,8 +114,13 @@ where
         Ok(Self {
             read_conn: Mutex::new(fr),
             write_conn: Mutex::new(fw),
-            peer_lookup,
         })
+    }
+
+    /// Send a message to a nodekey on the derp server.
+    pub async fn send_one(&self, node_key: NodePublicKey, msg: &[u8]) -> Result<(), Error> {
+        self.send_frame_with_extra(&frame::SendPacket { dest: node_key }, msg)
+            .await
     }
 
     /// Send a frame to the derp server.
@@ -151,7 +149,7 @@ where
 
     /// Waits for a single data packet from a peer to arrive via this DERP server and returns it.
     /// DERP control messages (KeepAlive, Ping, etc) are handled inline and are not returned.
-    pub async fn recv_one(&self) -> Result<(PeerId, PacketMut), Error> {
+    pub async fn recv_one(&self) -> Result<(NodePublicKey, PacketMut), Error> {
         // DERP exchanges control messages (KeepAlives, Pings, etc) in-band with data messages
         // (SendPacket, RecvPacket, etc). The caller only cares about the payloads of data
         // messages, so we recv_one_raw() in a loop to handle any control messages while waiting
@@ -199,12 +197,8 @@ where
                 }
                 FrameType::RecvPacket => {
                     let (recv, payload) = frame.as_type::<frame::RecvPacket>().unwrap();
-                    let Some(id) = self.peer_lookup.key_to_id(&recv.src) else {
-                        tracing::trace!(src = %recv.src, "no known peer for node key");
-                        continue;
-                    };
 
-                    return Ok((id, payload.into()));
+                    return Ok((recv.src, payload.into()));
                 }
                 t => {
                     return Err(Error::UnexpectedRecvFrameType(t));
@@ -214,29 +208,25 @@ where
     }
 }
 
-impl<Lookup> Client<DefaultIo, Lookup>
-where
-    Lookup: PeerLookup,
-{
+impl Client<DefaultIo> {
     /// Connect to and handshake with the derp server with the given URL over HTTP.
     pub async fn connect<'c>(
         region: impl IntoIterator<Item = &'c ServerConnInfo>,
         node_keypair: &NodeKeyPair,
-        lookup: Lookup,
     ) -> Result<Self, Error> {
         let conn = connect(region).await?.unwrap();
 
-        Client::handshake(conn, node_keypair, lookup).await
+        Client::handshake(conn, node_keypair).await
     }
 }
 
-impl<Io, Lookup> fmt::Debug for Client<Io, Lookup> {
+impl<Io> fmt::Debug for Client<Io> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-impl<Io, Lookup> fmt::Display for Client<Io, Lookup> {
+impl<Io> fmt::Display for Client<Io> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Client").finish()
     }
@@ -291,36 +281,27 @@ fn decrypt_server_info(
     Ok(sip)
 }
 
-impl<Io, Lookup> UnderlayTransport for Client<Io, Lookup>
+impl<Io> UnderlayTransport for Client<Io>
 where
     Io: AsyncRead + AsyncWrite + Send,
-    Lookup: PeerLookup,
 {
-    type PeerKey = PeerId;
+    type PeerKey = NodePublicKey;
     type Error = Error;
 
-    #[tracing::instrument(fields(%self))]
-    async fn recv(&self) -> impl BatchRecvIter<Self::PeerKey, Error = Self::Error> {
-        [self.recv_one().await.map(|(k, pkt)| (k, [pkt]))]
-    }
-
-    /// Send a batch of packets to a peer via this DERP server.
     async fn send(
         &self,
-        peer_packets: impl BatchSendIter<Self::PeerKey>,
+        packet_batch: impl BatchSendIter<Self::PeerKey>,
     ) -> Result<(), Self::Error> {
-        for (peer, packets) in peer_packets.batch_iter() {
-            let Some(node_key) = self.peer_lookup.id_to_key(peer) else {
-                tracing::warn!(peer_id = %peer, "no node key known for peer");
-                continue;
-            };
-
-            for packet in packets {
-                self.send_frame_with_extra(&frame::SendPacket { dest: node_key }, packet.as_ref())
-                    .await?;
+        for (key, pkt) in packet_batch.batch_iter() {
+            for pkt in pkt {
+                self.send_one(key, pkt.as_ref()).await?;
             }
         }
 
         Ok(())
+    }
+
+    async fn recv(&self) -> impl BatchRecvIter<Self::PeerKey, Error = Self::Error> {
+        [self.recv_one().await.map(|(k, pkt)| (k, [pkt]))]
     }
 }

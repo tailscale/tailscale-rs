@@ -4278,10 +4278,8 @@ dependencies = [
  "ts_cli_util",
  "ts_derp",
  "ts_keys",
- "ts_packet",
  "ts_packetfilter",
  "ts_packetfilter_state",
- "ts_transport",
 ]
 
 [[package]]

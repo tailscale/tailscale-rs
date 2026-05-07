@@ -13,7 +13,9 @@ use tokio::{sync::watch, task::JoinSet};
 use ts_control::DerpRegion;
 use ts_derp::RegionId;
 use ts_keys::{NodeKeyPair, NodePublicKey};
-use ts_transport::{PeerId, UnderlayTransport, UnderlayTransportId};
+use ts_transport::{
+    BatchRecvIter, PeerId, UnderlayTransport, UnderlayTransportExt, UnderlayTransportId,
+};
 
 use crate::{
     Env, Error,
@@ -128,20 +130,22 @@ impl Multiderp {
 
 struct PeerDbLookup<'a>(&'a RwLock<Option<Arc<PeerDb>>>);
 
-impl ts_derp::PeerLookup for PeerDbLookup<'_> {
-    fn id_to_key(&self, id: PeerId) -> Option<NodePublicKey> {
+impl ts_transport::PeerLookup<PeerId, NodePublicKey> for PeerDbLookup<'_> {
+    fn lookup_key(&self, id: PeerId) -> Option<NodePublicKey> {
         let db = self.0.read().unwrap();
         let db = db.as_ref()?;
 
         let (_, node) = db.get(&id)?;
         Some(node.node_key)
     }
+}
 
-    fn key_to_id(&self, key: &NodePublicKey) -> Option<PeerId> {
+impl ts_transport::PeerLookup<NodePublicKey, PeerId> for PeerDbLookup<'_> {
+    fn lookup_key(&self, key: NodePublicKey) -> Option<PeerId> {
         let db = self.0.read().unwrap();
         let db = db.as_ref()?;
 
-        let (id, _) = db.get(key)?;
+        let (id, _) = db.get(&key)?;
 
         Some(id)
     }
@@ -180,12 +184,12 @@ async fn run_derp_once(
 
         tracing::trace!("establishing derp connection");
 
-        let client =
-            ts_derp::DefaultClient::connect(&region.servers, &keys, PeerDbLookup(peer_db)).await?;
+        let client = ts_derp::DefaultClient::connect(&region.servers, &keys).await?;
+        let transport = client.with_key_lookup(PeerDbLookup(peer_db));
 
         if let Some(pending) = pending {
             tracing::trace!("sending queued packet");
-            client.send([pending]).await?;
+            transport.send([pending]).await?;
         }
 
         let mut last_activity = Instant::now();
@@ -197,17 +201,20 @@ async fn run_derp_once(
                 (!*home_derp_rx.borrow()).then(|| last_activity + INACTIVITY_TIMEOUT);
 
             tokio::select! {
-                from_derp = client.recv_one() => {
+                from_derp = transport.recv() => {
                     last_activity = Instant::now();
 
-                    let (peer_id, pkt) = from_derp?;
+                    for ret in from_derp.batch_iter() {
+                        let (peer_id, pkts) = ret?;
+                        let pkts = pkts.into_iter().collect::<Vec<_>>();
 
-                    tracing::trace!(parent: &span, %peer_id, len = pkt.len(), "packet from derp server");
+                        tracing::trace!(parent: &span, %peer_id, len = pkts.len(), "packet from derp server");
 
-                    let Ok(()) = to_dataplane.send((peer_id, vec![pkt])) else {
-                        tracing::error!(parent: &span, "underlay receive channel closed");
-                        break;
-                    };
+                        let Ok(()) = to_dataplane.send((peer_id, pkts)) else {
+                            tracing::error!(parent: &span, "underlay receive channel closed");
+                            break;
+                        };
+                    }
                 },
 
                 from_net = from_dataplane.recv() => {
@@ -220,7 +227,7 @@ async fn run_derp_once(
 
                     tracing::trace!(parent: &span, peer = %from_net.0, packets = from_net.1.len(), "packets to derp server");
 
-                    client.send([from_net]).await?;
+                    transport.send([from_net]).await?;
                 },
 
                 _ = option_timeout(inactivity_timeout) => {

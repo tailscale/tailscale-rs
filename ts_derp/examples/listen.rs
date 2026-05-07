@@ -3,7 +3,6 @@
 //! Intended to test ping/pong/keepalive.
 
 use ts_keys::NodeKeyPair;
-use ts_transport::{BatchRecvIter, UnderlayTransport};
 
 mod common;
 
@@ -16,20 +15,16 @@ async fn main() -> ts_cli_util::Result<()> {
 
     let keypair = NodeKeyPair::new();
 
-    let client =
-        ts_derp::Client::connect(region, &keypair, ts_derp::DummyStaticLookup::default()).await?;
+    let client = ts_derp::Client::connect(region, &keypair).await?;
     tracing::info!("derp handshake done");
 
     loop {
-        for result in client.recv().await.batch_iter() {
-            match result {
-                Ok((peer, pkts)) => {
-                    let pkts = pkts.into_iter().collect::<Vec<_>>();
-                    tracing::info!(?peer, ?pkts);
-                }
-                Err(e) => {
-                    tracing::error!(err = %e, "recv");
-                }
+        match client.recv_one().await {
+            Ok((peer, pkt)) => {
+                tracing::info!(?peer, ?pkt);
+            }
+            Err(e) => {
+                tracing::error!(err = %e, "recv");
             }
         }
     }
