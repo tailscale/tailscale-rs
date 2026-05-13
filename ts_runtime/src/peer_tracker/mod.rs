@@ -215,14 +215,12 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                 }
             }
 
-            ts_control::PeerUpdate::Delta { remove, upsert } => {
+            ts_control::PeerUpdate::Delta {
+                patch,
+                remove,
+                upsert,
+            } => {
                 tracing::trace!("delta peer update");
-
-                for peer in upsert {
-                    let id = self.peer_db.upsert(peer);
-
-                    upserts.insert(id);
-                }
 
                 for peer in remove {
                     let Some((id, _node)) = self.peer_db.remove(peer) else {
@@ -231,6 +229,18 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                     };
 
                     deletions.insert(id);
+                }
+
+                for peer in upsert {
+                    let id = self.peer_db.upsert(peer);
+
+                    upserts.insert(id);
+                }
+
+                for update in patch {
+                    let id = self.peer_db.patch(update);
+
+                    upserts.insert(id);
                 }
             }
         }

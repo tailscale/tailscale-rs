@@ -70,7 +70,7 @@ pub struct Node<'a> {
     /// If populated, a signature of the Tailnet Key Authority (TKA) key authorizing the Tailscale
     /// node to join the Tailnet.
     #[serde(borrow)]
-    pub key_signature: MarshaledSignature<'a>,
+    pub key_signature: Option<MarshaledSignature<'a>>,
     /// If populated, the public key of the Tailscale node's [`MachineKeyPair`][ts_keys::MachineKeyPair].
     pub machine: Option<MachinePublicKey>,
     /// If populated, the public key of the Tailscale node's [`DiscoKeyPair`][ts_keys::DiscoKeyPair].

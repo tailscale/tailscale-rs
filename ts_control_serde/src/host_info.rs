@@ -38,8 +38,8 @@ pub struct HostInfo<'a> {
     /// - Windows: "10.0.19044.1889"
     pub os_version: &'a str,
 
-    /// Indicates whether or not this Tailscale node is running inside a container. Detection is
-    /// best-effort only, and may not be accurate.
+    /// Indicates whether this Tailscale node is running inside a container. Detection is best-
+    /// effort only, and may not be accurate.
     pub container: Option<bool>,
     /// Represents the type of runtime environment that this Tailscale node is running in.
     #[serde(skip_serializing_if = "crate::util::is_default")]
@@ -56,10 +56,10 @@ pub struct HostInfo<'a> {
 
     /// Disambiguates Tailscale nodes that run using `tsnet` (e.g. "k8s-operator", "golinks", etc).
     pub app: &'a str,
-    /// Indicates whether or not a desktop environment was detected. Used only for Linux devices.
+    /// Indicates whether a desktop environment was detected. Used only for Linux devices.
     pub desktop: Option<bool>,
     /// How this Tailscale node was packaged/delivered to the device (e.g. "choco", "appstore",
-    /// etc). Empty string if the packaging mechanism is unknown.
+    /// etc.) Empty string if the packaging mechanism is unknown.
     pub package: &'a str,
     /// Model of mobile phone for mobile devices (e.g. "Pixel 3a", "iPhone12,3").
     pub device_model: &'a str,
@@ -69,7 +69,7 @@ pub struct HostInfo<'a> {
     /// Hostname of this Tailscale node's host.
     pub hostname: Option<&'a str>,
 
-    /// Indicates whether or not this Tailscale node's host is blocking incoming connections.
+    /// Indicates whether this Tailscale node's host is blocking incoming connections.
     pub shields_up: bool,
     /// Indicates this Tailscale node exists in the netmap because it's owned by a shared-to user.
     pub sharee_node: bool,
@@ -83,7 +83,7 @@ pub struct HostInfo<'a> {
     /// optimization, this is only sent if [`HostInfo::ingress_enabled`] is `false`, as
     /// [`HostInfo::ingress_enabled`] implies that this option is `true`.
     pub wire_ingress: bool,
-    /// Indicates whether or not this Tailscale node has any Tailscale Funnel endpoints enabled.
+    /// Indicates whether this Tailscale node has any Tailscale Funnel endpoints enabled.
     pub ingress_enabled: bool,
     /// Indicates that this Tailscale node has opted-in to remote updates triggered by the admin
     /// console.
@@ -143,7 +143,8 @@ pub struct HostInfo<'a> {
 
     /// TPM device metadata, if available.
     pub tpm: Option<TpmInfo<'a>>,
-    /// Reports whether the node state is stored encrypted on-disk. The actual mechanism is platform-specific:
+    /// Reports whether the node state is stored encrypted on-disk. The actual mechanism is
+    /// platform-specific:
     /// * Apple nodes use the Keychain
     /// * Linux and Windows nodes use the TPM
     /// * Android apps use `EncryptedSharedPreferences`

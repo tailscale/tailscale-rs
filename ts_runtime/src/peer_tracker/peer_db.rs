@@ -6,7 +6,7 @@ use std::{
 };
 
 use ts_bart::{RouteModification, RoutingTable, RoutingTableExt};
-use ts_control::{Node, StableNodeId};
+use ts_control::{Node, NodeUpdate, StableNodeId};
 use ts_keys::{DiscoPublicKey, NodePublicKey};
 use ts_transport::PeerId;
 
@@ -82,6 +82,21 @@ struct IndexState {
 }
 
 impl PeerDb {
+    /// Apply an update to a node in the peer db.
+    ///
+    /// The [`NodeUpdate::id`] field is used as the primary key to identify the node.
+    ///
+    /// # Panics
+    /// If the peer db does not contain a node where [`Node::id`] == [`NodeUpdate::id`].
+    pub fn patch(&mut self, update: &NodeUpdate) -> PeerId {
+        let id = (update.id)
+            .lookup(self)
+            .expect("no matching peer for update");
+        let mut peer = self.peers.remove(&id).unwrap();
+        peer.apply_update(update);
+        self.upsert(&peer)
+    }
+
     /// Upsert a node into the peer db.
     ///
     /// The [`StableNodeId`] is used as the primary key to identify the node.
@@ -446,21 +461,23 @@ impl IndexedField for IpAddr {
 #[cfg(test)]
 mod test {
     use std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, HashMap, HashSet},
         net::{Ipv4Addr, Ipv6Addr, SocketAddr},
         num::NonZeroU32,
     };
 
+    use chrono::DateTime;
     use proptest::{
         collection::{hash_set, vec},
-        prelude::any,
+        prelude::{Just, any},
         strategy::Strategy,
     };
     use rand::{
         RngExt,
         distr::{Alphanumeric, SampleString},
     };
-    use ts_control::TailnetAddress;
+    use ts_capabilityversion::CapabilityVersion;
+    use ts_control::{NodeLastSeen, NodeStatus, TailnetAddress};
 
     use super::*;
 
@@ -516,9 +533,12 @@ mod test {
 
             hostname: rand_string(&mut rng, 32),
             tailnet: rng.random::<bool>().then_some(rand_string(&mut rng, 32)),
+            capability_version: Default::default(),
 
+            status: NodeStatus::Unknown,
             node_key_expiry: None,
             underlay_addresses: vec![],
+            tailnet_lock_key_signature: None,
             derp_region: rng
                 .random::<bool>()
                 .then_some(ts_derp::RegionId(rng.random())),
@@ -526,6 +546,7 @@ mod test {
             tags: (0..rng.random_range(0..8))
                 .map(|_| rand_string(&mut rng, 32))
                 .collect(),
+            node_capabilities: Default::default(),
         }
     }
 
@@ -654,6 +675,26 @@ mod test {
     }
 
     proptest::prop_compose! {
+        fn capability_version_low()(
+            capver in 3u16..34,
+        ) -> CapabilityVersion {
+            CapabilityVersion::new(capver).unwrap()
+        }
+    }
+
+    proptest::prop_compose! {
+        fn capability_version_high()(
+            capver in 36u16..133,
+        ) -> CapabilityVersion {
+            CapabilityVersion::new(capver).unwrap()
+        }
+    }
+
+    fn capability_version() -> impl Strategy<Value = CapabilityVersion> {
+        proptest::prop_oneof![capability_version_low(), capability_version_high()]
+    }
+
+    proptest::prop_compose! {
         fn ipv4net()(
             addr: Ipv4Addr,
             pfx in 0u8..=32,
@@ -679,6 +720,26 @@ mod test {
     }
 
     proptest::prop_compose! {
+        fn last_seen()(
+            control_ns_since_epoch in any::<Option<i64>>(),
+            estimated_ns_since_epoch in any::<i64>(),
+        ) -> NodeLastSeen {
+            NodeLastSeen {
+                control: control_ns_since_epoch.map(DateTime::from_timestamp_nanos),
+                estimated: DateTime::from_timestamp_nanos(estimated_ns_since_epoch),
+            }
+        }
+    }
+
+    fn status() -> impl Strategy<Value = NodeStatus> {
+        proptest::prop_oneof![
+            Just(NodeStatus::Unknown),
+            Just(NodeStatus::Online),
+            last_seen().prop_map(NodeStatus::Offline),
+        ]
+    }
+
+    proptest::prop_compose! {
         fn domain_segment()(
             seg in "[[:alpha:]][[:alnum:]]*"
         ) -> String {
@@ -694,7 +755,17 @@ mod test {
         }
     }
 
+    proptest::prop_compose! {
+        fn node_capabilities(max_values_per_entry: usize)(
+            keys in hash_set(".+", 0..32),
+            values in vec(vec(".+", 0..32), 0..max_values_per_entry),
+        ) -> BTreeMap<String, Vec<String>> {
+            BTreeMap::from_iter(keys.into_iter().zip(values.into_iter()))
+        }
+    }
+
     type Key = [u8; 32];
+    type TailnetLockSignature = [u8; 32];
 
     proptest::prop_compose! {
         // This is set up this way to ensure uniqueness among all the required-unique keys in a
@@ -702,11 +773,15 @@ mod test {
         fn nodes(n: usize)(
             id in hash_set(any::<i64>(), n),
             stable_id in hash_set(".+", n),
+            capability_version in vec(capability_version(), n),
             tags in vec(hash_set(".+", 0..32), n),
+            node_capabilities in vec(node_capabilities(3), n),
             accepted_routes in vec(hash_set(ipnet(), 0..32), n),
+            status in vec(status(), n),
             node_key in hash_set(any::<Key>(), n),
             machine_key in vec(any::<Option<Key>>(), n),
             disco_key in vec(any::<Option<Key>>(), n),
+            tailnet_lock_key_signature in vec(any::<Option<TailnetLockSignature>>(), n),
             ipv4 in hash_set(any::<Ipv4Addr>(), n),
             ipv6 in hash_set(any::<Ipv6Addr>(), n),
             name in hash_set(domain_segment(), n),
@@ -718,11 +793,15 @@ mod test {
             itertools::izip![
                 id,
                 stable_id,
+                capability_version,
                 tags,
+                node_capabilities,
                 accepted_routes,
+                status,
                 node_key,
                 machine_key,
                 disco_key,
+                tailnet_lock_key_signature,
                 ipv4,
                 ipv6,
                 name,
@@ -733,11 +812,15 @@ mod test {
             ].map(|(
                 id,
                 stable_id,
+                capability_version,
                 tags,
+                node_capabilities,
                 mut accepted_routes,
+                status,
                 node_key,
                 machine_key,
                 disco_key,
+                tailnet_lock_key_signature,
                 ipv4,
                 ipv6,
                 name,
@@ -752,13 +835,16 @@ mod test {
                 Node {
                     id,
                     stable_id: StableNodeId(stable_id),
+                    capability_version,
 
                     hostname: name,
                     tailnet: has_tailnet.then_some(tailnet),
 
+                    status,
                     node_key: node_key.into(),
                     disco_key: disco_key.map(Into::into),
                     machine_key: machine_key.map(Into::into),
+                    tailnet_lock_key_signature: tailnet_lock_key_signature.map(Into::into),
 
                     node_key_expiry: None,
 
@@ -767,6 +853,7 @@ mod test {
                         ipv6: ipv6.into(),
                     },
                     tags: tags.into_iter().collect(),
+                    node_capabilities,
 
                     derp_region: derp_region.map(ts_derp::RegionId),
 

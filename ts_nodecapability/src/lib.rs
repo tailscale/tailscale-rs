@@ -3,7 +3,11 @@
 
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 /// A map of node capabilities to their optional values. It is valid for a capability to have
 /// `None` as a value; such capabilities can be tested for by using the
@@ -51,6 +55,12 @@ pub struct Values<'a>(
     )]
     pub Vec<Value<'a>>,
 );
+
+impl From<&Values<'_>> for Vec<String> {
+    fn from(value: &Values<'_>) -> Self {
+        value.0.iter().map(|v| v.to_string()).collect()
+    }
+}
 
 #[cfg(feature = "serde")]
 fn deserialize_nodecap<'a, 'de, D>(

@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 use core::{
-    fmt::Formatter,
+    fmt,
     net::{Ipv4Addr, Ipv6Addr},
     num::NonZeroU32,
 };
@@ -18,8 +18,17 @@ pub use error::Error;
 
 /// A 24-byte nonce for symmetric encryption with ChaCha20Poly1305.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, KnownLayout, Immutable, IntoBytes, FromBytes)]
+#[derive(Copy, Clone, PartialEq, KnownLayout, Immutable, IntoBytes, FromBytes)]
 pub struct Nonce(pub [u8; 24]);
+
+impl fmt::Debug for Nonce {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for b in self.0.iter() {
+            write!(f, "{b:02x}")?;
+        }
+        Ok(())
+    }
+}
 
 impl From<crypto_box::aead::Nonce<crypto_box::SalsaBox>> for Nonce {
     fn from(value: crypto_box::aead::Nonce<crypto_box::SalsaBox>) -> Self {
@@ -37,8 +46,8 @@ impl From<Nonce> for crypto_box::aead::Nonce<crypto_box::SalsaBox> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RegionId(pub NonZeroU32);
 
-impl core::fmt::Display for RegionId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for RegionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.get().fmt(f)
     }
 }
@@ -100,7 +109,7 @@ impl ServerConnInfo {
     ///
     /// - The URL uses the `https` scheme
     /// - The URL's host resolves to IPv4 and IPv6 addresses via DNS
-    /// - The TLS common name is the url's host
+    /// - The TLS common name is the URL's host
     /// - The STUN port for the server is the default (3478)
     /// - The server doesn't support port 80 connections for captive portal detection
     pub fn default_from_url(url: &url::Url) -> Option<Self> {

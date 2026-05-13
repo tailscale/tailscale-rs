@@ -28,7 +28,10 @@ pub use config::{Config, DEFAULT_CONTROL_SERVER};
 pub use control_dialer::{ControlDialer, TcpDialer, complete_connection};
 pub use derp::{Map as DerpMap, Region as DerpRegion, convert_derp_map};
 pub use dial_plan::{DialCandidate, DialMode, DialPlan};
-pub use node::{Id as NodeId, Node, StableId as StableNodeId, TailnetAddress};
+pub use node::{
+    Id as NodeId, Node, NodeLastSeen, NodeStatus, NodeUpdate, StableId as StableNodeId,
+    TailnetAddress,
+};
 
 #[cfg(feature = "async_tokio")]
 pub use crate::tokio::{AsyncControlClient, FilterUpdate, PeerUpdate, StateUpdate};

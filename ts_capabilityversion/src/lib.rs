@@ -16,7 +16,7 @@ use core::fmt;
 ///
 /// Note: Prior to 2022-03-06, this value was known as the "`MapRequest` version", `mapVer`, or "map
 /// cap"; you'll still see that name used in comments throughout the Golang codebase.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CapabilityVersion(u16);
 

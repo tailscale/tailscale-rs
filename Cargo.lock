@@ -6103,6 +6103,7 @@ dependencies = [
 name = "ts_runtime"
 version = "0.3.3"
 dependencies = [
+ "chrono",
  "futures",
  "ipnet",
  "itertools",
@@ -6116,6 +6117,7 @@ dependencies = [
  "tracing",
  "ts_bart",
  "ts_bart_packetfilter",
+ "ts_capabilityversion",
  "ts_control",
  "ts_dataplane",
  "ts_derp",

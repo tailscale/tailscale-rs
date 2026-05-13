@@ -38,9 +38,11 @@ tracing.workspace = true
 smallvec.workspace = true
 
 [dev-dependencies]
-rand = "0.10"
-proptest = "1.11"
-itertools = "0.14"
+chrono.workspace = true
+itertools.workspace = true
+proptest.workspace = true
+rand.workspace = true
+ts_capabilityversion.workspace = true
 
 [lints]
 workspace = true

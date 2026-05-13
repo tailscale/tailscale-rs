@@ -313,7 +313,7 @@ pub struct MapResponse<'a> {
     /// These are applied after `peers*`, but in practice, the control server should only
     /// send these on their own, without the `peers*` fields also set.
     #[serde(borrow)]
-    pub peers_changed_patch: Vec<Option<PeerChange<'a>>>,
+    pub peers_changed_patch: Option<Vec<PeerChange<'a>>>,
 
     /// How to update peers' [`last_seen`][crate::Node::last_seen] times.
     ///

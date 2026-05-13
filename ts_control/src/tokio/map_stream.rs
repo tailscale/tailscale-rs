@@ -10,7 +10,7 @@ use ts_packetfilter as pf;
 use ts_packetfilter_state as pf_state;
 use url::Url;
 
-use crate::{DialPlan, NodeId};
+use crate::{DialPlan, NodeId, NodeStatus};
 
 #[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
 pub enum MapStreamError {
@@ -66,7 +66,9 @@ pub enum PeerUpdate {
 
     /// Delta update to the peer state.
     Delta {
-        /// Peers added to or changed in the state.
+        /// Peers with a few changed fields in the state.
+        patch: Vec<crate::NodeUpdate>,
+        /// Peers added to or completely changed in the state.
         upsert: Vec<crate::Node>,
         /// Peer [`NodeId`]s removed from the state.
         remove: Vec<NodeId>,
@@ -134,8 +136,53 @@ pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpd
 
         let peer_update = if let Some(full_map) = map_response.peers {
             Some(PeerUpdate::Full(full_map.iter().map(Into::into).collect()))
-        } else if nonempty(&map_response.peers_removed) || nonempty(&map_response.peers_changed) {
+        } else if nonempty(&map_response.peers_removed)
+            || nonempty(&map_response.peers_changed)
+            || !map_response.peer_seen_change.is_empty()
+            || !map_response.online_change.is_empty()
+            || nonempty(&map_response.peers_changed_patch)
+        {
+            let mut updates: BTreeMap<NodeId, crate::NodeUpdate> = BTreeMap::new();
+            for (id, seen) in map_response.peer_seen_change {
+                let status = if seen {
+                    // Not online, and no timestamp provided by control, so we have to estimate.
+                    NodeStatus::new(Some(false), None)
+                } else {
+                    // We don't know whether the node is online or offline from this field.
+                    NodeStatus::Unknown
+                };
+                updates
+                    .entry(id)
+                    .and_modify(|u| u.status = status)
+                    .or_insert(crate::NodeUpdate {
+                        id,
+                        status,
+                        ..Default::default()
+                    });
+            }
+
+            for (id, online) in map_response.online_change {
+                let status = NodeStatus::new(Some(online), None);
+                updates
+                    .entry(id)
+                    .and_modify(|u| u.status = status)
+                    .or_insert(crate::NodeUpdate {
+                        id,
+                        status,
+                        ..Default::default()
+                    });
+            }
+
+            let mut patches = map_response
+                .peers_changed_patch
+                .unwrap_or_default()
+                .iter()
+                .map(|x| (x.node_id, crate::NodeUpdate::from(x)))
+                .collect();
+            updates.append(&mut patches);
+
             Some(PeerUpdate::Delta {
+                patch: updates.values().cloned().collect(),
                 remove: map_response.peers_removed.unwrap_or_default(),
                 upsert: map_response
                     .peers_changed
@@ -147,10 +194,6 @@ pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpd
         } else {
             None
         };
-
-        if !map_response.peers_changed_patch.is_empty() {
-            tracing::warn!(peers_changed_patch = ?map_response.peers_changed_patch, "ignored peer patch changes");
-        }
 
         Some((
             StateUpdate {
