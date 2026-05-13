@@ -179,11 +179,21 @@ $ nix flake check
 We aim for a roughly monthly release schedule. Releases are time-based, not feature-based. We will
 make ad hoc patch releases as necessary.
 
-Publishing releases is currently manual, but we are moving to a GitHub workflow.
-
-Releases should be [tagged](https://github.com/tailscale/tailscale-rs/tags).
-
-TODO describe how to make and publish a release.
-
 Breaking or significant changes should be recorded in the [changelog](CHANGELOG.md) as part of the
 PR making the change.
+
+Releases must be [tagged](https://github.com/tailscale/tailscale-rs/tags) in `vX.Y.Z` format. Creating a release tag will trigger a GitHub
+Actions workflow that automatically builds and publishes packages to their respective package
+repositories (crates.io, PyPI, etc.).
+
+Prior to creating a release tag, verify:
+- The changelog is up-to-date and the 'Unreleased' section header has been updated to the new
+release version.
+- All package versions have been updated to the correct release version, e.g. in `Cargo.toml`, 
+`pyproject.toml`, etc.
+
+After creating a release tag, verify:
+- The pipeline for the release tag completed successfully.
+- The publish jobs for each package repository (such as `elixir/publish` and `rust/publish`)
+all completed successfully and were not skipped.
+- Each package repository shows the newly-released version.
