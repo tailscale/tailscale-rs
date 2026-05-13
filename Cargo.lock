@@ -6027,6 +6027,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_noise"
+version = "0.3.3"
+dependencies = [
+ "aead 0.5.2",
+ "blake2",
+ "chacha20poly1305",
+ "hex",
+ "hkdf 0.12.4",
+ "itertools",
+ "x25519-dalek 3.0.0-pre.6",
+ "zerocopy",
+ "zeroize",
+]
+
+[[package]]
 name = "ts_overlay_router"
 version = "0.3.3"
 dependencies = [

@@ -26,6 +26,7 @@ members = [
     "ts_netstack_smoltcp_core",
     "ts_netstack_smoltcp_socket",
     "ts_nodecapability",
+    "ts_noise",
     "ts_overlay_router",
     "ts_packet",
     "ts_packetfilter",
@@ -99,9 +100,10 @@ tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false, features = ["attributes"] }
 tracing-test = "0.2"
 url = { version = "2", default-features = false }
-x25519-dalek = { version = "3.0.0-pre.6", features = ["getrandom", "reusable_secrets", "static_secrets"] }
+x25519-dalek = { version = "3.0.0-pre.6", features = ["getrandom", "reusable_secrets", "static_secrets", "zeroize"] }
 yoke = { version = "0.8", default-features = false }
 zerocopy = { version = "0.8", features = ["derive"] }
+zeroize = { version = "1.8.2", features = ["zeroize_derive"] }
 
 # local workspace deps
 tailscale = { path = ".", version = "0.3.3" }
@@ -125,6 +127,7 @@ ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.3.3" }
 ts_netstack_smoltcp_core = { path = "ts_netstack_smoltcp_core", version = "0.3.3" }
 ts_netstack_smoltcp_socket = { path = "ts_netstack_smoltcp_socket", version = "0.3.3" }
 ts_nodecapability = { path = "ts_nodecapability", version = "0.3.3" }
+ts_noise = { path = "ts_noise", version = "0.3.3" }
 ts_overlay_router = { path = "ts_overlay_router", version = "0.3.3" }
 ts_packet = { path = "ts_packet", version = "0.3.3" }
 ts_packetfilter = { path = "ts_packetfilter", version = "0.3.3" }

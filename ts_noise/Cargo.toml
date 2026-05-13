@@ -1,0 +1,28 @@
+[package]
+name = "ts_noise"
+description = "Noise protocol implementations for tailscale"
+categories = ["cryptography"]
+keywords = ["tailscale", "noise"]
+
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aead.workspace = true
+blake2.workspace = true
+chacha20poly1305.workspace = true
+hkdf.workspace = true
+itertools.workspace = true
+x25519-dalek.workspace = true
+zerocopy.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+
+[lints]
+workspace = true
