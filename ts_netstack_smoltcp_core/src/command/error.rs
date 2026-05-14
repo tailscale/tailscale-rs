@@ -24,7 +24,7 @@ pub enum Error {
     ///
     /// These errors are either unrecoverable, due to a bug in our code, or caused by a rare
     /// and intermittent issue.
-    #[error("An internal error occurred: {0}")]
+    #[error("an internal error occurred: {0}")]
     Internal(InternalErrorKind),
 
     /// A TCP connection was reset.
