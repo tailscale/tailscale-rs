@@ -244,8 +244,25 @@
         fmt = pkgs.craneLibNightlyFmt.cargoFmt common;
 
         # Consults rustsec advisory db for reported vulnerabilities in dependencies
+        #
+        # We run this in addition to `cargo deny` because the deny check can't download the advisory
+        # db inside Nix -- for whatever reason, `cargo audit` has that hooked up in crane, while
+        # `deny` doesn't. Notably, the behavior of `cargo audit` appears to deviate from that of
+        # `deny`, so we ignore some advisories here which are known to be fine when checked via
+        # `deny`.
         audit = pkgs.craneLib.cargoAudit (common // {
           advisory-db = inputs.rust-advisory-db;
+
+          cargoAuditExtraArgs = let
+            ignored = [
+                # default ignore in crane
+                "yanked"
+
+                # old version of `rsa` used through russh, feature is turned off (deny doesn't mind)
+                "RUSTSEC-2023-0071"
+            ];
+
+          in "--ignore " + (builtins.concatStringsSep " --ignore " ignored);
         });
 
         # This does the same as `cargo test`, it's just a pretty harness

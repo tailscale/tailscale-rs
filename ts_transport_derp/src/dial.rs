@@ -121,7 +121,7 @@ pub async fn dial_region_tcp<'c>(
 
         match dial_server(server).await {
             Ok(Some(conn)) => {
-                tracing::debug!(
+                tracing::trace!(
                     remote_addr = %conn.peer_addr().unwrap_or((core::net::Ipv4Addr::UNSPECIFIED, 0).into()),
                     %server.hostname,
                     "derp tcp dial ok",

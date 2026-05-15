@@ -205,7 +205,11 @@ ts_netstack_smoltcp = { workspace = true, features = ["tokio"] }
 ts_keys.workspace = true
 
 axum = { version = "0.8", optional = true }
+bytes = { workspace = true, optional = true }
 rand.workspace = true
+ratatui = { version = "0.30", optional = true }
+# exclude rsa to avoid https://rustsec.org/advisories/RUSTSEC-2023-0071
+russh = { version = "0.60", optional = true, default-features = false, features = ["flate2", "aws-lc-rs"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -215,8 +219,10 @@ url.workspace = true
 
 [dev-dependencies]
 # Dependencies for examples
-clap = { workspace = true, features = ["derive", "env"] }
+clap = { workspace = true, features = ["derive", "env", "string"] }
+chrono.workspace = true
 include_dir = "0.7"
+itertools.workspace = true
 mime_guess = "2.0"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["release_max_level_info"] }
@@ -233,6 +239,7 @@ workspace = true
 # Enable the `axum` module, which enables you to run an `axum` HTTP server on top of a tailscale TCP
 # listener.
 axum = ["dep:axum"]
+ssh = ["dep:russh", "dep:bytes", "dep:ratatui"]
 
 [[example]]
 name = "axum"
@@ -243,3 +250,7 @@ name = "peer_ping"
 
 [[example]]
 name = "tcp_echo"
+
+[[example]]
+name = "ssh_peer_lookup"
+required-features = ["ssh"]
