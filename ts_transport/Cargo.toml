@@ -12,7 +12,6 @@ rust-version.workspace = true
 
 [dependencies]
 # Our crates.
-ts_keys.workspace = true
 ts_packet.workspace = true
 
 [lints]

@@ -24,7 +24,7 @@ ts_packet.workspace = true
 ts_packetfilter.workspace = true
 ts_packetfilter_state.workspace = true
 ts_tls_util.workspace = true
-ts_transport_derp.workspace = true
+ts_derp.workspace = true
 
 # Unconditionally required dependencies.
 bytes.workspace = true
@@ -51,7 +51,7 @@ default = ["async_tokio"]
 async_tokio = ["dep:futures-util", "dep:tokio", "dep:tokio-stream"]
 
 # Allow derp connections to be made without verifying TLS certs. Only for use in tests.
-insecure-derp = ["ts_transport_derp/insecure-for-tests"]
+insecure-derp = ["ts_derp/insecure-for-tests"]
 # Allow control keys to be fetched over plain HTTP1 without TLS. Only for use in tests.
 insecure-keyfetch = []
 

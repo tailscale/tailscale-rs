@@ -1,8 +1,8 @@
-//! Common code used by multiple `ts_transport_derp` examples.
+//! Common code used by multiple `ts_derp` examples.
 
 use std::{collections::BTreeMap, num::NonZeroU32};
 
-use ts_transport_derp::{RegionId, ServerConnInfo, TlsValidationConfig};
+use ts_derp::{RegionId, ServerConnInfo, TlsValidationConfig};
 
 /// ID of DERP Region #1, which is New York City.
 pub const REGION_1: RegionId = RegionId(NonZeroU32::new(1).unwrap());
@@ -49,14 +49,14 @@ pub async fn load_derp_map() -> BTreeMap<RegionId, Vec<ServerConnInfo>> {
         .collect()
 }
 
-fn convert_ip_usage<T>(ip: ts_control_serde::DerpIpUsage<T>) -> ts_transport_derp::IpUsage<T>
+fn convert_ip_usage<T>(ip: ts_control_serde::DerpIpUsage<T>) -> ts_derp::IpUsage<T>
 where
     T: Copy,
 {
     match ip {
-        ts_control_serde::DerpIpUsage::Disable => ts_transport_derp::IpUsage::Disable,
-        ts_control_serde::DerpIpUsage::UseDns => ts_transport_derp::IpUsage::UseDns,
-        ts_control_serde::DerpIpUsage::FixedAddr(ip) => ts_transport_derp::IpUsage::FixedAddr(ip),
+        ts_control_serde::DerpIpUsage::Disable => ts_derp::IpUsage::Disable,
+        ts_control_serde::DerpIpUsage::UseDns => ts_derp::IpUsage::UseDns,
+        ts_control_serde::DerpIpUsage::FixedAddr(ip) => ts_derp::IpUsage::FixedAddr(ip),
     }
 }
 

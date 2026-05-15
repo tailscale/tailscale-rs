@@ -7,7 +7,7 @@ use ts_keys::{DiscoPublicKey, MachinePublicKey, NodePublicKey};
 pub type Id = i64;
 
 /// The stable ID of a node.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StableId(pub String);
 
 /// A node in a tailnet.
@@ -46,7 +46,7 @@ pub struct Node {
     pub underlay_addresses: Vec<SocketAddr>,
 
     /// The DERP region for this node, if known.
-    pub derp_region: Option<ts_transport_derp::RegionId>,
+    pub derp_region: Option<ts_derp::RegionId>,
 }
 
 impl Node {
@@ -65,6 +65,17 @@ impl Node {
             Some(tailnet) => format!("{}.{tailnet}{dot}", self.hostname),
             None => format!("{}{dot}", self.hostname),
         }
+    }
+
+    /// The fully-qualified domain name of the node, only returning `Some` if the tailnet
+    /// component is present.
+    ///
+    /// See [`Node::fqdn`].
+    pub fn fqdn_opt(&self, trailing_dot: bool) -> Option<String> {
+        let dot = if trailing_dot { "." } else { "" };
+        let tailnet = self.tailnet.as_deref()?;
+
+        Some(format!("{}.{tailnet}{dot}", self.hostname))
     }
 
     /// Report whether this node matches the given `name`.
@@ -155,7 +166,7 @@ impl From<&ts_control_serde::Node<'_>> for Node {
                 .home_derp
                 .or(value.legacy_derp_string)
                 .or_else(|| value.host_info.net_info.as_ref()?.preferred_derp)
-                .map(|x| ts_transport_derp::RegionId(x.into())),
+                .map(|x| ts_derp::RegionId(x.into())),
         }
     }
 }

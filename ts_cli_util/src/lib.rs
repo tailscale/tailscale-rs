@@ -5,8 +5,8 @@ use std::sync::Arc;
 use futures_util::{Stream, StreamExt};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+use ts_derp::{RegionId, ServerConnInfo};
 use ts_netcheck::RegionResult;
-use ts_transport_derp::{RegionId, ServerConnInfo};
 
 /// Result with a boxed [`core::error::Error`] trait object.
 pub type Result<T> = core::result::Result<T, Box<dyn core::error::Error + Send + Sync + 'static>>;

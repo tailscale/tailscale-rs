@@ -12,6 +12,7 @@ members = [
     "ts_control_noise",
     "ts_control_serde",
     "ts_dataplane",
+    "ts_derp",
     "ts_devtools",
     "ts_disco_protocol",
     "ts_dynbitset",
@@ -37,7 +38,6 @@ members = [
     "ts_time",
     "ts_tls_util",
     "ts_transport",
-    "ts_transport_derp",
     "ts_transport_tun",
     "ts_underlay_router",
     "ts_tunnel",
@@ -115,6 +115,7 @@ ts_control = { path = "ts_control", version = "0.2.0" }
 ts_control_noise = { path = "ts_control_noise", version = "0.2.0" }
 ts_control_serde = { path = "ts_control_serde", version = "0.2.0" }
 ts_dataplane = { path = "ts_dataplane", version = "0.2.0" }
+ts_derp = { path = "ts_derp", version = "0.2.0" }
 ts_disco_protocol = { path = "ts_disco_protocol", version = "0.2.0" }
 ts_dynbitset = { path = "ts_dynbitset", version = "0.2.0" }
 ts_hexdump = { path = "ts_hexdump", version = "0.2.0" }
@@ -136,7 +137,6 @@ ts_runtime = { path = "ts_runtime", version = "0.2.0" }
 ts_test_util = { path = "ts_test_util" }
 ts_time = { path = "ts_time", version = "0.2.0" }
 ts_transport = { path = "ts_transport", version = "0.2.0" }
-ts_transport_derp = { path = "ts_transport_derp", version = "0.2.0" }
 ts_transport_tun = { path = "ts_transport_tun", version = "0.2.0" }
 ts_underlay_router = { path = "ts_underlay_router", version = "0.2.0" }
 ts_tunnel = { path = "ts_tunnel", version = "0.2.0" }

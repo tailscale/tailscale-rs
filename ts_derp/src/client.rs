@@ -10,7 +10,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use ts_http_util::Client as _;
 use ts_keys::{NodeKeyPair, NodePublicKey};
 use ts_packet::PacketMut;
-use ts_transport::UnderlayTransport;
+use ts_transport::{BatchRecvIter, BatchSendIter, UnderlayTransport};
 use url::Url;
 
 use crate::{
@@ -23,7 +23,7 @@ type DefaultIo = ts_http_util::Upgraded;
 /// Type alias for the default derp client over upgraded HTTP on a tokio executor.
 pub type DefaultClient = Client<DefaultIo>;
 
-/// Asynchronous DERP transport for a single DERP region.
+/// Single-region DERP client.
 pub struct Client<Io> {
     read_conn: Mutex<FramedRead<ReadHalf<Io>, frame::Codec>>,
     write_conn: Mutex<FramedWrite<WriteHalf<Io>, frame::Codec>>,
@@ -117,6 +117,12 @@ where
         })
     }
 
+    /// Send a message to a nodekey on the derp server.
+    pub async fn send_one(&self, node_key: NodePublicKey, msg: &[u8]) -> Result<(), Error> {
+        self.send_frame_with_extra(&frame::SendPacket { dest: node_key }, msg)
+            .await
+    }
+
     /// Send a frame to the derp server.
     pub async fn send_frame(
         &self,
@@ -191,6 +197,7 @@ where
                 }
                 FrameType::RecvPacket => {
                     let (recv, payload) = frame.as_type::<frame::RecvPacket>().unwrap();
+
                     return Ok((recv.src, payload.into()));
                 }
                 t => {
@@ -278,32 +285,23 @@ impl<Io> UnderlayTransport for Client<Io>
 where
     Io: AsyncRead + AsyncWrite + Send,
 {
+    type PeerKey = NodePublicKey;
     type Error = Error;
 
-    #[tracing::instrument(fields(%self))]
-    async fn recv(
+    async fn send(
         &self,
-    ) -> impl IntoIterator<
-        Item = Result<(NodePublicKey, impl IntoIterator<Item = PacketMut>), Self::Error>,
-    > {
-        [self.recv_one().await.map(|(k, pkt)| (k, [pkt]))]
-    }
-
-    /// Send a batch of packets to a peer via this DERP server.
-    async fn send<BatchIter, PacketIter>(&self, peer_packets: BatchIter) -> Result<(), Self::Error>
-    where
-        BatchIter: IntoIterator<Item = (NodePublicKey, PacketIter)> + Send,
-        BatchIter::IntoIter: Send,
-        PacketIter: IntoIterator<Item = PacketMut> + Send,
-        PacketIter::IntoIter: Send,
-    {
-        for (peer, packets) in peer_packets {
-            for packet in packets {
-                self.send_frame_with_extra(&frame::SendPacket { dest: peer }, packet.as_ref())
-                    .await?;
+        packet_batch: impl BatchSendIter<Self::PeerKey>,
+    ) -> Result<(), Self::Error> {
+        for (key, pkt) in packet_batch.batch_iter() {
+            for pkt in pkt {
+                self.send_one(key, pkt.as_ref()).await?;
             }
         }
 
         Ok(())
+    }
+
+    async fn recv(&self) -> impl BatchRecvIter<Self::PeerKey, Error = Self::Error> {
+        [self.recv_one().await.map(|(k, pkt)| (k, [pkt]))]
     }
 }

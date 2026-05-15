@@ -14,7 +14,7 @@ rust-version.workspace = true
 # Our crates.
 ts_control.workspace = true
 ts_http_util.workspace = true
-ts_transport_derp.workspace = true
+ts_derp.workspace = true
 
 # Unconditionally required depdendencies.
 bytes.workspace = true

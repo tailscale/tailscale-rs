@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -11,14 +11,17 @@ use kameo::{
 };
 use tokio::{sync::watch, task::JoinSet};
 use ts_control::DerpRegion;
-use ts_keys::NodeKeyPair;
-use ts_transport::{UnderlayTransport, UnderlayTransportId};
-use ts_transport_derp::RegionId;
+use ts_derp::RegionId;
+use ts_keys::{NodeKeyPair, NodePublicKey};
+use ts_transport::{
+    BatchRecvIter, PeerId, UnderlayTransport, UnderlayTransportExt, UnderlayTransportId,
+};
 
 use crate::{
     Env, Error,
     dataplane::{DataplaneActor, NewUnderlayTransport, UnderlayFromDataplane, UnderlayToDataplane},
     derp_latency::DerpLatencyMeasurement,
+    peer_tracker::{PeerDb, PeerState},
 };
 
 /// Consumes derp map updates and spawns a task per region that runs an underlay transport.
@@ -33,6 +36,7 @@ pub struct Multiderp {
     dataplane: ActorRef<DataplaneActor>,
     derps: HashMap<RegionId, RegionEntry>,
     current_home_derp: Option<RegionId>,
+    peer_db: Arc<RwLock<Option<Arc<PeerDb>>>>,
     tasks: JoinSet<()>,
 }
 
@@ -72,6 +76,8 @@ impl Multiderp {
         };
         let (home_derp_tx, mut home_derp_rx) = watch::channel(false);
 
+        let peer_db = self.peer_db.clone();
+
         self.tasks.spawn(async move {
             while !*shutdown.borrow() {
                 tokio::select! {
@@ -85,6 +91,7 @@ impl Multiderp {
                         &down,
                         &mut up,
                         &mut home_derp_rx,
+                        &peer_db,
                     ) => if let Err(e) = ret {
                         tracing::error!(error = %e, region_id = %id, "running derp client");
                         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -121,6 +128,29 @@ impl Multiderp {
     }
 }
 
+struct PeerDbLookup<'a>(&'a RwLock<Option<Arc<PeerDb>>>);
+
+impl ts_transport::PeerLookup<PeerId, NodePublicKey> for PeerDbLookup<'_> {
+    fn lookup_key(&self, id: PeerId) -> Option<NodePublicKey> {
+        let db = self.0.read().unwrap();
+        let db = db.as_ref()?;
+
+        let (_, node) = db.get(&id)?;
+        Some(node.node_key)
+    }
+}
+
+impl ts_transport::PeerLookup<NodePublicKey, PeerId> for PeerDbLookup<'_> {
+    fn lookup_key(&self, key: NodePublicKey) -> Option<PeerId> {
+        let db = self.0.read().unwrap();
+        let db = db.as_ref()?;
+
+        let (id, _) = db.get(&key)?;
+
+        Some(id)
+    }
+}
+
 #[tracing::instrument(skip_all, fields(region_id = %id), name = "derp packet transport")]
 async fn run_derp_once(
     id: RegionId,
@@ -129,7 +159,8 @@ async fn run_derp_once(
     to_dataplane: &UnderlayToDataplane,
     from_dataplane: &mut UnderlayFromDataplane,
     home_derp_rx: &mut watch::Receiver<bool>,
-) -> Result<(), ts_transport_derp::Error> {
+    peer_db: &RwLock<Option<Arc<PeerDb>>>,
+) -> Result<(), ts_derp::Error> {
     const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(10);
 
     loop {
@@ -153,11 +184,12 @@ async fn run_derp_once(
 
         tracing::trace!("establishing derp connection");
 
-        let client = ts_transport_derp::DefaultClient::connect(&region.servers, &keys).await?;
+        let client = ts_derp::DefaultClient::connect(&region.servers, &keys).await?;
+        let transport = client.with_key_lookup(PeerDbLookup(peer_db));
 
         if let Some(pending) = pending {
             tracing::trace!("sending queued packet");
-            client.send([pending]).await?;
+            transport.send([pending]).await?;
         }
 
         let mut last_activity = Instant::now();
@@ -169,16 +201,20 @@ async fn run_derp_once(
                 (!*home_derp_rx.borrow()).then(|| last_activity + INACTIVITY_TIMEOUT);
 
             tokio::select! {
-                from_derp = client.recv_one() => {
+                from_derp = transport.recv() => {
                     last_activity = Instant::now();
 
-                    let (peer, pkt) = from_derp?;
-                    tracing::trace!(parent: &span, %peer, len = pkt.len(), "packet from derp server");
+                    for ret in from_derp.batch_iter() {
+                        let (peer_id, pkts) = ret?;
+                        let pkts = pkts.into_iter().collect::<Vec<_>>();
 
-                    let Ok(()) = to_dataplane.send((peer, vec![pkt])) else {
-                        tracing::error!(parent: &span, "underlay receive channel closed");
-                        break;
-                    };
+                        tracing::trace!(parent: &span, %peer_id, len = pkts.len(), "packet from derp server");
+
+                        let Ok(()) = to_dataplane.send((peer_id, pkts)) else {
+                            tracing::error!(parent: &span, "underlay receive channel closed");
+                            break;
+                        };
+                    }
                 },
 
                 from_net = from_dataplane.recv() => {
@@ -191,7 +227,7 @@ async fn run_derp_once(
 
                     tracing::trace!(parent: &span, peer = %from_net.0, packets = from_net.1.len(), "packets to derp server");
 
-                    client.send([from_net]).await?;
+                    transport.send([from_net]).await?;
                 },
 
                 _ = option_timeout(inactivity_timeout) => {
@@ -225,11 +261,13 @@ impl kameo::Actor for Multiderp {
         slf: ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+        env.subscribe::<Arc<PeerState>>(&slf).await?;
         env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
 
         Ok(Self {
             env,
             dataplane,
+            peer_db: Default::default(),
             derps: Default::default(),
             tasks: JoinSet::new(),
             current_home_derp: None,
@@ -266,6 +304,15 @@ impl Message<Arc<ts_control::StateUpdate>> for Multiderp {
                     .send_replace(true);
             }
         }
+    }
+}
+
+impl Message<Arc<PeerState>> for Multiderp {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
+        let mut db = self.peer_db.write().unwrap();
+        *db = Some(msg.peers.clone());
     }
 }
 

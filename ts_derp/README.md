@@ -1,3 +1,3 @@
-# ts_transport_derp
+# ts_derp
 
 Tailscale derp protocol and client.

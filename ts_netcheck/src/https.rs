@@ -4,8 +4,8 @@ use core::{net::SocketAddr, time::Duration};
 use std::{io, time::Instant};
 
 use tokio::io::{AsyncRead, AsyncWrite};
+use ts_derp::ServerConnInfo;
 use ts_http_util::{ClientExt, EmptyBody, Http1};
-use ts_transport_derp::ServerConnInfo;
 use url::Url;
 
 /// Errors that may occur while probing derp latency.
@@ -44,9 +44,9 @@ impl From<ts_http_util::Error> for Error {
     }
 }
 
-impl From<ts_transport_derp::dial::Error> for Error {
-    fn from(value: ts_transport_derp::dial::Error) -> Self {
-        use ts_transport_derp::dial;
+impl From<ts_derp::dial::Error> for Error {
+    fn from(value: ts_derp::dial::Error) -> Self {
+        use ts_derp::dial;
 
         match value {
             dial::Error::Io => Error::Io,
@@ -101,8 +101,8 @@ impl Default for Config {
 ///
 /// Returns `None` iff no servers could be successfully measured, either due to connectivity errors
 /// or because they were not configured to be reachable. See the notes on
-/// [`dial_region_tls`][ts_transport_derp::dial::dial_region_tls] and
-/// [`dial_region_tcp`][ts_transport_derp::dial::dial_region_tcp] for more details on when
+/// [`dial_region_tls`][ts_derp::dial::dial_region_tls] and
+/// [`dial_region_tcp`][ts_derp::dial::dial_region_tcp] for more details on when
 /// servers are treated as not configured for reachability.
 pub async fn measure_https_latency<'c>(
     servers: impl IntoIterator<Item = &'c ServerConnInfo>,
@@ -120,18 +120,17 @@ pub async fn measure_https_latency<'c>(
     let mut servers = servers.into_iter();
 
     loop {
-        let (conn, server, remote) =
-            match ts_transport_derp::dial::dial_region_tls(&mut servers).await {
-                Ok(Some(x)) => x,
-                Ok(None) => {
-                    tracing::warn!("ran out of servers to dial");
-                    return None;
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "dialing tls");
-                    continue;
-                }
-            };
+        let (conn, server, remote) = match ts_derp::dial::dial_region_tls(&mut servers).await {
+            Ok(Some(x)) => x,
+            Ok(None) => {
+                tracing::warn!("ran out of servers to dial");
+                return None;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "dialing tls");
+                continue;
+            }
+        };
 
         match measure_server_latency(conn, server, &config).await {
             Ok(dur) => return Some((dur, server, remote)),
@@ -231,7 +230,7 @@ mod test {
 
         let info = info();
 
-        let (conn, server, remote) = ts_transport_derp::dial::dial_region_tls([&info])
+        let (conn, server, remote) = ts_derp::dial::dial_region_tls([&info])
             .await
             .unwrap()
             .unwrap();

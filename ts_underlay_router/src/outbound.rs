@@ -2,28 +2,24 @@
 
 use std::collections::HashMap;
 
-use ts_keys::NodePublicKey;
 use ts_packet::PacketMut;
-use ts_transport::UnderlayTransportId;
+use ts_transport::{PeerId, UnderlayTransportId};
 
 /// Routes packets that originate from the local device.
 #[derive(Default)]
 pub struct Router {
     /// The transport to use for sending to each wireguard peer.
-    pub table: HashMap<NodePublicKey, UnderlayTransportId>,
+    pub table: HashMap<PeerId, UnderlayTransportId>,
 }
 
 /// The outcome of routing packets.
-pub type Result = HashMap<(UnderlayTransportId, NodePublicKey), Vec<PacketMut>>;
+pub type Result = HashMap<(UnderlayTransportId, PeerId), Vec<PacketMut>>;
 
 impl Router {
     /// Assigns a batch of packets to their next hop.
     ///
     /// Packets that don't match any routes are dropped.
-    pub fn route(
-        &self,
-        batches: impl IntoIterator<Item = (NodePublicKey, Vec<PacketMut>)>,
-    ) -> Result {
+    pub fn route(&self, batches: impl IntoIterator<Item = (PeerId, Vec<PacketMut>)>) -> Result {
         let mut ret = Result::default();
 
         for (peer_id, packets) in batches {
@@ -44,11 +40,11 @@ mod tests {
 
     #[test]
     fn test_outbound_underlay() {
-        let peer_a = NodePublicKey::from([1u8; 32]);
-        let peer_b = NodePublicKey::from([2u8; 32]);
-        let peer_c = NodePublicKey::from([3u8; 32]);
-        let peer_d = NodePublicKey::from([4u8; 32]);
-        let peer_e = NodePublicKey::from([5u8; 32]);
+        let peer_a = PeerId(1);
+        let peer_b = PeerId(2);
+        let peer_c = PeerId(3);
+        let peer_d = PeerId(4);
+        let peer_e = PeerId(5);
         let transport_a = 5.into();
         let transport_b = 6.into();
         let transport_c = 7.into();

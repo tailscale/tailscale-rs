@@ -4,9 +4,8 @@ use std::collections::HashMap;
 
 use itertools::Itertools;
 use ts_bart::{RoutingTable, Table};
-use ts_keys::NodePublicKey;
 use ts_packet::PacketMut;
-use ts_transport::OverlayTransportId;
+use ts_transport::{OverlayTransportId, PeerId};
 
 /// An outbound routing action.
 #[derive(Debug, Clone)]
@@ -18,7 +17,7 @@ pub enum RouteAction {
     Drop,
 
     /// Send to a wireguard peer.
-    Wireguard(NodePublicKey),
+    Wireguard(PeerId),
 
     /// Loop the packet back to a local overlay transport.
     ///
@@ -36,7 +35,7 @@ pub struct Router {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct Result {
     /// Packets to send through wireguard.
-    pub to_wireguard: HashMap<NodePublicKey, Vec<PacketMut>>,
+    pub to_wireguard: HashMap<PeerId, Vec<PacketMut>>,
     /// Packets to return to a local transport.
     pub loopback: HashMap<OverlayTransportId, Vec<PacketMut>>,
 }
@@ -102,8 +101,8 @@ mod tests {
 
     #[test]
     fn test_outbound_overlay() {
-        let peer_a = NodePublicKey::from([1u8; 32]);
-        let peer_b = NodePublicKey::from([2u8; 32]);
+        let peer_a = PeerId(0);
+        let peer_b = PeerId(1);
         let magicdns = 42.into();
 
         let mut routes = Table::default();
