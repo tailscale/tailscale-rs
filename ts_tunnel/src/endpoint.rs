@@ -74,8 +74,8 @@ enum SessionState {
     None(Queue),
     /// Active session available.
     Active {
-        recv: ReceiveSession,
-        recv_prev: Option<ReceiveSession>,
+        recv: Box<ReceiveSession>,
+        recv_prev: Option<Box<ReceiveSession>>,
         send: TransmitSession,
     },
 }
@@ -99,7 +99,7 @@ impl SessionState {
                 next.send.encrypt(&mut ret);
                 *self = SessionState::Active {
                     send: next.send,
-                    recv: next.recv,
+                    recv: Box::new(next.recv),
                     recv_prev: None,
                 };
                 ret
@@ -114,7 +114,7 @@ impl SessionState {
                     .inspect(|recv_prev| endpoint.ids.remove_session(recv_prev.id()));
                 *self = SessionState::Active {
                     send: next.send,
-                    recv: next.recv,
+                    recv: Box::new(next.recv),
                     recv_prev: Some(recv),
                 };
                 vec![]
@@ -177,7 +177,7 @@ impl SessionState {
     }
 
     /// Get the receive session matching the given ID, if any.
-    fn get_recv(&self, id: SessionId) -> Option<&ReceiveSession> {
+    fn get_recv(&mut self, id: SessionId) -> Option<&mut ReceiveSession> {
         match self {
             SessionState::None(_) => None,
             SessionState::Active {
@@ -185,7 +185,7 @@ impl SessionState {
             } => {
                 if recv.id() == id && !recv.expired(Instant::now()) {
                     Some(recv)
-                } else if let Some(recv_prev) = recv_prev.as_ref()
+                } else if let Some(recv_prev) = recv_prev.as_mut()
                     && recv_prev.id() == id
                     && !recv.expired(Instant::now())
                 {

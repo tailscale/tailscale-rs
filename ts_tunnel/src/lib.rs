@@ -5,6 +5,7 @@ mod endpoint;
 mod handshake;
 mod macs;
 mod messages;
+mod replay;
 mod session;
 mod time;
 

@@ -532,13 +532,14 @@ mod tests {
         assert_eq!(b_handshake.peer_static, a_static.public);
         assert_eq!(b_handshake.timestamp, a_init_time);
         let b_session = SessionId::random(); // B wants to receive at this ID
-        let (b_session, response_pkt) =
+        let (mut b_session, response_pkt) =
             b_handshake.respond(b_session, &psk, &b_mac_send, Instant::now());
 
         // Peer A receives response
         let response_pkt = HandshakeResponse::try_ref_from_bytes(response_pkt.as_ref())
             .expect("response_pkt should be a valid handshake response message");
-        let Some(a_session) = a_handshake.finish(response_pkt, &psk, &a_mac_recv, Instant::now())
+        let Some(mut a_session) =
+            a_handshake.finish(response_pkt, &psk, &a_mac_recv, Instant::now())
         else {
             panic!("failed to process handshake response from peer B");
         };
