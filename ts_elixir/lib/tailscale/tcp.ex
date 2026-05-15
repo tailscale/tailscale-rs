@@ -1,4 +1,6 @@
 defmodule Tailscale.Tcp do
+  require Tailscale.Util
+
   @moduledoc """
   Functionality to create tailscale TCP sockets.
 
@@ -19,7 +21,7 @@ defmodule Tailscale.Tcp do
   @spec listen(Tailscale.t(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) ::
           {:ok, Tailscale.Tcp.Listener.t()} | {:error, any()}
   def listen(dev, addr, port) do
-    Tailscale.Native.tcp_listen(dev, addr, port)
+    Tailscale.Util.await(Tailscale.Native.tcp_listen(dev, addr, port))
   end
 
   @doc """
@@ -28,6 +30,6 @@ defmodule Tailscale.Tcp do
   @spec connect(Tailscale.t(), Tailscale.ip_addr(), :inet.port_number()) ::
           {:ok, Tailscale.Tcp.Stream.t()} | {:error, any()}
   def connect(dev, addr, port) do
-    Tailscale.Native.tcp_connect(dev, addr, port)
+    Tailscale.Util.await(Tailscale.Native.tcp_connect(dev, addr, port))
   end
 end

@@ -1,9 +1,20 @@
 defmodule Tailscale.Native do
+  @moduledoc false
+
+  @testing_nifs Application.compile_env!(:tailscale, :testing_nifs)
+  @profile Application.compile_env!(:tailscale, :profile)
+
+  @features (if @testing_nifs do
+               ["testing-nifs"]
+             else
+               []
+             end)
+
   use Rustler,
     otp_app: :tailscale,
-    crate: :ts_elixir
-
-  @moduledoc false
+    crate: :ts_elixir,
+    mode: @profile,
+    features: @features
 
   # The Elixir side of the Rustler bindings to `tailscale-rs`.
   #
@@ -32,6 +43,31 @@ defmodule Tailscale.Native do
   """
   @opaque tcp_stream :: reference()
 
+  @typedoc """
+  NIFs provided here may have asynchronous effects that would typically block and require the use of
+  the DirtyIO scheduler. This is undesirable as we may have a large number of concurrent calls into
+  the NIFs, which could exhaust the DirtyIO thread pool. Instead, we use message passing on the Rust
+  side to send replies back into the BEAM. Functions that use this model return `async_reply`
+  without blocking. The `:async` case means the reply will be sent asynchronously using a message of
+  the format `{:tailscale, REF, PAYLOAD}`, where `REF` is the reference associated with the `:async`
+  response, guaranteed unique per call.
+
+  The `:error` response means that an error was encountered before dispatching the asynchronous
+  call.
+
+  The `:nif_panic` response means that the NIF panicked during execution; the second parameter is
+  the reason for the panic (if given).
+
+  `{:raise, TERM}` means `TERM` should be raised as an exception.
+
+  `m:Tailscale.Util` has helpers for decoding messages of this form.
+  """
+  @type async_reply() ::
+          {:async, reference()}
+          | {:error, any()}
+          | {:nif_panic, String.t() | {}}
+          | {:raise, any()}
+
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 
   @doc """
@@ -39,7 +75,7 @@ defmodule Tailscale.Native do
 
   See `t:Tailscale.options/0` for details on what options are supported.
   """
-  @spec connect(%{}) :: {:ok, device()} | {:error, any()}
+  @spec connect(%{}) :: async_reply()
   def connect(_opts), do: err()
 
   @doc """
@@ -51,7 +87,7 @@ defmodule Tailscale.Native do
   - `port`: the port to which the socket should bind.
   """
   @spec udp_bind(device(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) ::
-          {:ok, udp_socket()} | {:error, any()}
+          async_reply()
   def udp_bind(_dev, _addr, _port), do: err()
 
   @doc """
@@ -65,14 +101,14 @@ defmodule Tailscale.Native do
   - `msg`: the packet to send.
   """
   @spec udp_send(udp_socket(), Tailscale.ip_addr(), :inet.port_number(), binary()) ::
-          :ok | {:error, any()}
+          async_reply()
   def udp_send(_sock, _ip, _port, _msg), do: err()
 
   @doc """
   Receive an incoming UDP packet on the given socket.
   """
   @spec udp_recv(udp_socket()) ::
-          {:ok, :inet.ip_address(), :inet.port_number(), binary()} | {:error, any()}
+          async_reply()
   def udp_recv(_sock), do: err()
 
   @doc """
@@ -92,7 +128,7 @@ defmodule Tailscale.Native do
   Start a TCP listener on the given device, address, and port.
   """
   @spec tcp_listen(device(), Tailscale.ip_addr() | :ip4 | :ip6, :inet.port_number()) ::
-          {:ok, tcp_listener()} | {:error, any()}
+          async_reply()
   def tcp_listen(_dev, _addr, _port), do: err()
 
   @doc """
@@ -105,13 +141,13 @@ defmodule Tailscale.Native do
   Connect to the given TCP endpoint using the given device.
   """
   @spec tcp_connect(device(), Tailscale.ip_addr(), :inet.port_number()) ::
-          {:ok, tcp_stream()} | {:error, any()}
+          async_reply()
   def tcp_connect(_dev, _addr, _port), do: err()
 
   @doc """
   Accept an incoming TCP connection. Blocks until one is available.
   """
-  @spec tcp_accept(tcp_listener()) :: {:ok, tcp_stream()} | {:error, any()}
+  @spec tcp_accept(tcp_listener()) :: async_reply()
   def tcp_accept(_listener), do: err()
 
   @doc """
@@ -120,13 +156,13 @@ defmodule Tailscale.Native do
 
   Returns the number of bytes actually written to the remote.
   """
-  @spec tcp_send(tcp_stream(), binary()) :: {:ok, integer()} | {:error, any()}
+  @spec tcp_send(tcp_stream(), binary()) :: async_reply()
   def tcp_send(_stream, _msg), do: err()
 
   @doc """
   Receive incoming data from the tcp socket, blocking until at least one byte can be received.
   """
-  @spec tcp_recv(tcp_stream()) :: {:ok, binary()} | {:error, any()}
+  @spec tcp_recv(tcp_stream()) :: async_reply()
   def tcp_recv(_stream), do: err()
 
   @doc """
@@ -146,7 +182,7 @@ defmodule Tailscale.Native do
 
   Blocks until the device is connected and gets its address from control.
   """
-  @spec ipv4_addr(device()) :: {:ok, :inet.ip4_address()} | {:error, any()}
+  @spec ipv4_addr(device()) :: async_reply()
   def ipv4_addr(_dev), do: err()
 
   @doc """
@@ -154,36 +190,68 @@ defmodule Tailscale.Native do
 
   Blocks until the device is connected and gets its address from control.
   """
-  @spec ipv6_addr(device()) :: {:ok, :inet.ip6_address()} | {:error, any()}
+  @spec ipv6_addr(device()) :: async_reply()
   def ipv6_addr(_dev), do: err()
 
   @doc """
   Retrieve a peer by name.
   """
-  @spec peer_by_name(device(), String.t()) :: {:ok, %{} | nil} | {:error, any()}
+  @spec peer_by_name(device(), String.t()) :: async_reply()
   def peer_by_name(_dev, _name), do: err()
 
   @doc """
   Retrieve this node's info
   """
-  @spec self_node(device()) :: {:ok, %{}} | {:error, any()}
+  @spec self_node(device()) :: async_reply()
   def self_node(_dev), do: err()
 
   @doc """
   Retrieve a peer by its tailnet IP.
   """
-  @spec peer_by_tailnet_ip(device(), Tailscale.ip_addr()) :: {:ok, %{} | nil} | {:error, any()}
+  @spec peer_by_tailnet_ip(device(), Tailscale.ip_addr()) :: async_reply()
   def peer_by_tailnet_ip(_dev, _ip), do: err()
 
   @doc """
   Retrieve the most narrow set of peers that accept packets for the specified IP.
   """
-  @spec peers_with_route(device(), Tailscale.ip_addr()) :: {:ok, [%{}]} | {:error, any()}
+  @spec peers_with_route(device(), Tailscale.ip_addr()) :: async_reply()
   def peers_with_route(_dev, _ip), do: err()
 
   @doc """
   Load key state from the specified path, generating a new state if the file doesn't exist.
   """
-  @spec load_key_file(String.t()) :: {:ok, Tailscale.Keystate.t()} | {:error, any()}
+  @spec load_key_file(String.t()) :: async_reply()
   def load_key_file(_path), do: err()
+
+  @doc """
+  Raise a `:badarg` exception.
+  """
+  @spec raise_badarg() :: nil
+  def raise_badarg(), do: err()
+
+  if @testing_nifs do
+    @doc """
+    DEV ONLY: trigger an async panic in the Rust code with the given message (if provided).
+    """
+    @spec async_panic(String.t() | nil) :: async_reply()
+    def async_panic(_msg \\ nil), do: err()
+
+    @doc """
+    DEV ONLY: trigger a raised exception in the Rust code with the given message.
+    """
+    @spec async_raise(String.t(), boolean()) :: async_reply()
+    def async_raise(_msg, _atom \\ false), do: err()
+
+    @doc """
+    DEV ONLY: trigger an asynchronous error in the Rust code with the given message.
+    """
+    @spec async_error(String.t(), boolean()) :: async_reply()
+    def async_error(_msg, _atom \\ false), do: err()
+
+    @doc """
+    DEV ONLY: trigger an asynchronous `:badarg` in the Rust code with the given message.
+    """
+    @spec async_badarg() :: async_reply()
+    def async_badarg(), do: err()
+  end
 end

@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
-use rustler::{Encoder, ResourceArc};
+use rustler::{Encoder, NifResult, ResourceArc};
+use tap::Pipe;
 
-use crate::{IpOrSelf, Result, TOKIO_RUNTIME, atoms, erl_result, ip_from_erl, ok_arc};
+use crate::{
+    AsyncReply, IpOrSelf, erl_ip::ErlIp, helpers::term_err, ok_arc, sockaddr_to_erl,
+    try_reply_async,
+};
 
 pub(crate) struct TcpListener {
     inner: Arc<tailscale::netstack::TcpListener>,
@@ -18,98 +22,95 @@ impl rustler::Resource for TcpListener {}
 #[rustler::resource_impl]
 impl rustler::Resource for TcpStream {}
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn tcp_listen(
-    env: rustler::Env,
+#[rustler::nif]
+fn tcp_listen<'e>(
+    env: rustler::Env<'e>,
     dev: ResourceArc<crate::Device>,
-    addr: rustler::Term,
+    ip: IpOrSelf,
     port: u16,
-) -> impl Encoder {
+) -> NifResult<AsyncReply<'e>> {
     let dev = dev.inner.clone();
-    let ip = IpOrSelf::new(addr);
 
-    let sock = TOKIO_RUNTIME.block_on(async move {
-        let addr = ip.ok_or("invalid ip addr")?.resolve(&dev).await?;
-        let sock = dev.tcp_listen((addr, port).into()).await?;
+    try_reply_async(env, async move {
+        let addr = ip.resolve(&dev).await?;
+        let sock = dev
+            .tcp_listen((addr, port).into())
+            .await
+            .map_err(term_err)?;
 
         ok_arc(TcpListener {
             inner: Arc::new(sock),
         })
-    });
-
-    erl_result(env, sock)
+    })
+    .pipe(Ok)
 }
 
 #[rustler::nif]
-fn tcp_listen_local_addr(env: rustler::Env, listener: ResourceArc<TcpListener>) -> impl Encoder {
-    crate::sockaddr_to_erl(env, listener.inner.local_addr())
+fn tcp_listen_local_addr(listener: ResourceArc<TcpListener>) -> impl Encoder {
+    sockaddr_to_erl(listener.inner.local_addr())
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn tcp_connect(
-    env: rustler::Env<'_>,
+#[rustler::nif]
+fn tcp_connect<'e>(
+    env: rustler::Env<'e>,
     dev: ResourceArc<crate::Device>,
-    addr: rustler::Term,
+    addr: ErlIp,
     port: u16,
-) -> impl Encoder {
-    let addr = ip_from_erl(addr);
+) -> NifResult<AsyncReply<'e>> {
     let dev = dev.inner.clone();
 
-    let sock = TOKIO_RUNTIME.block_on(async move {
-        let addr = addr.ok_or("invalid ip addr")?;
-        let sock = dev.tcp_connect((addr, port).into()).await?;
+    try_reply_async(env, async move {
+        let sock = dev
+            .tcp_connect((addr, port).into())
+            .await
+            .map_err(term_err)?;
 
         ok_arc(TcpStream {
             inner: Arc::new(sock),
         })
-    });
-
-    erl_result(env, sock)
+    })
+    .pipe(Ok)
 }
 
-#[rustler::nif(schedule = "DirtyIo")]
-fn tcp_accept(env: rustler::Env<'_>, sock: ResourceArc<TcpListener>) -> impl Encoder {
+#[rustler::nif]
+fn tcp_accept(env: rustler::Env<'_>, sock: ResourceArc<TcpListener>) -> AsyncReply<'_> {
     let inner = sock.inner.clone();
 
-    let sock = TOKIO_RUNTIME.block_on(async move {
-        let stream = inner.accept().await?;
+    try_reply_async(env, async move {
+        let stream = inner.accept().await.map_err(term_err)?;
 
         ok_arc(TcpStream {
             inner: Arc::new(stream),
         })
-    });
-
-    erl_result(env, sock)
-}
-
-#[rustler::nif(schedule = "DirtyIo")]
-fn tcp_send(env: rustler::Env, sock: ResourceArc<TcpStream>, msg: Vec<u8>) -> rustler::Term {
-    let inner = sock.inner.clone();
-
-    match TOKIO_RUNTIME.block_on(async move { inner.send(&msg).await }) {
-        Ok(n) => (atoms::ok(), n).encode(env),
-        Err(e) => (atoms::error(), e.to_string()).encode(env),
-    }
-}
-
-#[rustler::nif(schedule = "DirtyIo")]
-fn tcp_recv(env: rustler::Env, sock: ResourceArc<TcpStream>) -> impl Encoder {
-    let inner = sock.inner.clone();
-
-    let buf = TOKIO_RUNTIME.block_on(async move {
-        let buf = inner.recv_bytes().await?;
-        Result::<_>::Ok(buf.to_vec())
-    });
-
-    erl_result(env, buf)
+    })
 }
 
 #[rustler::nif]
-fn tcp_local_addr(env: rustler::Env, sock: ResourceArc<TcpStream>) -> impl Encoder {
-    crate::sockaddr_to_erl(env, sock.inner.local_addr())
+fn tcp_send(env: rustler::Env, sock: ResourceArc<TcpStream>, msg: Vec<u8>) -> AsyncReply {
+    let inner = sock.inner.clone();
+
+    try_reply_async(env, async move { inner.send(&msg).await.map_err(term_err) })
 }
 
 #[rustler::nif]
-fn tcp_remote_addr(env: rustler::Env, sock: ResourceArc<TcpStream>) -> impl Encoder {
-    crate::sockaddr_to_erl(env, sock.inner.remote_addr())
+fn tcp_recv(env: rustler::Env, sock: ResourceArc<TcpStream>) -> AsyncReply {
+    let inner = sock.inner.clone();
+
+    try_reply_async(env, async move {
+        inner
+            .recv_bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(term_err)
+    })
+}
+
+#[rustler::nif]
+fn tcp_local_addr(sock: ResourceArc<TcpStream>) -> impl Encoder {
+    sockaddr_to_erl(sock.inner.local_addr())
+}
+
+#[rustler::nif]
+fn tcp_remote_addr(sock: ResourceArc<TcpStream>) -> impl Encoder {
+    sockaddr_to_erl(sock.inner.remote_addr())
 }

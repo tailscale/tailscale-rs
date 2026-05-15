@@ -60,7 +60,7 @@ def main():
         for dep in list(cargotoml[name].keys()):
             value = cargotoml[name][dep]
 
-            if type(value) == dict and value['workspace'] is True:
+            if type(value) == dict and value.get('workspace') is True:
                 if args.repo_sha and (dep.startswith('tailscale') or dep.startswith('ts_')):
                     value['git'] = f'https://github.com/tailscale/tailscale-rs'
                     value['rev'] = args.repo_sha
