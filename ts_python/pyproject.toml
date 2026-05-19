@@ -1,6 +1,6 @@
 [project]
 name = "tailscale-py"
-version = "0.2.0"
+version = "0.3.0"
 description = "Work-in-progress Tailscale library written in Rust."
 license = "BSD-3-Clause"
 readme = "README.md"
@@ -18,10 +18,6 @@ classifiers = [
 
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Networking",
-]
-
-dependencies = [
-    "maturin>=1.13.1",
 ]
 
 [project.urls]
