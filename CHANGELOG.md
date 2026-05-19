@@ -2,7 +2,9 @@
 
 Records breaking or significant changes here. All dates are UTC.
 
-## Unreleased - May 2026
+## Unreleased - June 2026
+
+## [0.3](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.0) - 2026-05-19
 
 - **Breaking** (Rust API): exports `config`, `netstack`, and `keys` modules and moves some functionality
   from the crate root to these modules. Replaces `load_key_file` with `Config::default_with_key_file`.
