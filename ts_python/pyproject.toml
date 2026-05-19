@@ -36,7 +36,7 @@ module-name = "tailscale._internal"
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple/"
-publish-url = "https://pypi.org/legacy/"
+publish-url = "https://upload.pypi.org/legacy/"
 explicit = true
 
 [[tool.uv.index]]
