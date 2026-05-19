@@ -1,10 +1,16 @@
 # Changelog
 
-Records breaking or significant changes here. All dates are UTC.
+Record breaking or significant changes here. All dates are UTC.
 
 ## Unreleased - June 2026
 
-## [0.3](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.0) - 2026-05-19
+## [0.3.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.1) - 2026-05-20
+
+- Minor fixes to CI/CD publishing infrastructure.
+
+## [0.3.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.0) - 2026-05-19
+
+Internal release; this version is tagged, but was not published to any package repositories.
 
 - **Breaking** (Rust API): exports `config`, `netstack`, and `keys` modules and moves some functionality
   from the crate root to these modules. Replaces `load_key_file` with `Config::default_with_key_file`.
@@ -25,10 +31,10 @@ Records breaking or significant changes here. All dates are UTC.
 - Updated MSRV to 1.94.1.
   [#181](https://github.com/tailscale/tailscale-rs/pull/181).
 
-## [0.2](https://github.com/tailscale/tailscale-rs/releases/tag/v0.2.0) - 2026-04-15
+## [0.2.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.2.0) - 2026-04-15
 
 Initial public release.
 
-## 0.1
+## 0.1.0
 
 Hello, world!

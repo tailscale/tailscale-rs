@@ -1,6 +1,6 @@
 [project]
 name = "tailscale-py"
-version = "0.3.0"
+version = "0.3.1"
 description = "Work-in-progress Tailscale library written in Rust."
 license = "BSD-3-Clause"
 readme = "README.md"
