@@ -186,14 +186,20 @@ Releases must be [tagged](https://github.com/tailscale/tailscale-rs/tags) in `vX
 Actions workflow that automatically builds and publishes packages to their respective package
 repositories (crates.io, PyPI, etc.).
 
-Prior to creating a release tag, verify:
-- The changelog is up-to-date and the 'Unreleased' section header has been updated to the new
-release version.
-- All package versions have been updated to the correct release version, e.g. in `Cargo.toml`, 
+Prior to creating a release tag:
+- Verify that the changelog is up-to-date and the 'Unreleased' section header has been updated to
+the new release version.
+- Update all package versions to the correct release version, e.g. in `Cargo.toml`, `mix.exs`,
 `pyproject.toml`, etc.
+- Update all lockfiles to the correct release version with the appropriate tool, e.g.
+`cargo update --workspace`, `uv sync`, etc.
+- Disable the `Protect version tags (v*)` ruleset for the repository in GitHub. Under `Settings` →
+`Rulesets` → `Protect version tags (v*)` → `Enforcement Status`, change `Active` to `Disabled`.
 
-After creating a release tag, verify:
-- The pipeline for the release tag completed successfully.
-- The publish jobs for each package repository (such as `elixir/publish` and `rust/publish`)
-all completed successfully and were not skipped.
-- Each package repository shows the newly-released version.
+After creating a release tag:
+- Verify that the pipeline for the release tag completed successfully.
+- Verify that the publish jobs for each package repository (such as `elixir/publish` and
+`rust/publish`) all completed successfully and were not skipped.
+- Verify that each package repository shows the newly-released version.
+- Re-enable the `Protect version tags (v*)` ruleset for the repository in GitHub. Under `Settings` →
+`Rulesets` → `Protect version tags (v*)` → `Enforcement Status`, change `Disabled` to `Active`.
