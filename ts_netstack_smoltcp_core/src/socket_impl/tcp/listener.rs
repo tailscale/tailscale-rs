@@ -141,7 +141,7 @@ impl Netstack {
 
                 // De-queue a single socket in the `ESTABLISHED` state from the `accept_queue` and
                 // return it to become a `TcpStream`.
-                if let Some(accept) = listener.accept_queue.pop_front() {
+                while let Some(accept) = listener.accept_queue.pop_front() {
                     let sock = self.socket_set.get_mut::<tcp::Socket>(accept);
                     let state = sock.state();
                     let _span = tracing::trace_span!(
@@ -154,8 +154,21 @@ impl Netstack {
                     )
                     .entered();
 
-                    debug_assert_eq!(sock.state(), tcp::State::Established);
-                    tracing::trace!("accept socket accepted, returning");
+                    match state {
+                        tcp::State::Established => {
+                            tracing::trace!("accept socket accepted, returning")
+                        }
+                        tcp::State::CloseWait => {
+                            tracing::trace!(?state, "accept socket no longer established, closing");
+                            sock.close();
+                            self.pending_tcp_closes.push(accept);
+                            continue;
+                        }
+                        _ => {
+                            tracing::warn!(?state, "accept socket in unexpected state, dropping");
+                            continue;
+                        }
+                    }
 
                     let remote = sock.remote_endpoint().unwrap();
                     return TcpListenResponse::Accepted {
