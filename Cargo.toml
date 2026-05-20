@@ -47,7 +47,7 @@ members = [
 edition = "2024"
 license = "BSD-3-Clause"
 publish = true
-version = "0.3.1"
+version = "0.3.2"
 repository = "https://github.com/tailscale/tailscale-rs"
 
 # This disagrees with the README's stated MSRV. That's intentional: this field causes cargo to error
@@ -104,42 +104,42 @@ yoke = { version = "0.8", default-features = false }
 zerocopy = { version = "0.8", features = ["derive"] }
 
 # local workspace deps
-tailscale = { path = ".", version = "0.3.1" }
-ts_array256 = { path = "ts_array256", version = "0.3.1" }
-ts_bart = { path = "ts_bart", version = "0.3.1" }
-ts_bart_packetfilter = { path = "ts_bart_packetfilter", version = "0.3.1" }
-ts_bitset = { path = "ts_bitset", default-features = false, version = "0.3.1" }
-ts_capabilityversion = { path = "ts_capabilityversion", version = "0.3.1" }
+tailscale = { path = ".", version = "0.3.2" }
+ts_array256 = { path = "ts_array256", version = "0.3.2" }
+ts_bart = { path = "ts_bart", version = "0.3.2" }
+ts_bart_packetfilter = { path = "ts_bart_packetfilter", version = "0.3.2" }
+ts_bitset = { path = "ts_bitset", default-features = false, version = "0.3.2" }
+ts_capabilityversion = { path = "ts_capabilityversion", version = "0.3.2" }
 ts_cli_util = { path = "ts_cli_util" }
-ts_control = { path = "ts_control", version = "0.3.1" }
-ts_control_noise = { path = "ts_control_noise", version = "0.3.1" }
-ts_control_serde = { path = "ts_control_serde", version = "0.3.1" }
-ts_dataplane = { path = "ts_dataplane", version = "0.3.1" }
-ts_disco_protocol = { path = "ts_disco_protocol", version = "0.3.1" }
-ts_dynbitset = { path = "ts_dynbitset", version = "0.3.1" }
-ts_hexdump = { path = "ts_hexdump", version = "0.3.1" }
-ts_keys = { path = "ts_keys", version = "0.3.1" }
-ts_netcheck = { path = "ts_netcheck", version = "0.3.1" }
-ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.3.1" }
-ts_netstack_smoltcp_core = { path = "ts_netstack_smoltcp_core", version = "0.3.1" }
-ts_netstack_smoltcp_socket = { path = "ts_netstack_smoltcp_socket", version = "0.3.1" }
-ts_nodecapability = { path = "ts_nodecapability", version = "0.3.1" }
-ts_overlay_router = { path = "ts_overlay_router", version = "0.3.1" }
-ts_packet = { path = "ts_packet", version = "0.3.1" }
-ts_packetfilter = { path = "ts_packetfilter", version = "0.3.1" }
-ts_packetfilter_serde = { path = "ts_packetfilter_serde", version = "0.3.1" }
-ts_packetfilter_state = { path = "ts_packetfilter_state", version = "0.3.1" }
-ts_peercapability = { path = "ts_peercapability", version = "0.3.1" }
-ts_http_util = { path = "ts_http_util", version = "0.3.1" }
-ts_tls_util = { path = "ts_tls_util", version = "0.3.1" }
-ts_runtime = { path = "ts_runtime", version = "0.3.1" }
+ts_control = { path = "ts_control", version = "0.3.2" }
+ts_control_noise = { path = "ts_control_noise", version = "0.3.2" }
+ts_control_serde = { path = "ts_control_serde", version = "0.3.2" }
+ts_dataplane = { path = "ts_dataplane", version = "0.3.2" }
+ts_disco_protocol = { path = "ts_disco_protocol", version = "0.3.2" }
+ts_dynbitset = { path = "ts_dynbitset", version = "0.3.2" }
+ts_hexdump = { path = "ts_hexdump", version = "0.3.2" }
+ts_keys = { path = "ts_keys", version = "0.3.2" }
+ts_netcheck = { path = "ts_netcheck", version = "0.3.2" }
+ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.3.2" }
+ts_netstack_smoltcp_core = { path = "ts_netstack_smoltcp_core", version = "0.3.2" }
+ts_netstack_smoltcp_socket = { path = "ts_netstack_smoltcp_socket", version = "0.3.2" }
+ts_nodecapability = { path = "ts_nodecapability", version = "0.3.2" }
+ts_overlay_router = { path = "ts_overlay_router", version = "0.3.2" }
+ts_packet = { path = "ts_packet", version = "0.3.2" }
+ts_packetfilter = { path = "ts_packetfilter", version = "0.3.2" }
+ts_packetfilter_serde = { path = "ts_packetfilter_serde", version = "0.3.2" }
+ts_packetfilter_state = { path = "ts_packetfilter_state", version = "0.3.2" }
+ts_peercapability = { path = "ts_peercapability", version = "0.3.2" }
+ts_http_util = { path = "ts_http_util", version = "0.3.2" }
+ts_tls_util = { path = "ts_tls_util", version = "0.3.2" }
+ts_runtime = { path = "ts_runtime", version = "0.3.2" }
 ts_test_util = { path = "ts_test_util" }
-ts_time = { path = "ts_time", version = "0.3.1" }
-ts_transport = { path = "ts_transport", version = "0.3.1" }
-ts_transport_derp = { path = "ts_transport_derp", version = "0.3.1" }
-ts_transport_tun = { path = "ts_transport_tun", version = "0.3.1" }
-ts_underlay_router = { path = "ts_underlay_router", version = "0.3.1" }
-ts_tunnel = { path = "ts_tunnel", version = "0.3.1" }
+ts_time = { path = "ts_time", version = "0.3.2" }
+ts_transport = { path = "ts_transport", version = "0.3.2" }
+ts_transport_derp = { path = "ts_transport_derp", version = "0.3.2" }
+ts_transport_tun = { path = "ts_transport_tun", version = "0.3.2" }
+ts_underlay_router = { path = "ts_underlay_router", version = "0.3.2" }
+ts_tunnel = { path = "ts_tunnel", version = "0.3.2" }
 
 [workspace.lints.rust]
 closure_returning_async_block = "warn"

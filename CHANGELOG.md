@@ -4,6 +4,10 @@ Record breaking or significant changes here. All dates are UTC.
 
 ## Unreleased - June 2026
 
+## [0.3.2](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.2) - 2026-05-20
+
+- Minor fixes to CI/CD publishing infrastructure.
+
 ## [0.3.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.1) - 2026-05-20
 
 - Minor fixes to CI/CD publishing infrastructure.
