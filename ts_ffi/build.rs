@@ -11,7 +11,11 @@ fn main() {
         .generate()
         .unwrap();
 
-    bindings.write_to_file("tailscale.h");
+    // We're not supposed to generate anything outside of `OUT_DIR`, but it's useful
+    // as a convenience. Turn it off with this var (for use with publish).
+    if env::var("TS_FFI_BUILDRS_STRICT").is_err_and(|e| e == env::VarError::NotPresent) {
+        bindings.write_to_file("tailscale.h");
+    }
 
     let out = env::var("OUT_DIR").unwrap();
     let out = PathBuf::from(out);

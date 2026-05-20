@@ -208,4 +208,5 @@ jobs:
       - name: Publish
         run: cargo ws publish --publish-as-is
         env:
+          TS_FFI_BUILDRS_STRICT: 1
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
