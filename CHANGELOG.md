@@ -4,13 +4,30 @@ Record breaking or significant changes here. All dates are UTC.
 
 ## Unreleased - June 2026
 
+Put changes for the upcoming release here!
+
+## [0.3.3](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.3) - 2026-05-20
+
+- Fixed: don't generate `tailscale.h` on publish.
+  [#196](https://github.com/tailscale/tailscale-rs/pull/196).
+- Fixed: Elixir CI/CD publishing infrastructure.
+  [#197](https://github.com/tailscale/tailscale-rs/pull/197).
+
 ## [0.3.2](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.2) - 2026-05-20
 
-- Minor fixes to CI/CD publishing infrastructure.
+Partial release; this version is tagged and published to PyPI, but was not published to crates.io or hex.pm.
+
+- Fixed: removed `std` dependency from `ts_netstack_smoltcp_core`.
+  [#194](https://github.com/tailscale/tailscale-rs/pull/194).
 
 ## [0.3.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.1) - 2026-05-20
 
-- Minor fixes to CI/CD publishing infrastructure.
+Partial release; this version is tagged and published to PyPI, but was not published to crates.io or hex.pm.
+
+- Fixed: Python CI/CD publishing infrastructure.
+  [#191](https://github.com/tailscale/tailscale-rs/pull/191).
+- Fixed: Rust CI/CD publishing infrastructure.
+  [#193](https://github.com/tailscale/tailscale-rs/pull/193).
 
 ## [0.3.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.0) - 2026-05-19
 
