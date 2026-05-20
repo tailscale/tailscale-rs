@@ -185,7 +185,7 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
         id: auth
         with:
-          url: ${{ case(inputs.crates_repo != 'prod', 'https://staging.crates.io', 'https://crates.io') }}
+          url: ${{ case(inputs.crates_repo == 'prod', 'https://crates.io', startsWith(github.ref, 'refs/tags/'), 'https://crates.io', 'https://staging.crates.io') }}
 
       - name: Setup rust
         id: setup-rust
@@ -198,7 +198,7 @@ jobs:
       - *cargo_ws
 
       - name: Configure staging registry
-        if: inputs.crates_repo != 'prod'
+        if: inputs.crates_repo == 'staging'
         run: |-
           echo CARGO_REGISTRIES_STAGING_INDEX=https://staging.crates.io/index >> $GITHUB_ENV
           echo CARGO_REGISTRY_DEFAULT=staging >> $GITHUB_ENV
