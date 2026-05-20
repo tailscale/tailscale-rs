@@ -248,7 +248,7 @@ jobs:
         id: setup-rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain-version: ${{ matrix.rust_toolchain.version }}
+          toolchain-version: ${{ env.latest_rust }}
           builder-triple: ${{ env.target_triple }}
 
       - name: Install dependencies
