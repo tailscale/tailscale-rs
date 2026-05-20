@@ -28,7 +28,7 @@ Add this dependency line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tailscale = { version = "0.2" }
+tailscale = { version = "0.3" }
 ```
 
 Examples of using the `tailscale` crate can be found in [`examples/`](examples/README.md).

@@ -8,9 +8,10 @@ have access to the tailnet.
 ## Code Sample
 
 ```python
+#!/usr/bin/env python3
+
 import asyncio
 import tailscale
-
 
 async def main():
     # connect to the tailnet:
@@ -40,10 +41,10 @@ $ TS_RS_EXPERIMENT=this_is_unstable_software python demo.py
 
 ## Building and Usage
 
-The easiest way to get the library is through pypi:
+The easiest way to get the library is through PyPI:
 
 ```shell
-$ pip install tailscale
+$ pip install tailscale-py
 ```
 
 ### In development
