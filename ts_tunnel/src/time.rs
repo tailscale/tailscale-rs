@@ -2,14 +2,24 @@ use core::fmt::{Debug, Display, Formatter};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zerocopy::{
-    FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout,
+    FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, Unaligned,
     byteorder::big_endian::{U32, U64},
 };
 
 /// An instant in time in the TAI64 format.
 #[repr(C)]
 #[derive(
-    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, FromBytes, IntoBytes, Immutable, KnownLayout,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    FromBytes,
+    IntoBytes,
+    Immutable,
+    KnownLayout,
+    Unaligned,
 )]
 pub struct TAI64N {
     secs: U64,

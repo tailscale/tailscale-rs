@@ -6202,7 +6202,6 @@ dependencies = [
  "chacha20poly1305",
  "clap",
  "hex",
- "hkdf 0.12.4",
  "itertools",
  "proptest",
  "rand 0.10.1",
@@ -6210,9 +6209,9 @@ dependencies = [
  "tracing",
  "ts_cli_util",
  "ts_keys",
+ "ts_noise",
  "ts_packet",
  "ts_time",
- "x25519-dalek 3.0.0-pre.6",
  "zerocopy",
 ]
 

@@ -15,16 +15,15 @@ rust-version.workspace = true
 ts_keys.workspace = true
 ts_packet.workspace = true
 ts_time.workspace = true
+ts_noise.workspace = true
 
 # Unconditionally required dependencies.
 aead.workspace = true
 blake2.workspace = true
 chacha20poly1305.workspace = true
-hkdf.workspace = true
 itertools.workspace = true
 rand.workspace = true
 tracing.workspace = true
-x25519-dalek.workspace = true
 zerocopy.workspace = true
 
 [dev-dependencies]

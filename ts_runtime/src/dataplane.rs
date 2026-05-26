@@ -155,7 +155,7 @@ impl Message<Arc<PeerState>> for DataplaneActor {
                     ts_tunnel::PeerId(upsert.0),
                     ts_tunnel::PeerConfig {
                         key: node.node_key,
-                        psk: [0u8; 32].into(),
+                        psk: [0u8; 32],
                     },
                 );
             }

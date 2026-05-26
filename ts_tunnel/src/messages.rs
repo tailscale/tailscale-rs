@@ -1,9 +1,12 @@
 use core::fmt::{Debug, Formatter};
 
+use ts_noise::ikpsk2;
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
     byteorder::little_endian::{U32, U64},
 };
+
+use crate::time::TAI64N;
 
 #[repr(transparent)]
 #[derive(
@@ -60,9 +63,7 @@ pub struct HandshakeInitiation {
     pub msg_type: MessageType,
     pub _reserved: [u8; 3],
     pub sender_id: SessionId,
-    pub ephemeral_pub: [u8; 32],
-    pub static_pub_sealed: [u8; 32 + 16],
-    pub timestamp_sealed: [u8; 12 + 16],
+    pub noise: [u8; ikpsk2::SentHandshake::<TAI64N>::INIT_SIZE],
     pub mac1: [u8; 16],
     pub mac2: [u8; 16],
 }
@@ -73,9 +74,7 @@ impl Default for HandshakeInitiation {
             msg_type: MessageType::HandshakeInitiation,
             _reserved: Default::default(),
             sender_id: Default::default(),
-            ephemeral_pub: Default::default(),
-            static_pub_sealed: [0; 32 + 16], // no Default impl for such a large array
-            timestamp_sealed: Default::default(),
+            noise: [0; ikpsk2::SentHandshake::<TAI64N>::INIT_SIZE],
             mac1: Default::default(),
             mac2: Default::default(),
         }
@@ -89,8 +88,7 @@ pub struct HandshakeResponse {
     pub _reserved: [u8; 3],
     pub sender_id: SessionId,
     pub receiver_id: SessionId,
-    pub ephemeral_pub: [u8; 32],
-    pub auth_tag: [u8; 16],
+    pub noise: [u8; ikpsk2::ReceivedHandshake::RESP_SIZE],
     pub mac1: [u8; 16],
     pub mac2: [u8; 16],
 }
@@ -102,8 +100,7 @@ impl Default for HandshakeResponse {
             _reserved: Default::default(),
             sender_id: Default::default(),
             receiver_id: Default::default(),
-            ephemeral_pub: Default::default(),
-            auth_tag: Default::default(),
+            noise: [0; ikpsk2::ReceivedHandshake::RESP_SIZE],
             mac1: Default::default(),
             mac2: Default::default(),
         }
@@ -172,7 +169,7 @@ impl Default for CookieReply {
 }
 
 pub enum Message<'packet> {
-    HandshakeInitiation(&'packet HandshakeInitiation),
+    HandshakeInitiation(#[allow(dead_code)] &'packet HandshakeInitiation),
     HandshakeResponse(&'packet HandshakeResponse),
     TransportDataHeader(&'packet TransportDataHeader),
     CookieReply(&'packet CookieReply),
@@ -210,6 +207,38 @@ impl Message<'_> {
             Message::HandshakeResponse(resp) => Some(resp.receiver_id),
             Message::TransportDataHeader(data) => Some(data.receiver_id),
             Message::CookieReply(cookie) => Some(cookie.receiver_id),
+        }
+    }
+}
+
+pub enum MessageMut<'packet> {
+    HandshakeInitiation(&'packet mut HandshakeInitiation),
+    HandshakeResponse(&'packet mut HandshakeResponse),
+    TransportDataHeader(#[allow(dead_code)] &'packet mut TransportDataHeader),
+    CookieReply(&'packet mut CookieReply),
+}
+
+impl<'packet> TryFrom<&'packet mut [u8]> for MessageMut<'packet> {
+    type Error = ();
+
+    fn try_from(raw: &'packet mut [u8]) -> Result<MessageMut<'packet>, Self::Error> {
+        let Ok((msg_type, _)) = MessageType::try_ref_from_prefix(raw) else {
+            return Err(());
+        };
+
+        match msg_type {
+            MessageType::HandshakeInitiation => HandshakeInitiation::try_mut_from_bytes(raw)
+                .map(MessageMut::HandshakeInitiation)
+                .map_err(|_| ()),
+            MessageType::HandshakeResponse => HandshakeResponse::try_mut_from_bytes(raw)
+                .map(MessageMut::HandshakeResponse)
+                .map_err(|_| ()),
+            MessageType::TransportData => TransportDataHeader::try_mut_from_prefix(raw)
+                .map(|(header, _)| MessageMut::TransportDataHeader(header))
+                .map_err(|_| ()),
+            MessageType::CookieReply => CookieReply::try_mut_from_bytes(raw)
+                .map(MessageMut::CookieReply)
+                .map_err(|_| ()),
         }
     }
 }

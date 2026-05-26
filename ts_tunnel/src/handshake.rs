@@ -1,13 +1,10 @@
 use std::time::Instant;
 
-use aead::AeadInPlace;
-use blake2::{Blake2s256, Digest};
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
-use hkdf::SimpleHkdf;
 use ts_keys::{NodeKeyPair, NodePrivateKey, NodePublicKey};
+use ts_noise::ikpsk2;
 use ts_packet::PacketMut;
 use ts_time::Handle;
-use zerocopy::{FromZeros, IntoBytes};
+use zerocopy::IntoBytes;
 
 use crate::{
     config::Psk,
@@ -18,205 +15,20 @@ use crate::{
     time::TAI64N,
 };
 
-/// The symmetric session keys produced by a WireGuard handshake.
-struct SessionKeys {
-    initiator_to_responder: chacha20poly1305::Key,
-    responder_to_initiator: chacha20poly1305::Key,
-}
-
-/// The state of a partially processed handshake.
-///
-/// Has to be cloneable because we may have to attempt finalization of the handshake
-/// as the initiator multiple times, if rogue invalid responses are received. It's
-/// deliberately not Copy, because cloning and allowing potential reuse of the cipher
-/// state is risky and needs to be a deliberate act.
-#[derive(Clone)]
-struct HandshakeState {
-    hash: [u8; 32],
-    chaining_key: [u8; 32],
-    cipher: Option<ChaCha20Poly1305>,
-}
-
-/// Initialize a ChaCha20Poly1305 cipher with the given key.
-///
-/// # Panics
-/// Panics if the key isn't exactly 32 bytes.
-fn must_cipher(key: &[u8]) -> ChaCha20Poly1305 {
-    assert_eq!(key.len(), 32);
-    ChaCha20Poly1305::new_from_slice(key).unwrap()
-}
-
-/// Use HKDF to derive two 32-byte values.
-fn must_hkdf2(chaining_key: &[u8; 32], key: &[u8]) -> ([u8; 32], [u8; 32]) {
-    let kdf = SimpleHkdf::<Blake2s256>::new(Some(chaining_key), key);
-    let mut expanded = [0; 64];
-    // Expansion only fails if you request more bytes than the KDF can provide. This KDF can always
-    // provide 64 bytes.
-    kdf.expand(&[], &mut expanded).unwrap();
-    (
-        expanded[..32].try_into().unwrap(),
-        expanded[32..].try_into().unwrap(),
-    )
-}
-
-/// Use HKDF to derive three 32-byte values.
-fn must_hkdf3(chaining_key: &[u8; 32], key: &[u8]) -> ([u8; 32], [u8; 32], [u8; 32]) {
-    let kdf = SimpleHkdf::<Blake2s256>::new(Some(chaining_key), key);
-    let mut expanded = [0; 96];
-    // Expansion only fails if you request more bytes than the KDF can provide. This KDF can always
-    // provide 96 bytes.
-    kdf.expand(&[], &mut expanded).unwrap();
-    (
-        expanded[..32].try_into().unwrap(),
-        expanded[32..64].try_into().unwrap(),
-        expanded[64..].try_into().unwrap(),
-    )
-}
-
-impl HandshakeState {
-    fn new(responder_static: NodePublicKey) -> HandshakeState {
-        // TODO: precompute initial hash and chaining key, unless the compiler
-        // is clever enough to figure it out by itself?
-        let init = Blake2s256::digest("Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s");
-        HandshakeState {
-            hash: init.into(),
-            chaining_key: init.into(),
-            cipher: None,
-        }
-        .mix_hash(b"WireGuard v1 zx2c4 Jason@zx2c4.com")
-        .mix_hash(responder_static.as_bytes())
-    }
-
-    /// Mix data into the handshake state.
-    ///
-    /// This is the MixHash() operation in the Noise spec.
-    fn mix_hash(mut self, data: &[u8]) -> Self {
-        let mut h = Blake2s256::new_with_prefix(self.hash);
-        h.update(data);
-        h.finalize_into(self.hash.as_mut_bytes().into());
-        self
-    }
-
-    /// Mix a symmetric key into the handshake state, producing a single-use AEAD
-    /// cipher able to encrypt/decrypt the next portion of the handshake.
-    ///
-    /// This is the MixKey() operation in the Noise spec.
-    fn mix_key(self, key: &[u8; 32]) -> HandshakeState {
-        let (ck, k) = must_hkdf2(&self.chaining_key, key);
-        HandshakeState {
-            hash: self.hash,
-            chaining_key: ck,
-            cipher: Some(must_cipher(&k)),
-        }
-    }
-
-    /// Derive a one-time AEAD from the pre-shared symmetric key.
-    ///
-    /// This is the `psk` handshake step.
-    fn mix_psk(self, psk: &Psk) -> HandshakeState {
-        let (ck, h, k) = must_hkdf3(&self.chaining_key, psk.as_ref());
-        HandshakeState {
-            hash: self.hash,
-            chaining_key: ck,
-            cipher: Some(must_cipher(&k)),
-        }
-        .mix_hash(&h)
-    }
-
-    /// Finalize the handshake and return a pair of symmetric session keys.
-    ///
-    /// This is the Split() operation in the Noise spec.
-    fn finish(self) -> SessionKeys {
-        let (k1, k2) = must_hkdf2(&self.chaining_key, &[]);
-        SessionKeys {
-            initiator_to_responder: chacha20poly1305::Key::from(k1),
-            responder_to_initiator: chacha20poly1305::Key::from(k2),
-        }
-    }
-
-    /// Encrypt cleartext into dst.
-    ///
-    /// dst must be 16 bytes longer than cleartext, and is overwritten.
-    ///
-    /// This is the EncryptAndHash() operation in the Noise spec.
-    ///
-    /// # Panics
-    /// Panics if dst is not exactly 16 bytes longer than cleartext, or if called at an
-    /// incorrect stage of the handshake where encryption is forbidden.
-    fn encrypt(mut self, cleartext: &[u8], dst: &mut [u8]) -> HandshakeState {
-        assert_eq!(
-            dst.len(),
-            cleartext.len() + 16,
-            "output slice provided to encrypt must be 16 bytes longer than the input"
-        );
-        let cipher = self.cipher.take().unwrap();
-        // The cipher API here is awkward: we can either encrypt into a fresh Vec (causing an alloc), or we
-        // can encrypt in place. The operation we want, encrypting into a provided slice of the right size,
-        // isn't available.
-        //
-        // So, we do a little dance of copying the cleartext to the destination slice, then encrypt in place
-        // and add the authentication tag to the end. This is unwieldy, but being able to pass in a destination
-        // slice plays much nicer with zerocopy's transmutations.
-        cleartext.write_to_prefix(dst).unwrap(); // destination size verified by assert above
-        let nonce = [0; 12];
-        // ChaCha20Poly1305 only fails if you try to encrypt more than ~274GiB in a single call.
-        // If you're from the future with 300GiB MTUs and debugging a panic here: hello!
-        let tag = cipher
-            .encrypt_in_place_detached(&nonce.into(), &self.hash, &mut dst[..cleartext.len()])
-            .unwrap();
-        tag.write_to_suffix(dst).unwrap(); // destination size verified by assert above
-        self.mix_hash(dst)
-    }
-
-    /// Decrypt ciphertext and return the cleartext.
-    ///
-    /// This is the DecryptAndHash() operation in the Noise spec.
-    ///
-    /// # Panics
-    /// Panics if ciphertext is not exactly 16 bytes longer than dst, or if called at an
-    /// incorrect stage of the handshake where decryption is forbidden.
-    fn decrypt(mut self, ciphertext: &[u8], dst: &mut [u8]) -> Option<HandshakeState> {
-        assert_eq!(
-            dst.len(),
-            ciphertext.len() - 16,
-            "output slice provided to decrypt must be 16 bytes shorter than the input"
-        );
-        let cipher = self.cipher.take().unwrap();
-        // Awkward API, see the longer comment in encrypt() for details.
-        ciphertext[..dst.len()].write_to(dst).unwrap(); // destination size verified by assert above
-        let nonce = [0; 12];
-        cipher
-            .decrypt_in_place_detached(
-                &nonce.into(),
-                &self.hash,
-                dst,
-                ciphertext[dst.len()..].into(),
-            )
-            .inspect_err(|e| {
-                tracing::warn!(error = %e, "decryption failed");
-            })
-            .ok()?;
-        Some(self.mix_hash(ciphertext))
-    }
-}
+const PROLOGUE: &[u8] = b"WireGuard v1 zx2c4 Jason@zx2c4.com";
 
 /// A partially completed incoming handshake.
 pub struct ReceivedHandshake {
     send_id: SessionId,
-
+    noise: ikpsk2::ReceivedHandshake,
     // Info decrypted from the HandshakeInitiation
-    peer_ephemeral: x25519_dalek::PublicKey,
-    peer_static: NodePublicKey,
     pub timestamp: TAI64N,
-
-    // State needed to complete the handshake
-    handshake: HandshakeState,
 }
 
 impl ReceivedHandshake {
     /// Process a peer's handshake initiation message.
     pub fn new(
-        pkt: &HandshakeInitiation,
+        pkt: &mut HandshakeInitiation,
         my_static: &NodeKeyPair,
         macs: &MACReceiver,
     ) -> Option<ReceivedHandshake> {
@@ -224,30 +36,13 @@ impl ReceivedHandshake {
             return None;
         };
 
-        // TODO: cookie DoS protection. Deferring implementation until more of the surrounding code is in place,
-        // because the right place to do cookie enforcement might be outside of the core Noise handshake logic.
-        let peer_ephemeral = x25519_dalek::PublicKey::from(pkt.ephemeral_pub);
-        let my_static_dalek = x25519_dalek::StaticSecret::from(my_static.private);
-        let mut peer_static_bytes = [0; 32];
-        let mut timestamp = TAI64N::new_zeroed();
-        let handshake = HandshakeState::new(my_static.public)
-            .mix_hash(&pkt.ephemeral_pub) // e
-            .mix_key(&pkt.ephemeral_pub) // e (extra mixing required by psk variant)
-            .mix_key(my_static_dalek.diffie_hellman(&peer_ephemeral).as_bytes()) // es (reversed because this is the responder)
-            .decrypt(&pkt.static_pub_sealed, &mut peer_static_bytes)? // s
-            .mix_key(
-                my_static_dalek
-                    .diffie_hellman(&x25519_dalek::PublicKey::from(peer_static_bytes))
-                    .as_bytes(),
-            ) // ss
-            .decrypt(&pkt.timestamp_sealed, timestamp.as_mut_bytes())?; // payload
+        let (noise, timestamp) =
+            ikpsk2::ReceivedHandshake::new(&mut pkt.noise, PROLOGUE, my_static.private.into())?;
 
         Some(ReceivedHandshake {
-            handshake,
-            timestamp,
-            peer_static: NodePublicKey::from(peer_static_bytes),
-            peer_ephemeral: x25519_dalek::PublicKey::from(pkt.ephemeral_pub),
             send_id: pkt.sender_id,
+            noise,
+            timestamp: *timestamp,
         })
     }
 
@@ -259,31 +54,16 @@ impl ReceivedHandshake {
         macs: &MACSender,
         now: Instant,
     ) -> (SessionPair, PacketMut) {
-        let my_ephemeral = x25519_dalek::ReusableSecret::random();
-        let my_ephemeral_pub = x25519_dalek::PublicKey::from(&my_ephemeral);
         let mut response = HandshakeResponse {
             sender_id: session_id,
             receiver_id: self.send_id,
-            ephemeral_pub: my_ephemeral_pub.to_bytes(),
             ..Default::default()
         };
 
-        let session_keys = self
-            .handshake
-            .mix_hash(&my_ephemeral_pub.to_bytes()) // e
-            .mix_key(&my_ephemeral_pub.to_bytes()) // e (extra mixing required by psk variant)
-            .mix_key(my_ephemeral.diffie_hellman(&self.peer_ephemeral).as_bytes()) // ee
-            .mix_key(
-                my_ephemeral
-                    .diffie_hellman(&self.peer_static.into())
-                    .as_bytes(),
-            ) // se (reversed because this is the responder)
-            .mix_psk(psk) // psk
-            .encrypt(&[], &mut response.auth_tag) // payload (empty, but must encrypt to generate an auth tag)
-            .finish();
+        let session_keys = self.noise.finish(psk, response.noise.as_mut_bytes());
 
-        let send = TransmitSession::new(session_keys.responder_to_initiator, self.send_id, now);
-        let recv = ReceiveSession::new(session_keys.initiator_to_responder, session_id, now);
+        let send = TransmitSession::new(session_keys.send, self.send_id, now);
+        let recv = ReceiveSession::new(session_keys.recv, session_id, now);
         let mut pkt = PacketMut::new(size_of::<HandshakeResponse>());
         // Packet is allocated above with the correct size.
         response.write_to(pkt.as_mut()).unwrap();
@@ -292,7 +72,7 @@ impl ReceivedHandshake {
     }
 
     pub fn peer_static(&self) -> NodePublicKey {
-        self.peer_static
+        self.noise.peer_static_pub.to_bytes().into()
     }
 }
 
@@ -303,33 +83,22 @@ pub fn initiate_handshake(
     session_id: SessionId,
     timestamp: TAI64N,
 ) -> (SentHandshake, HandshakeInitiation) {
-    let ephemeral = x25519_dalek::ReusableSecret::random();
-    let ephemeral_pub = x25519_dalek::PublicKey::from(&ephemeral);
-    let endpoint_static_pub = NodePublicKey::from(endpoint_static);
-
     let mut pkt = HandshakeInitiation {
         sender_id: session_id,
-        ephemeral_pub: ephemeral_pub.to_bytes(),
         ..Default::default()
     };
 
-    let handshake = HandshakeState::new(peer_static)
-        .mix_hash(ephemeral_pub.as_bytes()) // e
-        .mix_key(ephemeral_pub.as_bytes()) // e (extra mixing required by psk variant)
-        .mix_key(ephemeral.diffie_hellman(&peer_static.into()).as_bytes()) // es
-        .encrypt(endpoint_static_pub.as_bytes(), &mut pkt.static_pub_sealed) // s
-        .mix_key(
-            x25519_dalek::StaticSecret::from(endpoint_static)
-                .diffie_hellman(&peer_static.into())
-                .as_bytes(),
-        ) // ss
-        .encrypt(timestamp.as_bytes(), &mut pkt.timestamp_sealed); // payload
+    let noise = ikpsk2::SentHandshake::new(
+        endpoint_static.into(),
+        peer_static.into(),
+        PROLOGUE,
+        timestamp,
+        pkt.noise.as_mut_bytes(),
+    );
 
     let ret = SentHandshake {
         id: session_id,
-        my_ephemeral: ephemeral,
-        my_static: endpoint_static,
-        handshake,
+        noise,
     };
 
     (ret, pkt)
@@ -338,9 +107,7 @@ pub fn initiate_handshake(
 /// A partially completed sent handshake.
 pub struct SentHandshake {
     pub id: SessionId,
-    my_ephemeral: x25519_dalek::ReusableSecret,
-    my_static: NodePrivateKey,
-    handshake: HandshakeState,
+    noise: ikpsk2::SentHandshake<TAI64N>,
 }
 
 pub struct SessionPair {
@@ -372,6 +139,16 @@ impl Handshake {
             Handshake::Initiated(handshake, ..) => Some(handshake.id),
             Handshake::Responded(tentative) => Some(tentative.recv.id()),
             Handshake::None => None,
+        }
+    }
+
+    pub(crate) fn take_initiated(&mut self) -> Option<(SentHandshake, Handle<Event>, Mac)> {
+        match std::mem::replace(self, Handshake::None) {
+            Handshake::Initiated(sent, timeout, mac) => Some((sent, timeout, mac)),
+            other => {
+                *self = other;
+                None
+            }
         }
     }
 
@@ -412,45 +189,33 @@ impl Handshake {
     /// completion of the handshake.
     pub(crate) fn finish(
         &mut self,
-        packet: &HandshakeResponse,
+        packet: &mut HandshakeResponse,
+        endpoint_static: &NodePrivateKey,
         psk: &Psk,
         cookies: &MACReceiver,
         now: Instant,
     ) -> Option<SessionPair> {
-        let Handshake::Initiated(sent_handshake, ..) = self else {
-            return None;
-        };
+        let (mut sent_handshake, timeout, _) = self.take_initiated()?;
 
         if !cookies.verify_macs(packet.as_bytes()) {
             return None;
         };
 
-        let peer_ephemeral = x25519_dalek::PublicKey::from(packet.ephemeral_pub);
-        let handshake = sent_handshake.handshake.clone();
-        let session_keys = handshake
-            .mix_hash(&packet.ephemeral_pub) // e
-            .mix_key(&packet.ephemeral_pub) // e (extra mixing required by psk variant)
-            .mix_key(
-                sent_handshake
-                    .my_ephemeral
-                    .diffie_hellman(&peer_ephemeral)
-                    .as_bytes(),
-            ) // ee
-            .mix_key(
-                x25519_dalek::StaticSecret::from(sent_handshake.my_static)
-                    .diffie_hellman(&peer_ephemeral)
-                    .as_bytes(),
-            ) // se
-            .mix_psk(psk) // psk
-            .decrypt(&packet.auth_tag, &mut Vec::new()) // payload (empty, but must decrypt to verify auth tag)
-            .map(|handshake| handshake.finish())?;
+        let session_keys =
+            match sent_handshake
+                .noise
+                .try_finish(&mut packet.noise, endpoint_static.into(), psk)
+            {
+                Ok(session_keys) => session_keys,
+                Err(handshake) => {
+                    sent_handshake.noise = handshake;
+                    return None;
+                }
+            };
 
-        let send = TransmitSession::new(session_keys.initiator_to_responder, packet.sender_id, now);
-        let recv = ReceiveSession::new(session_keys.responder_to_initiator, sent_handshake.id, now);
+        let send = TransmitSession::new(session_keys.send, packet.sender_id, now);
+        let recv = ReceiveSession::new(session_keys.recv, sent_handshake.id, now);
 
-        let Handshake::Initiated(_, timeout, _) = std::mem::replace(self, Handshake::None) else {
-            unreachable!();
-        };
         timeout.cancel();
 
         Some(SessionPair { send, recv })
@@ -523,24 +288,28 @@ mod tests {
         let mut a_handshake = Handshake::Initiated(a_handshake, timeout, handshake_mac);
 
         // Peer B receives it and responds
-        let init_pkt = HandshakeInitiation::try_ref_from_bytes(init_pkt.as_ref())
+        let init_pkt = HandshakeInitiation::try_mut_from_bytes(init_pkt.as_mut())
             .expect("init_pkt should be a valid handshake initiation message");
         let b_mac_send = MACSender::new(&a_static.public);
         let b_mac_recv = MACReceiver::new(&b_static.public);
         let b_handshake = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
             .expect("peer B should successfully process A's handshake initiation");
-        assert_eq!(b_handshake.peer_static, a_static.public);
+        assert_eq!(b_handshake.peer_static(), a_static.public);
         assert_eq!(b_handshake.timestamp, a_init_time);
         let b_session = SessionId::random(); // B wants to receive at this ID
-        let (mut b_session, response_pkt) =
+        let (mut b_session, mut response_pkt) =
             b_handshake.respond(b_session, &psk, &b_mac_send, Instant::now());
 
         // Peer A receives response
-        let response_pkt = HandshakeResponse::try_ref_from_bytes(response_pkt.as_ref())
+        let response_pkt = HandshakeResponse::try_mut_from_bytes(response_pkt.as_mut())
             .expect("response_pkt should be a valid handshake response message");
-        let Some(mut a_session) =
-            a_handshake.finish(response_pkt, &psk, &a_mac_recv, Instant::now())
-        else {
+        let Some(mut a_session) = a_handshake.finish(
+            response_pkt,
+            &a_static.private,
+            &psk,
+            &a_mac_recv,
+            Instant::now(),
+        ) else {
             panic!("failed to process handshake response from peer B");
         };
 

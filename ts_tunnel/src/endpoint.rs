@@ -15,7 +15,7 @@ use crate::{
     config::{PeerConfig, PeerId},
     handshake::{Handshake, ReceivedHandshake, SessionPair, initiate_handshake},
     macs::{MACReceiver, MACSender},
-    messages::{CookieReply, HandshakeResponse, Message, SessionId},
+    messages::{CookieReply, HandshakeResponse, Message, MessageMut, SessionId},
     session::{ReceiveSession, TransmitSession},
     time::{TAI64N, TAI64NClock},
 };
@@ -345,21 +345,21 @@ impl Peer {
     ) {
         let pre_len = packets.len();
 
-        packets.retain_mut(|packet| match Message::try_from(packet.as_ref()) {
+        packets.retain_mut(|packet| match MessageMut::try_from(packet.as_mut()) {
             Err(()) => {
                 tracing::trace!("dropping invalid packet");
                 false
             }
-            Ok(Message::TransportDataHeader(_)) => true,
-            Ok(Message::HandshakeResponse(resp)) => {
+            Ok(MessageMut::TransportDataHeader(_)) => true,
+            Ok(MessageMut::HandshakeResponse(resp)) => {
                 self.recv_handshake_response(endpoint, resp, out);
                 false
             }
-            Ok(Message::CookieReply(resp)) => {
+            Ok(MessageMut::CookieReply(resp)) => {
                 self.recv_cookie_reply(resp);
                 false
             }
-            Ok(Message::HandshakeInitiation(_)) => {
+            Ok(MessageMut::HandshakeInitiation(_)) => {
                 debug_assert!(
                     false,
                     "handshake initiations should have been filtered out prior to calling recv"
@@ -388,11 +388,12 @@ impl Peer {
     fn recv_handshake_response(
         &mut self,
         endpoint: &mut EndpointState,
-        packet: &HandshakeResponse,
+        packet: &mut HandshakeResponse,
         out: &mut RecvResult,
     ) {
         let Some(session) = self.handshake.finish(
             packet,
+            &endpoint.my_key.private,
             &self.config.psk,
             &endpoint.my_cookie,
             Instant::now(),
@@ -676,8 +677,9 @@ impl Endpoint {
         ret
     }
 
-    fn process_one_handshake(&mut self, packet: PacketMut, out: &mut RecvResult) {
-        let Ok(Message::HandshakeInitiation(init)) = Message::try_from(packet.as_ref()) else {
+    fn process_one_handshake(&mut self, mut packet: PacketMut, out: &mut RecvResult) {
+        let Ok(MessageMut::HandshakeInitiation(init)) = MessageMut::try_from(packet.as_mut())
+        else {
             tracing::error!("message parsing failed");
             return;
         };
