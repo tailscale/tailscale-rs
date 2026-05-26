@@ -1,35 +1,42 @@
-use std::io::ErrorKind;
+use std::{io::ErrorKind, marker::PhantomData};
 
 use bytes::{Buf, BufMut, BytesMut};
-use noise_protocol::{Cipher, CipherState};
+use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, Key, KeyInit, Nonce};
 use tokio_util::codec::{Decoder, Encoder};
-use zerocopy::{IntoBytes, TryCastError, TryFromBytes, U16};
+use ts_noise::core::Session;
+use zerocopy::{IntoBytes, TryCastError, TryFromBytes, network_endian::U16};
 
 use crate::messages::{Header, MessageType};
 
 /// The maximum wire size of a message to control over noise.
 pub const MAX_MESSAGE_SIZE: usize = 4096;
 
+/// Overhead required by the AEAD's authentication tag.
+const AEAD_OVERHEAD: usize = 16;
+
+/// Maximum size of a data chunk, without the per-message overhead.
+const MAX_CHUNK_SIZE: usize = MAX_MESSAGE_SIZE - size_of::<Header>() - AEAD_OVERHEAD;
+
+/// Marker type to indicate that a [`Codec`] instance can only be used for receiving, not sending.
+pub enum Rx {}
+
+/// Marker type to indicate that a [`Codec`] instance can only be used for sending, not receiving.
+pub enum Tx {}
+
 /// Control noise codec that uses a different cipher state for the up and down directions.
 ///
 /// Just a wrapper containing two [`Codec`]s, one of which provides [`Encoder`] and the
 /// other [`Decoder`].
-pub struct BiCodec<Tx, Rx>
-where
-    Tx: Cipher,
-    Rx: Cipher,
-{
+pub struct BiCodec {
     /// The transmit codec, used for encoding messages to control.
-    pub tx: Codec<Tx>,
+    tx: Codec<Tx>,
     /// The receive codec, used for decoding messages from control.
-    pub rx: Codec<Rx>,
+    rx: Codec<Rx>,
 }
 
-impl<B, Tx, Rx> Encoder<B> for BiCodec<Tx, Rx>
+impl<B> Encoder<B> for BiCodec
 where
     B: AsRef<[u8]>,
-    Tx: Cipher,
-    Rx: Cipher,
 {
     type Error = <Codec<Tx> as Encoder<B>>::Error;
 
@@ -38,11 +45,7 @@ where
     }
 }
 
-impl<Tx, Rx> Decoder for BiCodec<Tx, Rx>
-where
-    Tx: Cipher,
-    Rx: Cipher,
-{
+impl Decoder for BiCodec {
     type Item = <Codec<Rx> as Decoder>::Item;
     type Error = <Codec<Rx> as Decoder>::Error;
 
@@ -51,65 +54,86 @@ where
     }
 }
 
-/// Codec supporting encrypting and decrypting data according to the control noise protocol
-/// using the specified cipher state.
-pub struct Codec<C>
-where
-    C: Cipher,
-{
-    /// The cipher state to use to encode and decode message payloads.
-    pub cipher_state: CipherState<C>,
-}
-
-impl<C> From<CipherState<C>> for Codec<C>
-where
-    C: Cipher,
-{
-    fn from(value: CipherState<C>) -> Self {
-        Codec {
-            cipher_state: value,
+impl From<Session> for BiCodec {
+    fn from(session: Session) -> Self {
+        Self {
+            tx: Codec::<Tx>::from(session.send),
+            rx: Codec::<Rx>::from(session.recv),
         }
     }
 }
 
-impl<B, C> Encoder<B> for Codec<C>
+/// Codec supporting encrypting and decrypting data according to the control noise protocol
+/// using the specified cipher state.
+///
+/// In accordance with Noise session semantics, a particular Codec instance can only be used for
+/// sending or receiving, never both. The type parameter should be [`Tx`] for sending sessions and
+/// [`Rx`] for receiving sessions.
+pub struct Codec<D> {
+    cipher: ChaCha20Poly1305,
+    next_nonce: u64,
+    _phantom: PhantomData<D>,
+}
+
+impl<D> Codec<D> {
+    fn new(key: Key, nonce: u64) -> Self {
+        Codec {
+            cipher: ChaCha20Poly1305::new(&key),
+            next_nonce: nonce,
+            _phantom: PhantomData,
+        }
+    }
+
+    fn next_nonce(&mut self) -> Nonce {
+        assert_ne!(self.next_nonce, u64::MAX);
+        let mut ret = [0; 12];
+        ret[4..].copy_from_slice(&self.next_nonce.to_be_bytes());
+        self.next_nonce += 1;
+        ret.into()
+    }
+}
+
+impl<D> From<Key> for Codec<D> {
+    fn from(key: Key) -> Self {
+        Codec::new(key, 0)
+    }
+}
+
+impl<B> Encoder<B> for Codec<Tx>
 where
-    C: Cipher,
     B: AsRef<[u8]>,
 {
     type Error = std::io::Error;
 
     fn encode(&mut self, b: B, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let b = b.as_ref();
-        let max_data_chunk = MAX_MESSAGE_SIZE - (size_of::<Header>() + C::tag_len());
 
-        for chunk in b.chunks(max_data_chunk) {
+        for chunk in b.chunks(MAX_CHUNK_SIZE) {
             let hdr = Header {
                 typ: MessageType::Record,
-                len: U16::new(chunk.len() as u16 + C::tag_len() as u16),
+                len: U16::new(chunk.len() as u16 + AEAD_OVERHEAD as u16),
             };
 
             dst.put(hdr.as_bytes());
 
             let data_start = dst.len();
-
             dst.put(chunk);
-            dst.put_bytes(0, C::tag_len());
 
-            self.cipher_state
-                .encrypt_in_place(&mut dst[data_start..], chunk.len());
+            let nonce = self.next_nonce();
+            let tag = self
+                .cipher
+                .encrypt_in_place_detached(&nonce, &[], &mut dst[data_start..])
+                .unwrap();
+            dst.put(tag.as_ref());
         }
 
         Ok(())
     }
 }
 
-impl<C> Decoder for Codec<C>
-where
-    C: Cipher,
-{
-    type Error = std::io::Error;
+impl Decoder for Codec<Rx> {
     type Item = BytesMut;
+    type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let (header, rest_len) = match Header::try_ref_from_prefix(src) {
@@ -131,12 +155,15 @@ where
 
         match header.typ {
             MessageType::Record => {
-                match self.cipher_state.decrypt_in_place(&mut body, len) {
-                    Ok(n) => body.truncate(n),
-                    Err(()) => {
-                        tracing::error!("decryption failed");
-                        return Err(ErrorKind::InvalidData.into());
-                    }
+                let nonce = self.next_nonce();
+                let tag = body.split_off(body.len() - AEAD_OVERHEAD);
+                if self
+                    .cipher
+                    .decrypt_in_place_detached(&nonce, &[], body.as_mut(), tag.as_ref().into())
+                    .is_err()
+                {
+                    tracing::error!("decryption failed");
+                    return Err(ErrorKind::InvalidData.into());
                 }
 
                 Ok(Some(body))
@@ -164,30 +191,17 @@ where
 mod test {
     use std::sync::LazyLock;
 
-    use noise_protocol::Cipher as _;
     use proptest::{collection::vec, prelude::*};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_util::codec::Framed;
 
     use super::*;
 
-    type Cipher = crate::ChaCha20Poly1305BigEndian;
-
-    fn init_codec_pair(key: [u8; 32], nonce: u64) -> (Codec<Cipher>, Codec<Cipher>) {
-        let encrypt_state = CipherState::<Cipher>::new(&key, nonce);
-        let decrypt_state = encrypt_state.clone();
-
-        (
-            Codec {
-                cipher_state: encrypt_state,
-            },
-            Codec {
-                cipher_state: decrypt_state,
-            },
-        )
+    fn init_codec_pair(key: [u8; 32], nonce: u64) -> (Codec<Tx>, Codec<Rx>) {
+        (Codec::new(key.into(), nonce), Codec::new(key.into(), nonce))
     }
 
-    fn rand_codec_pair() -> (Codec<Cipher>, Codec<Cipher>) {
+    fn rand_codec_pair() -> (Codec<Tx>, Codec<Rx>) {
         init_codec_pair(rand::random(), rand::random())
     }
 
@@ -200,10 +214,7 @@ mod test {
 
         encrypt_codec.encode(TEST_PAYLOAD, &mut buf).unwrap();
         assert_ne!(buf.as_ref(), TEST_PAYLOAD);
-        assert_eq!(
-            buf.len(),
-            TEST_PAYLOAD.len() + Cipher::tag_len() + size_of::<Header>()
-        );
+        assert_eq!(buf.len(), TEST_PAYLOAD.len() + 16 + size_of::<Header>());
 
         let decoded = decrypt_codec.decode(&mut buf).unwrap().unwrap();
         assert_eq!(decoded.as_ref(), TEST_PAYLOAD);
@@ -216,10 +227,7 @@ mod test {
 
         encrypt_codec.encode(TEST_PAYLOAD, &mut buf).unwrap();
         assert_ne!(buf.as_ref(), TEST_PAYLOAD);
-        assert_eq!(
-            buf.len(),
-            TEST_PAYLOAD.len() + Cipher::tag_len() + size_of::<Header>()
-        );
+        assert_eq!(buf.len(), TEST_PAYLOAD.len() + 16 + size_of::<Header>());
 
         for i in 0..TEST_PAYLOAD.len() - 1 {
             let mut test_payload = buf.clone().split_to(i);
@@ -269,7 +277,7 @@ mod test {
 
     proptest::proptest! {
         #[test]
-        fn roundtrip_prop(payload in vec(any::<u8>(), 1..=MAX_MESSAGE_SIZE - size_of::<Header>() - Cipher::tag_len()), key: [u8; 32], nonce: u64) {
+        fn roundtrip_prop(payload in vec(any::<u8>(), 1..=MAX_MESSAGE_SIZE - size_of::<Header>() - 16), key: [u8; 32], nonce: u64) {
             let (mut encrypt_codec, mut decrypt_codec) = init_codec_pair(key, nonce);
 
             let mut buf = BytesMut::new();

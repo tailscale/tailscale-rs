@@ -46,13 +46,6 @@ where
     }
 }
 
-impl From<noise_protocol::Error> for Error {
-    #[inline]
-    fn from(_value: noise_protocol::Error) -> Self {
-        Error::HandshakeFailed
-    }
-}
-
 impl From<core::str::Utf8Error> for Error {
     #[inline]
     fn from(_value: core::str::Utf8Error) -> Self {

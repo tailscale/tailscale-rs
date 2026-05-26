@@ -15,14 +15,13 @@ rust-version.workspace = true
 ts_capabilityversion.workspace = true
 ts_hexdump.workspace = true
 ts_keys.workspace = true
+ts_noise.workspace = true
 
 # Unconditionally required dependencies.
 base64.workspace = true
 bytes.workspace = true
 chacha20poly1305 = "0.10"
 futures-util = { workspace = true, features = ["sink"] }
-noise-protocol = "0.2"
-noise-rust-crypto = "0.6"
 pin-project-lite.workspace = true
 static_assertions.workspace = true
 thiserror.workspace = true
@@ -30,7 +29,6 @@ tokio = { workspace = true, features = ["io-util"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing.workspace = true
 zerocopy.workspace = true
-zeroize = "1.8"
 
 [dev-dependencies]
 rand = "0.10"

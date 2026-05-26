@@ -255,7 +255,9 @@ where
         CapabilityVersion::CURRENT,
     );
 
-    let conn = crate::tokio::upgrade_ts2021(url, &init_msg, handshake, h1_client).await?;
+    let conn =
+        crate::tokio::upgrade_ts2021(url, &init_msg, handshake, machine_keys.private, h1_client)
+            .await?;
     let conn = crate::tokio::read_challenge_packet(conn).await?;
 
     let h2_conn = ts_http_util::http2::connect(conn).await?;
