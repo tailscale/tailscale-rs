@@ -21,6 +21,7 @@ members = [
     "ts_hexdump",
     "ts_http_util",
     "ts_keys",
+    "ts_kv_store",
     "ts_netcheck",
     "ts_netstack_smoltcp",
     "ts_netstack_smoltcp_core",

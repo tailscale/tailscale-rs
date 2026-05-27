@@ -1,0 +1,14 @@
+[package]
+name = "ts_kv_store"
+version.workspace = true
+description = "typed, concurrent and transactional, in-memory key-value store"
+categories = ["data-structures"]
+keywords = ["tailscale", "key-value"]
+
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
