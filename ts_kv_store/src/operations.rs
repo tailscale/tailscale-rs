@@ -23,13 +23,15 @@ use crate::{
     storage::{SinValue, Storage},
 };
 
-pub(crate) trait Ops<'a, TableStorage: schema::GeneratedStorage + 'a>: Sized {
+pub(crate) trait Ops<'store, TableStorage: schema::GeneratedStorage + 'store>:
+    Sized
+{
     type ReadLock: Deref<Target = Storage<TableStorage>>;
     fn read_lock(self) -> Self::ReadLock;
 }
 
-pub(crate) trait SingletonOps<'a, TableStorage: schema::GeneratedStorage + 'a>:
-    Ops<'a, TableStorage>
+pub(crate) trait SingletonOps<'store, TableStorage: schema::GeneratedStorage + 'store>:
+    Ops<'store, TableStorage>
 {
     fn get<D: schema::Singleton>(self, _owner: Owner) -> Option<D::Value>
     where
@@ -64,10 +66,10 @@ pub(crate) trait SingletonOps<'a, TableStorage: schema::GeneratedStorage + 'a>:
 }
 
 pub(crate) trait TabularOps<
-    'a,
-    TableStorage: schema::GeneratedStorage + 'a,
-    D: schema::TableDesc<Storage = TableStorage> + 'a,
->: Ops<'a, TableStorage>
+    'store,
+    TableStorage: schema::GeneratedStorage + 'store,
+    D: schema::TableDesc<Storage = TableStorage>,
+>: Ops<'store, TableStorage>
 {
     fn len(self) -> usize {
         let storage = self.read_lock();
@@ -104,52 +106,45 @@ pub(crate) trait TabularOps<
         Some(f(value))
     }
 
-    fn iter_cloned<'t>(self, _owner: Owner) -> impl Iterator<Item = (D::Key, D::Value)>
+    fn iter<'guard>(self, _owner: Owner) -> impl Iterator<Item = (&'guard D::Key, &'guard D::Value)>
     where
-        D::Key: Clone,
-        D::Value: Clone,
-        Self: 't,
-        'a: 't,
+        Self: 'guard,
+        'store: 'guard,
+        D: 'store,
     {
         let guard = self.read_lock();
-        TableIterator::<'t, Self::ReadLock, TableStorage, D, iter::KeysAndValues>::new(guard)
+        TableIterator::<'store, 'guard, Self::ReadLock, TableStorage, D, iter::KeysAndValues>::new(
+            guard,
+        )
     }
 
-    fn iter_keys_cloned<'t>(self, _owner: Owner) -> impl Iterator<Item = D::Key>
+    fn keys<'guard>(self, _owner: Owner) -> impl Iterator<Item = &'guard D::Key>
     where
-        D::Key: Clone,
-        Self: 't,
-        'a: 't,
+        Self: 'guard,
+        'store: 'guard,
+        D: 'store,
     {
         let guard = self.read_lock();
-        TableIterator::<'t, Self::ReadLock, TableStorage, D, iter::Keys>::new(guard)
+        TableIterator::<'store, 'guard, Self::ReadLock, TableStorage, D, iter::Keys>::new(guard)
     }
 
-    fn iter_values_cloned<'t>(self, _owner: Owner) -> impl Iterator<Item = D::Value>
+    fn values<'guard>(self, _owner: Owner) -> impl Iterator<Item = &'guard D::Value>
     where
-        D::Value: Clone,
-        Self: 't,
-        'a: 't,
+        Self: 'guard,
+        'store: 'guard,
+        D: 'store,
     {
         let guard = self.read_lock();
-        TableIterator::<'t, Self::ReadLock, TableStorage, D, iter::Values>::new(guard)
-    }
-
-    fn for_each(self, mut f: impl FnMut(&D::Key, &D::Value), _owner: Owner) {
-        let storage = self.read_lock();
-        let table = D::get_table(&storage.tables);
-        for (k, v) in &table.data {
-            f(k, v);
-        }
+        TableIterator::<'store, 'guard, Self::ReadLock, TableStorage, D, iter::Values>::new(guard)
     }
 }
 
 pub(crate) trait IndexedOps<
-    'a,
-    TableStorage: schema::GeneratedStorage + 'a,
-    D: IndexDesc<Storage = TableStorage, BaseTable = B, Value = B::Key> + 'a,
-    B: TableDesc<Storage = TableStorage> + 'a,
->: Ops<'a, TableStorage>
+    'store,
+    TableStorage: schema::GeneratedStorage + 'store,
+    D: IndexDesc<Storage = TableStorage, BaseTable = B, Value = B::Key>,
+    B: TableDesc<Storage = TableStorage>,
+>: Ops<'store, TableStorage>
 {
     fn len(self) -> usize {
         let storage = self.read_lock();
@@ -190,58 +185,52 @@ pub(crate) trait IndexedOps<
         Some(f(value))
     }
 
-    fn iter_cloned<'t>(self, _owner: Owner) -> impl Iterator<Item = (D::Key, B::Value)>
+    fn iter<'guard>(self, _owner: Owner) -> impl Iterator<Item = (&'guard D::Key, &'guard B::Value)>
     where
-        D::Key: Clone,
-        B::Value: Clone,
-        Self: 't,
-        'a: 't,
+        Self: 'guard,
+        'store: 'guard,
+        B: 'store,
+        D: 'store,
     {
         let guard = self.read_lock();
-        IndexIterator::<'t, Self::ReadLock, TableStorage, D, B, iter::KeysAndValues>::new(guard)
+        IndexIterator::<'store, 'guard, Self::ReadLock, TableStorage, D, B, iter::KeysAndValues>::new(guard)
     }
 
-    fn iter_keys_cloned<'t>(self, _owner: Owner) -> impl Iterator<Item = D::Key>
+    fn keys<'guard>(self, _owner: Owner) -> impl Iterator<Item = &'guard D::Key>
     where
-        D::Key: Clone,
-        Self: 't,
-        'a: 't,
+        Self: 'guard,
+        'store: 'guard,
+        B: 'store,
+        D: 'store,
     {
         let guard = self.read_lock();
-        IndexIterator::<'t, Self::ReadLock, TableStorage, D, B, iter::Keys>::new(guard)
+        IndexIterator::<'store, 'guard, Self::ReadLock, TableStorage, D, B, iter::Keys>::new(guard)
     }
 
-    fn iter_values_cloned<'t>(self, _owner: Owner) -> impl Iterator<Item = B::Value>
+    fn values<'guard>(self, _owner: Owner) -> impl Iterator<Item = &'guard B::Value>
     where
-        B::Value: Clone,
-        Self: 't,
-        'a: 't,
+        Self: 'guard,
+        'store: 'guard,
+        B: 'store,
+        D: 'store,
     {
         let guard = self.read_lock();
-        IndexIterator::<'t, Self::ReadLock, TableStorage, D, B, iter::Values>::new(guard)
-    }
-
-    fn for_each(self, mut f: impl FnMut(&D::Key, &B::Value), _owner: Owner) {
-        let storage = self.read_lock();
-        let base = B::get_table(&storage.tables);
-        let index = D::get_table(&storage.tables);
-        for (k, base_key) in &index.data {
-            let Some(v) = base.data.get(base_key) else {
-                continue;
-            };
-            f(k, v);
-        }
+        IndexIterator::<'store, 'guard, Self::ReadLock, TableStorage, D, B, iter::Values>::new(
+            guard,
+        )
     }
 }
 
-pub(crate) trait OpsMut<'a, TableStorage: schema::GeneratedStorage + 'a>: Sized {
+pub(crate) trait OpsMut<'store, TableStorage: schema::GeneratedStorage + 'store>:
+    Sized
+{
     type WriteLock: DerefMut<Target = Storage<TableStorage>>;
 
     fn write_lock(self) -> Self::WriteLock;
 }
 
-pub(crate) trait SingletonOpsMut<'a, 't, TableStorage: schema::GeneratedStorage + 'a>:
-    OpsMut<'a, TableStorage>
+pub(crate) trait SingletonOpsMut<'store, TableStorage: schema::GeneratedStorage + 'store>:
+    OpsMut<'store, TableStorage>
 {
     fn insert<D: schema::Singleton>(self, value: D::ArgValue, owner: Owner) -> Option<D::ArgValue> {
         let mut storage = self.write_lock();
@@ -288,10 +277,10 @@ pub(crate) trait SingletonOpsMut<'a, 't, TableStorage: schema::GeneratedStorage 
 }
 
 pub(crate) trait TabularOpsMut<
-    'a,
-    TableStorage: schema::GeneratedStorage + 'a,
+    'store,
+    TableStorage: schema::GeneratedStorage + 'store,
     D: schema::TableDesc<Storage = TableStorage>,
->: OpsMut<'a, TableStorage>
+>: OpsMut<'store, TableStorage>
 {
     fn init(self, owner: Owner) -> Result<()> {
         let mut storage = self.write_lock();
@@ -368,11 +357,11 @@ pub(crate) trait TabularOpsMut<
 }
 
 pub(crate) trait IndexedOpsMut<
-    'a,
-    TableStorage: schema::GeneratedStorage + 'a,
+    'store,
+    TableStorage: schema::GeneratedStorage + 'store,
     D: IndexDesc<Storage = TableStorage, BaseTable = B, Value = B::Key>,
     B: TableDesc<Storage = TableStorage>,
->: OpsMut<'a, TableStorage>
+>: OpsMut<'store, TableStorage>
 {
     fn init(self, owner: Owner) -> Result<()> {
         let mut storage = self.write_lock();

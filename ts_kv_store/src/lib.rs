@@ -154,20 +154,20 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 }
 
-impl<'a, TableStorage: schema::GeneratedStorage + 'a> operations::Ops<'a, TableStorage>
-    for &'a KvStore<TableStorage>
+impl<'store: 'r, 'r, TableStorage: schema::GeneratedStorage + 'store>
+    operations::Ops<'store, TableStorage> for &'r KvStore<TableStorage>
 {
-    type ReadLock = std::sync::RwLockReadGuard<'a, storage::Storage<TableStorage>>;
+    type ReadLock = std::sync::RwLockReadGuard<'r, storage::Storage<TableStorage>>;
 
     fn read_lock(self) -> Self::ReadLock {
         self.storage.read().unwrap()
     }
 }
 
-impl<'a, TableStorage: schema::GeneratedStorage + 'a> operations::OpsMut<'a, TableStorage>
-    for &'a KvStore<TableStorage>
+impl<'store: 'r, 'r, TableStorage: schema::GeneratedStorage + 'store>
+    operations::OpsMut<'store, TableStorage> for &'r KvStore<TableStorage>
 {
-    type WriteLock = std::sync::RwLockWriteGuard<'a, storage::Storage<TableStorage>>;
+    type WriteLock = std::sync::RwLockWriteGuard<'r, storage::Storage<TableStorage>>;
 
     fn write_lock(self) -> Self::WriteLock {
         self.storage.write().unwrap()
@@ -192,9 +192,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Helper type for using a reference to a [`RwLockWriteGuard`] as a generic argument
 /// with a `Deref` bound. Required because checking trait bounds does not take into account
 /// transitivity of `Deref`.
-struct RefWriteGuard<'r, 'a, T>(&'r RwLockWriteGuard<'a, T>);
+struct RefWriteGuard<'r, 'inner, T>(&'r RwLockWriteGuard<'inner, T>);
 
-impl<'r, 'a, T> Deref for RefWriteGuard<'r, 'a, T> {
+impl<'r, 'inner, T> Deref for RefWriteGuard<'r, 'inner, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -205,16 +205,16 @@ impl<'r, 'a, T> Deref for RefWriteGuard<'r, 'a, T> {
 /// Helper type for using a mut reference to a [`RwLockWriteGuard`] as a generic argument
 /// with `Deref` and `DerefMut` bounds. Required because checking trait bounds does not take into
 /// account transitivity of `Deref`.
-struct RefWriteGuardMut<'r, 'a, T>(&'r mut RwLockWriteGuard<'a, T>);
+struct RefWriteGuardMut<'r, 'inner, T>(&'r mut RwLockWriteGuard<'inner, T>);
 
-impl<'r, 'a, T> Deref for RefWriteGuardMut<'r, 'a, T> {
+impl<'r, 'inner, T> Deref for RefWriteGuardMut<'r, 'inner, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         self.0.deref()
     }
 }
-impl<'r, 'a, T> DerefMut for RefWriteGuardMut<'r, 'a, T> {
+impl<'r, 'inner, T> DerefMut for RefWriteGuardMut<'r, 'inner, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0.deref_mut()
     }
@@ -222,9 +222,9 @@ impl<'r, 'a, T> DerefMut for RefWriteGuardMut<'r, 'a, T> {
 /// Helper type for using a reference to a [`RwLockReadGuard`] as a generic argument
 /// with a `Deref` bound. Required because checking trait bounds does not take into account
 /// transitivity of `Deref`.
-struct RefReadGuard<'a, T>(&'a RwLockReadGuard<'a, T>);
+struct RefReadGuard<'r, 'inner, T>(&'r RwLockReadGuard<'inner, T>);
 
-impl<'a, T> Deref for RefReadGuard<'a, T> {
+impl<'r, 'inner, T> Deref for RefReadGuard<'r, 'inner, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
