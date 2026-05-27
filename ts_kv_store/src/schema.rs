@@ -77,7 +77,7 @@ pub trait TableDesc: Sized {
 /// Describes a table used as an index.
 pub trait IndexDesc: TableDesc {
     /// The table which is indexed.
-    type BaseTable: TableDesc<Storage = Self::Storage>;
+    type BaseTable: TableDesc<Storage = Self::Storage, Key = Self::Value>;
 }
 
 /// Operations on an index.
