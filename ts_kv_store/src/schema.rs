@@ -1,5 +1,4 @@
 //! Traits and macros for defining the KvStore schema.
-#![allow(private_interfaces, private_bounds, unused_macros)]
 
 use std::{any::Any, hash::Hash, sync::Arc};
 
@@ -12,13 +11,17 @@ pub trait Singleton: 'static {
     /// The type of the value.
     type Value: Any + Send + Sync;
     /// The type used to initialize and access the value. For values stored as `Arc`s this should be
-    /// `Arc<Self::Value>`, for values stored by reference, this should be `&'static Self::Value` and
-    ///
+    /// `Arc<Self::Value>`, for values stored by reference, this should be `&'static Self::Value`, and
+    /// for other types, it should be the same as `Self::Value`.
     type ArgValue;
 
     /// Unwrap a `SinValue` into a typed value.
+    ///
+    /// Panics if `value` is an unexpected variant.
     fn from_value(value: SinValue) -> Self::ArgValue;
     /// Unwrap a reference to a `SinValue` into a reference to a typed value.
+    ///
+    /// Panics if `value` is an unexpected variant.
     fn from_value_ref(value: &SinValue) -> &Self::Value;
     /// Wrap a typed value into a `SinValue`.
     fn to_value(value: Self::ArgValue) -> SinValue;
@@ -32,6 +35,8 @@ pub trait Singleton: 'static {
 /// Prefer to use the macros in this module rather than this trait directly.
 pub trait ArcSingleton: Singleton {
     /// Unwrap a reference to a `SinValue` into an `Arc` reference to a typed value.
+    ///
+    /// Panics if `value` is an unexpected variant.
     fn from_value_arc(value: &SinValue) -> Arc<Self::Value> {
         match value {
             SinValue::Arc(a) => a.clone().downcast().unwrap(),
@@ -45,6 +50,8 @@ pub trait ArcSingleton: Singleton {
 /// Prefer to use the macros in this module rather than this trait directly.
 pub trait MutSingleton: Singleton {
     /// Unwrap a mutable reference to a `SinValue` into a mutable reference to a typed value.
+    ///
+    /// Panics if `value` is an unexpected variant.
     fn from_value_mut(value: &mut SinValue) -> &mut Self::Value;
 }
 
@@ -134,7 +141,7 @@ pub trait GeneratedStorage: Default {}
 #[macro_export]
 macro_rules! singleton {
     ($name:ident(u64)) => {
-        singleton!($name(u64, u64, U64));
+        $crate::singleton_types!($name(u64, u64, U64));
 
         impl $crate::schema::MutSingleton for $name {
             fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
@@ -146,7 +153,7 @@ macro_rules! singleton {
         }
     };
     ($name:ident($value_ty:ty as Box)) => {
-        singleton!($name($value_ty, $value_ty, Box));
+        $crate::singleton_types!($name($value_ty, $value_ty, Box));
 
         impl $crate::schema::MutSingleton for $name {
             fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
@@ -158,13 +165,18 @@ macro_rules! singleton {
         }
     };
     ($name:ident($value_ty:ty as Arc)) => {
-        singleton!($name($value_ty, std::sync::Arc<$value_ty>, Arc));
+        $crate::singleton_types!($name($value_ty, std::sync::Arc<$value_ty>, Arc));
 
         impl $crate::schema::ArcSingleton for $name {}
     };
     ($name:ident($value_ty:ty as Ref)) => {
-        singleton!($name($value_ty, &'static $value_ty, Ref));
+        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref));
     };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! singleton_types {
     ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident)) => {
         /// Describes a singleton in the KV store.
         #[allow(non_camel_case_types)]
@@ -286,7 +298,7 @@ macro_rules! match_helper_rhs_mut {
 /// ```
 /// # Indexes
 ///
-/// The syntax of an indexes is `index(field: Type)` where `field` is the name of a field in the value
+/// The syntax of an index is `index(field: Type)` where `field` is the name of a field in the value
 /// type of the base table and `Type` is the type of that field. You can specify multiple indexes
 /// for each table, separated with a semicolon. E.g.,
 ///
@@ -302,7 +314,8 @@ macro_rules! match_helper_rhs_mut {
 ///
 /// Index fields must uniquely identify a row in the base table. If multiple rows in the base table
 /// have the same key in the index, then behavior is unspecified (might give partial or incorrect
-/// result, might panic, etc.).
+/// result, might panic, etc.). The type of an index key field and the type of the primary key of the
+/// data being indexed must both be `Clone` (since they will be cloned when inserted into the index).
 #[macro_export]
 macro_rules! tables {
     ($($name: ident ($key_ty: ty => $value_ty: ty $(; index($field: ident: $field_ty: ty))*)),*) => {

@@ -49,9 +49,13 @@
 //! The data store has raw and transactional APIs. The raw API guarantees that each operation is
 //! atomic, but has no guarantees across multiple operatons. The transactional API groups operations
 //! into transactions which are atomic and serializable. Both singleton and tabular data can be part
-//! of a transaction, and tables and transactions are orthogonal. Transactions may be read/write or
-//! read-only. Transactions don't need to be explicitly committed - the effect is 'commit on drop'
-//! but the implementation is that operations are individually committed.
+//! of a transaction. The `Table` types used for accessing tabular data do not add any transactional
+//! elements. That is, operations on a `Table` created from the main store are not part of a transaction,
+//! and operations on a `Table` created from a transaction are only part of that transacton.
+//!
+//! Transactions may be read/write or read-only. Transactions don't need to be explicitly committed,
+//! the effect is 'commit on drop' and currently operations are committed as they are called (with
+//! no rollback).
 //!
 //! All data is owned. An owner is a simple token, its up to the user of the library to decide how
 //! to use these tokens and what rules to follow. Every KV pair has a single owner and can only be
@@ -64,12 +68,13 @@
 //!
 //! For example, consider a table `Base` which maps `u64` keys to `Foo` values where `Foo` has a
 //! field `bar: Url` (and `bar` is a unique identifier for a `Foo` in `Base`). The schema would look
-//! like `tables!(Base(Base => Foo; index(bar: Url)));` which will create a `Base` table and an
-//! `index::Base::bar` table. The index table can be accessed directly like a normal table, but I
-//! don't recommend it. The key type is `Url` and the value type is `u64`. By using
-//! `store.table_by::<index::Base::bar>(...)` the `Base` table can be accessed as if it were a table
-//! mapping `Url`s to `Foo`s. The index is maintained whenever `Base` is modified (directly or via
-//! any index) by using the `bar` field of the values in `Base`.
+//! like `tables!(Base(u64 => Foo; index(bar: Url)));` which will create a `Base` table and an
+//! `index::Base::bar` table. By using `store.table_by::<index::Base::bar>(...)` the `Base` table
+//! can be accessed as if it were a table mapping `Url`s to `Foo`s. The index is maintained whenever
+//! `Base` is modified (directly or via any index) by using the `bar` field of the values in `Base`.
+//!
+//! The index table can be accessed directly like a normal table (`Url`), but I don't recommend it.
+//! The key type is `Url` and the value type is `u64`.
 //!
 //! Index fields must uniquely identify a row in the base table. If multiple rows in the base table
 //! have the same key in the index, then behavior is unspecified (might give partial or incorrect
@@ -108,8 +113,7 @@
 //! the various types which support them (`KvStore`, the table types, the transaction types, index
 //! types, and transactional index types). These are implemented on traits in the `operations` module.
 //! For ease of use and documentation, the functions are implemented on each concrete type and
-//! delegated to the trait implementations meaning that the traits and impls are an internal
-//! implementation detail.
+//! delegated to the trait implementations. I.e., the traits and impls are an implementation detail.
 
 use std::{
     ops::{Deref, DerefMut},
@@ -151,7 +155,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
 }
 
 impl<'a, TableStorage: schema::GeneratedStorage + 'a> operations::Ops<'a, TableStorage>
-    for &'a crate::KvStore<TableStorage>
+    for &'a KvStore<TableStorage>
 {
     type ReadLock = std::sync::RwLockReadGuard<'a, storage::Storage<TableStorage>>;
 
@@ -161,7 +165,7 @@ impl<'a, TableStorage: schema::GeneratedStorage + 'a> operations::Ops<'a, TableS
 }
 
 impl<'a, TableStorage: schema::GeneratedStorage + 'a> operations::OpsMut<'a, TableStorage>
-    for &'a crate::KvStore<TableStorage>
+    for &'a KvStore<TableStorage>
 {
     type WriteLock = std::sync::RwLockWriteGuard<'a, storage::Storage<TableStorage>>;
 

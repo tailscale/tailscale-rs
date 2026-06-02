@@ -145,13 +145,13 @@ impl<
     /// Get mutable access to a row of the table in the store in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn mutate<Q, T>(&'a self, key: &Q, f: impl FnOnce(&mut B::Value) -> T) -> Option<T>
+    pub fn with_mut<Q, T>(&'a self, key: &Q, f: impl FnOnce(&mut B::Value) -> T) -> Option<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         B::Key: Clone,
     {
-        <&Self as IndexedOpsMut<'_, TableStorage, D, B>>::mutate(self, key, f, self.owner)
+        <&Self as IndexedOpsMut<'_, TableStorage, D, B>>::with_mut(self, key, f, self.owner)
     }
 
     /// Remove a row from the table.
@@ -362,13 +362,13 @@ impl<
     /// Get mutable access to a row of the table in the store in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn mutate<Q, T>(&mut self, key: &Q, f: impl FnOnce(&mut B::Value) -> T) -> Option<T>
+    pub fn with_mut<Q, T>(&mut self, key: &Q, f: impl FnOnce(&mut B::Value) -> T) -> Option<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         B::Key: Clone,
     {
-        <&mut Self as IndexedOpsMut<'_, TableStorage, D, B>>::mutate::<Q, T>(
+        <&mut Self as IndexedOpsMut<'_, TableStorage, D, B>>::with_mut::<Q, T>(
             self,
             key,
             f,
@@ -806,7 +806,7 @@ mod test {
         let store = KvStore::new();
         let result = store
             .table_by::<index::Users::name>(OWNER)
-            .mutate("Alice", |v| v.name.len());
+            .with_mut("Alice", |v| v.name.len());
         assert!(result.is_none());
     }
 
@@ -816,7 +816,7 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table_by::<index::Users::name>(OWNER)
-            .mutate("Alice", |v| v.name.push_str(" Smith"));
+            .with_mut("Alice", |v| v.name.push_str(" Smith"));
         let value = store.table::<Users>(OWNER).get(&1).unwrap();
         assert_eq!(value.name, "Alice Smith");
     }
@@ -827,7 +827,7 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table_by::<index::Users::name>(OWNER)
-            .mutate("Alice", |v| {
+            .with_mut("Alice", |v| {
                 v.name = "Charlie".to_owned();
             });
         assert!(
@@ -1445,7 +1445,7 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>()
-            .mutate("Alice", |v| v.name = "Bob".to_owned());
+            .with_mut("Alice", |v| v.name = "Bob".to_owned());
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Bob"),
@@ -1462,7 +1462,7 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>()
-            .mutate("Alice", |v| v.age = 42);
+            .with_mut("Alice", |v| v.age = 42);
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Alice"),
             Some(Row {
@@ -1537,7 +1537,7 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.table::<Users>().insert(1, row("Alice"));
         txn.table::<Users>()
-            .mutate(&1, |v| v.name = "Bob".to_owned());
+            .with_mut(&1, |v| v.name = "Bob".to_owned());
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Bob"),

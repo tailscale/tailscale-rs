@@ -134,12 +134,12 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Get mutable access to a value in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn mutate<D: schema::MutSingleton, T>(
+    pub fn with_mut<D: schema::MutSingleton, T>(
         &self,
         owner: Owner,
         f: impl FnOnce(&mut D::Value) -> T,
     ) -> Option<T> {
-        <&Self as SingletonOpsMut<'_, '_, TableStorage>>::mutate::<D, T>(self, f, owner)
+        <&Self as SingletonOpsMut<'_, '_, TableStorage>>::with_mut::<D, T>(self, f, owner)
     }
 
     /// Remove a single value from the store.
@@ -238,12 +238,12 @@ impl<'a, TableStorage: schema::GeneratedStorage, D: schema::TableDesc<Storage = 
     /// Get mutable access to a row of the table in the store in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn mutate<Q, T>(&'a self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
+    pub fn with_mut<Q, T>(&'a self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        <&Self as TabularOpsMut<'_, TableStorage, D>>::mutate(self, key, f, self.owner)
+        <&Self as TabularOpsMut<'_, TableStorage, D>>::with_mut(self, key, f, self.owner)
     }
 
     /// Remove a row from the table.
@@ -432,7 +432,7 @@ mod test {
     fn mutate_returns_none_and_does_not_call_f_when_absent() {
         let store = KvStore::new();
         let mut called = false;
-        let result = store.mutate::<Count, ()>(OWNER, |_| {
+        let result = store.with_mut::<Count, ()>(OWNER, |_| {
             called = true;
         });
         assert!(result.is_none());
@@ -444,7 +444,7 @@ mod test {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 10);
         assert_eq!(
-            store.mutate::<Count, _>(OWNER, |v| {
+            store.with_mut::<Count, _>(OWNER, |v| {
                 *v += 5;
                 *v
             }),
@@ -458,14 +458,14 @@ mod test {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
         store.clear::<Count>(OWNER);
-        assert!(store.mutate::<Count, ()>(OWNER, |_| {}).is_none());
+        assert!(store.with_mut::<Count, ()>(OWNER, |_| {}).is_none());
     }
 
     #[test]
     fn mutate_box_singleton() {
         let store = KvStore::new();
         store.insert::<Name>(OWNER, "hello".to_owned());
-        store.mutate::<Name, ()>(OWNER, |s| s.push_str(" world"));
+        store.with_mut::<Name, ()>(OWNER, |s| s.push_str(" world"));
         assert_eq!(store.get::<Name>(OWNER), Some("hello world".to_owned()));
     }
 
@@ -544,7 +544,7 @@ mod test {
     fn singleton_mutate_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
-        store.mutate::<Count, ()>(OTHER, |_| {});
+        store.with_mut::<Count, ()>(OTHER, |_| {});
     }
 
     #[test]
@@ -671,7 +671,7 @@ mod test {
         assert!(
             store
                 .table::<Items>(OWNER)
-                .mutate(&"missing", |v| v.len())
+                .with_mut(&"missing", |v| v.len())
                 .is_none()
         );
     }
@@ -680,7 +680,7 @@ mod test {
     fn table_mutate_modifies_value() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).insert("k", "hello".to_owned());
-        store.table::<Items>(OWNER).mutate(&"k", |v| v.push('!'));
+        store.table::<Items>(OWNER).with_mut(&"k", |v| v.push('!'));
         assert_eq!(
             store.table::<Items>(OWNER).get("k"),
             Some("hello!".to_owned())
@@ -798,7 +798,7 @@ mod test {
         let store = KvStore::new();
         let table = store.table::<Items>(OWNER);
         table.insert("k", "v1".to_owned());
-        table.mutate(&"k", |v| {
+        table.with_mut(&"k", |v| {
             v.clear();
             v.push_str("v2");
         });
@@ -901,7 +901,7 @@ mod test {
     fn table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).init().unwrap();
-        store.table::<Items>(OTHER).mutate(&"k", |v| v.len());
+        store.table::<Items>(OTHER).with_mut(&"k", |v| v.len());
     }
 
     #[test]

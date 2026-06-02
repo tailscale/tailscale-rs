@@ -195,11 +195,11 @@ impl<'a, TableStorage: schema::GeneratedStorage> Transaction<'a, TableStorage> {
     /// Get mutable access to a value in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn mutate<D: schema::MutSingleton, T>(
+    pub fn with_mut<D: schema::MutSingleton, T>(
         &mut self,
         f: impl FnOnce(&mut D::Value) -> T,
     ) -> Option<T> {
-        <&mut Self as SingletonOpsMut<'_, '_, TableStorage>>::mutate::<D, T>(self, f, self.owner)
+        <&mut Self as SingletonOpsMut<'_, '_, TableStorage>>::with_mut::<D, T>(self, f, self.owner)
     }
 
     /// Remove a single value from the store.
@@ -329,12 +329,12 @@ impl<
     /// Get mutable access to a row of the table in the store in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn mutate<Q, T>(&mut self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
+    pub fn with_mut<Q, T>(&mut self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        <&mut Self as TabularOpsMut<'_, TableStorage, D>>::mutate(self, key, f, self.txn.owner)
+        <&mut Self as TabularOpsMut<'_, TableStorage, D>>::with_mut(self, key, f, self.txn.owner)
     }
 
     /// Remove a row from the table.
@@ -751,7 +751,7 @@ mod test {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         let mut called = false;
-        let result = txn.mutate::<Count, ()>(|_| {
+        let result = txn.with_mut::<Count, ()>(|_| {
             called = true;
         });
         assert!(result.is_none());
@@ -764,7 +764,7 @@ mod test {
         let mut txn = store.begin_transaction(OWNER);
         txn.insert::<Count>(10);
         assert_eq!(
-            txn.mutate::<Count, _>(|v| {
+            txn.with_mut::<Count, _>(|v| {
                 *v += 5;
                 *v
             }),
@@ -855,7 +855,7 @@ mod test {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
         let mut txn = store.begin_transaction(OWNER);
-        txn.mutate::<Count, ()>(|v| *v = 100);
+        txn.with_mut::<Count, ()>(|v| *v = 100);
         txn.commit().unwrap();
 
         assert_eq!(store.get::<Count>(OWNER), Some(100));
@@ -878,7 +878,7 @@ mod test {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
         let mut txn = store.begin_transaction(OTHER);
-        txn.mutate::<Count, ()>(|_| {});
+        txn.with_mut::<Count, ()>(|_| {});
     }
 
     #[test]
@@ -981,7 +981,7 @@ mod test {
         let mut txn = store.begin_transaction(OWNER);
         let mut table = txn.table::<Items>();
         table.init().unwrap();
-        assert!(table.mutate(&"missing", |v| v.len()).is_none());
+        assert!(table.with_mut(&"missing", |v| v.len()).is_none());
     }
 
     #[test]
@@ -990,7 +990,7 @@ mod test {
         let mut txn = store.begin_transaction(OWNER);
         let mut table = txn.table::<Items>();
         table.insert("k", "hello".to_owned());
-        table.mutate(&"k", |v| v.push('!'));
+        table.with_mut(&"k", |v| v.push('!'));
         assert_eq!(table.get("k"), Some("hello!".to_owned()));
     }
 
@@ -1179,7 +1179,8 @@ mod test {
         let store = KvStore::new();
         store.table::<Items>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
-        txn.table::<Items>().mutate(&"k", |v: &mut String| v.len());
+        txn.table::<Items>()
+            .with_mut(&"k", |v: &mut String| v.len());
     }
 
     #[test]

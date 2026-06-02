@@ -253,7 +253,7 @@ pub(crate) trait SingletonOpsMut<'a, 't, TableStorage: schema::GeneratedStorage 
             .map_singleton_value(|v| D::from_value(v))
     }
 
-    fn mutate<D: schema::MutSingleton, T>(
+    fn with_mut<D: schema::MutSingleton, T>(
         self,
         f: impl FnOnce(&mut D::Value) -> T,
         owner: Owner,
@@ -322,7 +322,7 @@ pub(crate) trait TabularOpsMut<
     }
 
     // TODO if `f` panics then the indexes will be left in an inconsistent state.
-    fn mutate<Q, T>(self, key: &Q, f: impl FnOnce(&mut D::Value) -> T, owner: Owner) -> Option<T>
+    fn with_mut<Q, T>(self, key: &Q, f: impl FnOnce(&mut D::Value) -> T, owner: Owner) -> Option<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
@@ -405,7 +405,7 @@ pub(crate) trait IndexedOpsMut<
     }
 
     // TODO if `f` panics then the indexes will be left in an inconsistent state.
-    fn mutate<Q, T>(self, key: &Q, f: impl FnOnce(&mut B::Value) -> T, owner: Owner) -> Option<T>
+    fn with_mut<Q, T>(self, key: &Q, f: impl FnOnce(&mut B::Value) -> T, owner: Owner) -> Option<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
