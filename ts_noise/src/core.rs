@@ -158,6 +158,13 @@ pub type AeadTag = [u8; 16];
 /// - Mix additional key material into the handshake ([`StateWithAead::mix_dh`] or
 ///   [`StateWithAead::mix_psk`], which returns an updated [`StateWithAead`].
 pub struct StateWithAead {
+    // Note: StateWithAead doesn't derive ZeroizeOnDrop, because doing so forces a bunch of
+    // unnecessary clones in its impl. All its fields are themselves ZeroizeOnDrop, so the
+    // default drop implementation still zeroizes in practice, while also letting us move
+    // individual fields out of the struct when needed.
+    //
+    // If you are adding a new field here, you MUST think through whether that field needs
+    // to be zeroized, and make it ZeroizeOnDrop.
     state: State,
     aead: ChaCha20Poly1305,
 }
@@ -226,5 +233,37 @@ impl StateWithAead {
             .ok()?;
 
         Some(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_zeroize() {
+        // This is a regression test which checks that the crypto primitives we use zeroize
+        // their key material properly.
+        //
+        // As of 2026-06, the rustcrypto chacha20poly1305 crate (version 0.10.0) implements zeroize
+        // unconditionally. The upcoming 0.11.0 release makes zeroization conditional on a new
+        // crate feature, so if we're not careful at dependency update time we could silently
+        // disable zeroization of Noise session keys and weaken the forward secrecy properties
+        // of ts_tunnel and ts_control_noise.
+        //
+        // This regression test was motivated by that problem: it will fail to compile if our
+        // x25519 and chacha20poly1305 primitives don't implement zeroize as we expect. If you're
+        // here because you updated our dependencies and this test no longer compiles, you may need
+        // to turn on the `zeroize` feature on the chacha20poly1305 crate.
+        fn assert_implements<T: ZeroizeOnDrop>() {}
+
+        // Crypto primitives
+        assert_implements::<x25519_dalek::StaticSecret>();
+        assert_implements::<ChaCha20Poly1305>();
+
+        // Handshake state
+        assert_implements::<State>();
+        // StateWithAead is not ZeroizeOnDrop even though all its fields are, see comment in its
+        // definition.
     }
 }
