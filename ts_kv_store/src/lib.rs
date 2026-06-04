@@ -140,12 +140,12 @@ pub use raw::KvTable;
 pub use transactions::{KvTableRoTransactional, KvTableTransactional, RoTransaction, Transaction};
 
 /// A key-value store. See the crate docs for details. Its schema is described by `TableStorage`.
-pub struct KvStore<TableStorage> {
+pub struct KvStore<TableStorage: schema::GeneratedStorage> {
     /// All data is stored behind the RW lock (see `storage` and `schema` modules).
     storage: RwLock<storage::Storage<TableStorage>>,
 }
 
-impl<TableStorage> KvStore<TableStorage> {
+impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     #[doc(hidden)]
     /// Constructor intended to be used by macros. Avoid using this and prefer to use the generated
     /// `new` for a specialized `KvStore`.
@@ -154,22 +154,20 @@ impl<TableStorage> KvStore<TableStorage> {
     }
 }
 
-impl<'store, TableStorage: schema::GeneratedStorage> operations::Ops
+impl<'store, TableStorage: schema::GeneratedStorage> operations::Ops<TableStorage>
     for &'store KvStore<TableStorage>
 {
     type ReadLock = RwLockReadGuard<'store, storage::Storage<TableStorage>>;
-    type Storage = storage::Storage<TableStorage>;
 
     fn read_lock(self) -> Self::ReadLock {
         self.storage.read().unwrap()
     }
 }
 
-impl<'store, TableStorage: schema::GeneratedStorage> operations::OpsMut
+impl<'store, TableStorage: schema::GeneratedStorage> operations::OpsMut<TableStorage>
     for &'store KvStore<TableStorage>
 {
     type WriteLock = RwLockWriteGuard<'store, storage::Storage<TableStorage>>;
-    type Storage = storage::Storage<TableStorage>;
 
     fn write_lock(self) -> Self::WriteLock {
         self.storage.write().unwrap()

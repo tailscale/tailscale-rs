@@ -3,8 +3,8 @@
 use std::any::TypeId;
 
 use crate::{
-    Owner,
-    storage::{SinValue, StorageLike},
+    Owner, schema,
+    storage::{SinValue, Storage},
 };
 
 /// Helper trait to handle `SinValue::None`
@@ -49,7 +49,7 @@ impl OptSingletonValue for Option<(Owner, SinValue)> {
 
 #[allow(unused_variables)]
 #[track_caller]
-pub fn assert_owner(owner: Owner, key: &TypeId, storage: &impl StorageLike) {
+pub fn assert_owner(owner: Owner, key: &TypeId, storage: &Storage<impl schema::GeneratedStorage>) {
     #[cfg(debug_assertions)]
     if let Some(prev_owner) = storage.get_singleton_owner(key) {
         assert_eq!(

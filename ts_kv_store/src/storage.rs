@@ -8,7 +8,7 @@ use crate::{Error, Owner, Result, schema};
 
 /// Where we store the data.
 #[doc(hidden)]
-pub struct Storage<TableStorage> {
+pub struct Storage<TableStorage: schema::GeneratedStorage> {
     /// The key is the TypeId of the generated marker type for the KV data. See [`SinValue`] for
     /// how values are represented in the store.
     pub(crate) singletons: HashMap<TypeId, (Owner, SinValue)>,
@@ -26,49 +26,8 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
             tables: TableStorage::default(),
         }
     }
-}
 
-pub(crate) trait StorageLike: Sized {
-    type Generated: schema::GeneratedStorage;
-
-    fn tables(&self) -> &Self::Generated;
-    fn tables_mut(&mut self) -> &mut Self::Generated;
-
-    fn insert_singleton(
-        &mut self,
-        key: TypeId,
-        owner: Owner,
-        value: SinValue,
-    ) -> Option<(Owner, SinValue)>;
-
-    fn remove_singleton(&mut self, key: &TypeId) -> Option<(Owner, SinValue)>;
-
-    /// Retrieve a singleton value from the store using the given type-key.
-    fn get_singleton_value(&self, key: &TypeId) -> Option<&SinValue>;
-
-    /// Retrieve a singleton value from the store using the given type-key.
-    fn get_singleton_value_mut(&mut self, key: &TypeId) -> Option<&mut SinValue>;
-
-    /// Retrieve the owner of a singleton KV pair using the given type-key.
-    #[cfg(debug_assertions)]
-    fn get_singleton_owner(&self, key: &TypeId) -> Option<Owner>;
-}
-
-impl<T> StorageLike for Storage<T>
-where
-    T: schema::GeneratedStorage,
-{
-    type Generated = T;
-
-    fn tables(&self) -> &Self::Generated {
-        &self.tables
-    }
-
-    fn tables_mut(&mut self) -> &mut Self::Generated {
-        &mut self.tables
-    }
-
-    fn insert_singleton(
+    pub(crate) fn insert_singleton(
         &mut self,
         key: TypeId,
         owner: Owner,
@@ -77,23 +36,23 @@ where
         self.singletons.insert(key, (owner, value))
     }
 
-    fn remove_singleton(&mut self, key: &TypeId) -> Option<(Owner, SinValue)> {
+    pub(crate) fn remove_singleton(&mut self, key: &TypeId) -> Option<(Owner, SinValue)> {
         self.singletons.remove(key)
     }
 
     /// Retrieve a singleton value from the store using the given type-key.
-    fn get_singleton_value(&self, key: &TypeId) -> Option<&SinValue> {
+    pub(crate) fn get_singleton_value(&self, key: &TypeId) -> Option<&SinValue> {
         self.singletons.get(key).map(|(_, v)| v)
     }
 
     /// Retrieve a singleton value from the store using the given type-key.
-    fn get_singleton_value_mut(&mut self, key: &TypeId) -> Option<&mut SinValue> {
+    pub(crate) fn get_singleton_value_mut(&mut self, key: &TypeId) -> Option<&mut SinValue> {
         self.singletons.get_mut(key).map(|&mut (_, ref mut v)| v)
     }
 
     /// Retrieve the owner of a singleton KV pair using the given type-key.
     #[cfg(debug_assertions)]
-    fn get_singleton_owner(&self, key: &TypeId) -> Option<Owner> {
+    pub(crate) fn get_singleton_owner(&self, key: &TypeId) -> Option<Owner> {
         self.singletons.get(key).map(|(o, _)| *o)
     }
 }

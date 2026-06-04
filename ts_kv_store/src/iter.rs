@@ -4,7 +4,7 @@ use std::{hash::Hash, marker::PhantomData, ops::Deref};
 
 use crate::{
     schema::{IndexDesc, TableDesc},
-    storage::{StorageLike, Table},
+    storage::{Storage, Table},
 };
 
 /// Phantom type to iterate over keys.
@@ -42,8 +42,7 @@ impl<'guard, Guard, D: TableDesc, Kind> TableIterator<'guard, Guard, D, Kind> {
     /// Create an iterator over the table described by `D`.
     pub(crate) fn new(guard: Guard) -> Self
     where
-        Guard: Deref + 'guard,
-        <Guard as Deref>::Target: StorageLike<Generated = D::Storage>,
+        Guard: Deref<Target = Storage<D::Storage>> + 'guard,
         D: 'guard,
     {
         let mut result = TableIterator {
@@ -111,8 +110,7 @@ impl<'guard, Guard, D: IndexDesc, Kind> IndexIterator<'guard, Guard, D, Kind> {
     /// Create an iterator over the table described by `D` (the index).
     pub(crate) fn new(guard: Guard) -> Self
     where
-        Guard: Deref + 'guard,
-        <Guard as Deref>::Target: StorageLike<Generated = D::Storage>,
+        Guard: Deref<Target = Storage<D::Storage>> + 'guard,
         D: 'guard,
     {
         let mut result = IndexIterator {
@@ -121,7 +119,7 @@ impl<'guard, Guard, D: IndexDesc, Kind> IndexIterator<'guard, Guard, D, Kind> {
             _kind: PhantomData,
         };
 
-        let base_table = <D::BaseTable as TableDesc>::get_table(result.guard.tables());
+        let base_table = <D::BaseTable as TableDesc>::get_table(&result.guard.tables);
 
         result.inner = Some((
             // SAFETY: for the same reasoning as `inner_iter`, we're extending the lifetime of this
@@ -188,10 +186,9 @@ fn inner_iter<'guard, D, Guard>(
 ) -> std::collections::hash_map::Iter<'guard, D::Key, D::Value>
 where
     D: TableDesc + 'guard,
-    Guard: Deref + 'guard,
-    <Guard as Deref>::Target: StorageLike<Generated = D::Storage>,
+    Guard: Deref<Target = Storage<D::Storage>> + 'guard,
 {
-    let tables: *const _ = guard.tables();
+    let tables: *const _ = &guard.tables;
     // SAFETY: here we're extending the lifetime of the reference to the KV storage to `'guard`.
     // We can't use a raw pointer because we won't be able to use that as input to create an
     // iterator. To ensure safety we must ensure that `self.guard` outlives `self.inner`. We can

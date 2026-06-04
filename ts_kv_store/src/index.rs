@@ -23,28 +23,26 @@ pub struct KvTableIndex<'store, D: IndexDesc> {
     pub(crate) owner: Owner,
 }
 
-impl<'idx, D: IndexDesc> Ops for &'idx KvTableIndex<'_, D> {
-    type ReadLock = std::sync::RwLockReadGuard<'idx, Self::Storage>;
-    type Storage = Storage<D::Storage>;
+impl<'idx, D: IndexDesc> Ops<D::Storage> for &'idx KvTableIndex<'_, D> {
+    type ReadLock = std::sync::RwLockReadGuard<'idx, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
         self.store.storage.read().unwrap()
     }
 }
 
-impl<'idx, D: IndexDesc> OpsMut for &'idx KvTableIndex<'_, D> {
-    type WriteLock = std::sync::RwLockWriteGuard<'idx, Self::Storage>;
-    type Storage = Storage<D::Storage>;
+impl<'idx, D: IndexDesc> OpsMut<D::Storage> for &'idx KvTableIndex<'_, D> {
+    type WriteLock = std::sync::RwLockWriteGuard<'idx, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
         self.store.storage.write().unwrap()
     }
 }
 
-impl<D: IndexDesc> IndexedOps for &KvTableIndex<'_, D> {
+impl<D: IndexDesc> IndexedOps<D::Storage> for &KvTableIndex<'_, D> {
     type IndexDesc = D;
 }
-impl<D: IndexDesc> IndexedOpsMut for &KvTableIndex<'_, D> {
+impl<D: IndexDesc> IndexedOpsMut<D::Storage> for &KvTableIndex<'_, D> {
     type IndexDesc = D;
 }
 
@@ -57,17 +55,17 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Returns an error (containing the current owner of the table) if the table has already been
     /// initialized. In this case, the table will be in a consistent state and can be used as normal.
     pub fn init(&self) -> Result<()> {
-        <&Self as IndexedOpsMut>::init(self, self.owner)
+        <&Self as IndexedOpsMut<_>>::init(self, self.owner)
     }
 
     /// The number of key/value pairs in the base table.
     pub fn len(&self) -> usize {
-        <&Self as IndexedOps>::len(self)
+        <&Self as IndexedOps<_>>::len(self)
     }
 
     /// True if the table is empty.
     pub fn is_empty(&self) -> bool {
-        <&Self as IndexedOps>::is_empty(self)
+        <&Self as IndexedOps<_>>::is_empty(self)
     }
 
     /// Clear the base table by removing all its KVs, but preserving ownership.
@@ -75,7 +73,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     where
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOpsMut>::clear(self, self.owner)
+        <&Self as IndexedOpsMut<_>>::clear(self, self.owner)
     }
 
     /// Get a row of the table from the store by cloning the value.
@@ -88,7 +86,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::get(self, key, self.owner)
+        <&Self as IndexedOps<_>>::get(self, key, self.owner)
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -100,7 +98,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::with::<Q, T>(self, key, f, self.owner)
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner)
     }
 
     /// Insert a value into the table using the base table's key.
@@ -111,7 +109,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         <<D as IndexDesc>::BaseTable as TableDesc>::Key: Clone,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOpsMut>::insert(self, key, value, self.owner)
+        <&Self as IndexedOpsMut<_>>::insert(self, key, value, self.owner)
     }
 
     /// Get mutable access to a row of the table in the store in the store.
@@ -124,7 +122,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         BaseKey<D>: Clone,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOpsMut>::with_mut(self, key, f, self.owner)
+        <&Self as IndexedOpsMut<_>>::with_mut(self, key, f, self.owner)
     }
 
     /// Remove a row from the table.
@@ -136,7 +134,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOpsMut>::remove(self, key, self.owner)
+        <&Self as IndexedOpsMut<_>>::remove(self, key, self.owner)
     }
 
     /// Iterate all the keys in the index and value in the base table.
@@ -146,7 +144,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Base<D>: 'store,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::iter(self, self.owner)
+        <&Self as IndexedOps<_>>::iter(self, self.owner)
     }
 
     /// Iterate all the keys in the index.
@@ -156,7 +154,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Base<D>: 'store,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::keys(self, self.owner)
+        <&Self as IndexedOps<_>>::keys(self, self.owner)
     }
 
     /// Iterate all the values in the base table.
@@ -166,7 +164,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Base<D>: 'store,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::values(self, self.owner)
+        <&Self as IndexedOps<_>>::values(self, self.owner)
     }
 
     /// Iterate all the key/value pairs in a table. Values are mutable.
@@ -174,7 +172,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     where
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOpsMut>::for_each_mut(self, f, self.owner)
+        <&Self as IndexedOpsMut<_>>::for_each_mut(self, f, self.owner)
     }
 }
 
@@ -189,29 +187,35 @@ pub struct KvTableTransactionalIndex<'guard, 'txn, D: IndexDesc> {
     pub(crate) txn: &'txn mut Transaction<'guard, Storage<D::Storage>>,
 }
 
-impl<'guard, 'txn, 'a, D: IndexDesc> Ops for &'a KvTableTransactionalIndex<'guard, 'txn, D> {
-    type ReadLock = RefWriteGuard<'a, 'guard, Self::Storage>;
-    type Storage = Storage<D::Storage>;
+impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
+    for &'a KvTableTransactionalIndex<'guard, 'txn, D>
+{
+    type ReadLock = RefWriteGuard<'a, 'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
         RefWriteGuard(&self.txn.guard)
     }
 }
 
-impl<'guard, 'txn, 'a, D: IndexDesc> OpsMut for &'a mut KvTableTransactionalIndex<'guard, 'txn, D> {
-    type WriteLock = RefWriteGuardMut<'a, 'guard, Self::Storage>;
-    type Storage = Storage<D::Storage>;
+impl<'guard, 'txn, 'a, D: IndexDesc> OpsMut<D::Storage>
+    for &'a mut KvTableTransactionalIndex<'guard, 'txn, D>
+{
+    type WriteLock = RefWriteGuardMut<'a, 'guard, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
         RefWriteGuardMut(&mut self.txn.guard)
     }
 }
 
-impl<'guard, 'txn, D: IndexDesc> IndexedOps for &KvTableTransactionalIndex<'guard, 'txn, D> {
+impl<'guard, 'txn, D: IndexDesc> IndexedOps<D::Storage>
+    for &KvTableTransactionalIndex<'guard, 'txn, D>
+{
     type IndexDesc = D;
 }
 
-impl<'guard, 'txn, D: IndexDesc> IndexedOpsMut for &mut KvTableTransactionalIndex<'guard, 'txn, D> {
+impl<'guard, 'txn, D: IndexDesc> IndexedOpsMut<D::Storage>
+    for &mut KvTableTransactionalIndex<'guard, 'txn, D>
+{
     type IndexDesc = D;
 }
 
@@ -224,17 +228,17 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Returns an error (containing the current owner of the table) if the table has already been
     /// initialized. In this case, the table will be in a consistent state and can be used as normal.
     pub fn init(&mut self) -> Result<()> {
-        <&mut Self as IndexedOpsMut>::init(self, self.txn.owner)
+        <&mut Self as IndexedOpsMut<_>>::init(self, self.txn.owner)
     }
 
     /// The number of key/value pairs in the base table.
     pub fn len(&self) -> usize {
-        <&Self as IndexedOps>::len(self)
+        <&Self as IndexedOps<_>>::len(self)
     }
 
     /// True if the table is empty.
     pub fn is_empty(&self) -> bool {
-        <&Self as IndexedOps>::is_empty(self)
+        <&Self as IndexedOps<_>>::is_empty(self)
     }
 
     /// Clear the base table by removing all its KVs, but preserving ownership.
@@ -242,7 +246,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     where
         IndexValue<D>: Eq + Hash,
     {
-        <&mut Self as IndexedOpsMut>::clear(self, self.txn.owner)
+        <&mut Self as IndexedOpsMut<_>>::clear(self, self.txn.owner)
     }
 
     /// Get a row of the table from the store by cloning the value.
@@ -255,7 +259,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::get::<Q>(self, key, self.txn.owner)
+        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.txn.owner)
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -267,7 +271,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::with::<Q, T>(self, key, f, self.txn.owner)
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.txn.owner)
     }
 
     /// Insert a value into the table using the base table's key.
@@ -278,7 +282,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         BaseKey<D>: Clone,
         IndexValue<D>: Eq + Hash,
     {
-        <&mut Self as IndexedOpsMut>::insert(self, key, value, self.txn.owner)
+        <&mut Self as IndexedOpsMut<_>>::insert(self, key, value, self.txn.owner)
     }
 
     /// Get mutable access to a row of the table in the store in the store.
@@ -291,7 +295,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         BaseKey<D>: Clone,
         IndexValue<D>: Eq + Hash,
     {
-        <&mut Self as IndexedOpsMut>::with_mut::<Q, T>(self, key, f, self.txn.owner)
+        <&mut Self as IndexedOpsMut<_>>::with_mut::<Q, T>(self, key, f, self.txn.owner)
     }
 
     /// Remove a row from the table.
@@ -303,7 +307,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&mut Self as IndexedOpsMut>::remove::<Q>(self, key, self.txn.owner)
+        <&mut Self as IndexedOpsMut<_>>::remove::<Q>(self, key, self.txn.owner)
     }
 
     /// Iterate all the keys in the index and value in the base table.
@@ -313,7 +317,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         Base<D>: 'guard,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::iter(self, self.txn.owner)
+        <&Self as IndexedOps<_>>::iter(self, self.txn.owner)
     }
 
     /// Iterate all the keys in the index.
@@ -322,7 +326,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         D: 'guard,
         Base<D>: 'guard,
     {
-        <&Self as IndexedOps>::keys(self, self.txn.owner)
+        <&Self as IndexedOps<_>>::keys(self, self.txn.owner)
     }
 
     /// Iterate all the values in the base table.
@@ -332,7 +336,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         Base<D>: 'guard,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::values(self, self.txn.owner)
+        <&Self as IndexedOps<_>>::values(self, self.txn.owner)
     }
 
     /// Iterate all the key/value pairs in a table. Values are mutable.
@@ -340,7 +344,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     where
         IndexValue<D>: Eq + Hash,
     {
-        <&mut Self as IndexedOpsMut>::for_each_mut(self, f, self.txn.owner)
+        <&mut Self as IndexedOpsMut<_>>::for_each_mut(self, f, self.txn.owner)
     }
 }
 
@@ -355,28 +359,31 @@ pub struct KvTableRoTransactionalIndex<'guard, 'txn, D: IndexDesc> {
     pub(crate) txn: &'txn RoTransaction<'guard, Storage<D::Storage>>,
 }
 
-impl<'guard, 'txn, 'a, D: IndexDesc> Ops for &'a KvTableRoTransactionalIndex<'guard, 'txn, D> {
-    type ReadLock = RefReadGuard<'a, 'guard, Self::Storage>;
-    type Storage = Storage<D::Storage>;
+impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
+    for &'a KvTableRoTransactionalIndex<'guard, 'txn, D>
+{
+    type ReadLock = RefReadGuard<'a, 'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
         RefReadGuard(&self.txn.guard)
     }
 }
 
-impl<'guard, 'txn, D: IndexDesc> IndexedOps for &KvTableRoTransactionalIndex<'guard, 'txn, D> {
+impl<'guard, 'txn, D: IndexDesc> IndexedOps<D::Storage>
+    for &KvTableRoTransactionalIndex<'guard, 'txn, D>
+{
     type IndexDesc = D;
 }
 
 impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
     /// The number of key/value pairs in the base table.
     pub fn len(&self) -> usize {
-        <&Self as IndexedOps>::len(self)
+        <&Self as IndexedOps<_>>::len(self)
     }
 
     /// True if the table is empty.
     pub fn is_empty(&self) -> bool {
-        <&Self as IndexedOps>::is_empty(self)
+        <&Self as IndexedOps<_>>::is_empty(self)
     }
 
     /// Get a row of the table from the store by cloning the value.
@@ -389,7 +396,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::get::<Q>(self, key, self.txn.owner)
+        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.txn.owner)
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -401,7 +408,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::with::<Q, T>(self, key, f, self.txn.owner)
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.txn.owner)
     }
 
     /// Iterate all the keys in the index and value in the base table.
@@ -410,7 +417,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         D: 'guard,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::iter(self, self.txn.owner)
+        <&Self as IndexedOps<_>>::iter(self, self.txn.owner)
     }
 
     /// Iterate all the keys in the index.
@@ -418,7 +425,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
     where
         D: 'guard,
     {
-        <&Self as IndexedOps>::keys(self, self.txn.owner)
+        <&Self as IndexedOps<_>>::keys(self, self.txn.owner)
     }
 
     /// Iterate all the values in the base table.
@@ -427,7 +434,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         D: 'guard,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps>::values(self, self.txn.owner)
+        <&Self as IndexedOps<_>>::values(self, self.txn.owner)
     }
 }
 
