@@ -79,14 +79,13 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
 /// ([`Transaction::commit`] can be used for this).
 ///
 /// A transaction must not be kept alive over an `await` point. This can lead to deadlock.
-// TODO do we need to be able to abort a transaction?
 pub struct Transaction<'guard, Storage> {
     pub(crate) guard: RwLockWriteGuard<'guard, Storage>,
     pub(crate) owner: Owner,
 }
 
-impl<'guard, 'r, Storage: StorageLike> Ops for &'r Transaction<'guard, Storage> {
-    type ReadLock = RefWriteGuard<'r, 'guard, Self::Storage>;
+impl<'guard, 'a, Storage: StorageLike> Ops for &'a Transaction<'guard, Storage> {
+    type ReadLock = RefWriteGuard<'a, 'guard, Self::Storage>;
     type Storage = Storage;
 
     fn read_lock(self) -> Self::ReadLock {
@@ -96,9 +95,9 @@ impl<'guard, 'r, Storage: StorageLike> Ops for &'r Transaction<'guard, Storage> 
 
 impl<Storage: StorageLike> SingletonOps for &Transaction<'_, Storage> {}
 
-impl<'guard, 'r, Storage: StorageLike> OpsMut for &'r mut Transaction<'guard, Storage> {
-    type WriteLock = RefWriteGuardMut<'r, 'guard, Self::StorageMut>;
-    type StorageMut = Storage;
+impl<'guard, 'a, Storage: StorageLike> OpsMut for &'a mut Transaction<'guard, Storage> {
+    type WriteLock = RefWriteGuardMut<'a, 'guard, Self::Storage>;
+    type Storage = Storage;
 
     fn write_lock(self) -> Self::WriteLock {
         RefWriteGuardMut(&mut self.guard)
@@ -140,9 +139,9 @@ impl<'guard, Gen: schema::GeneratedStorage> Transaction<'guard, Storage<Gen>> {
     ///
     /// Here `Foo` describes a tables and `bar` describes an index over `Foo` using the `bar` field
     /// as foreign key.
-    pub fn table_by<'r, D: schema::IndexDesc<Storage = Gen>>(
-        &'r mut self,
-    ) -> KvTableTransactionalIndex<'guard, 'r, D> {
+    pub fn table_by<D: schema::IndexDesc<Storage = Gen>>(
+        &mut self,
+    ) -> KvTableTransactionalIndex<'guard, '_, D> {
         KvTableTransactionalIndex { txn: self }
     }
 
@@ -206,11 +205,11 @@ impl<'guard, Gen: schema::GeneratedStorage> Transaction<'guard, Storage<Gen>> {
 }
 
 /// Abstracts a table of key/values pairs in the store accessed as part of a transaction.
-pub struct KvTableTransactional<'guard, 'tx, D: TableDesc> {
-    txn: &'tx mut Transaction<'guard, Storage<D::Storage>>,
+pub struct KvTableTransactional<'guard, 'txn, D: TableDesc> {
+    txn: &'txn mut Transaction<'guard, Storage<D::Storage>>,
 }
 
-impl<'guard, 'tx, 'table, D: TableDesc> Ops for &'table KvTableTransactional<'guard, 'tx, D> {
+impl<'guard, 'txn, 'table, D: TableDesc> Ops for &'table KvTableTransactional<'guard, 'txn, D> {
     type ReadLock = RefWriteGuard<'table, 'guard, Self::Storage>;
     type Storage = Storage<D::Storage>;
 
@@ -219,11 +218,11 @@ impl<'guard, 'tx, 'table, D: TableDesc> Ops for &'table KvTableTransactional<'gu
     }
 }
 
-impl<'guard, 'tx, 'table, D: TableDesc> OpsMut
-    for &'table mut KvTableTransactional<'guard, 'tx, D>
+impl<'guard, 'txn, 'table, D: TableDesc> OpsMut
+    for &'table mut KvTableTransactional<'guard, 'txn, D>
 {
-    type WriteLock = RefWriteGuardMut<'table, 'guard, Self::StorageMut>;
-    type StorageMut = Storage<D::Storage>;
+    type WriteLock = RefWriteGuardMut<'table, 'guard, Self::Storage>;
+    type Storage = Storage<D::Storage>;
 
     fn write_lock(self) -> Self::WriteLock {
         RefWriteGuardMut(&mut self.txn.guard)
@@ -231,11 +230,11 @@ impl<'guard, 'tx, 'table, D: TableDesc> OpsMut
 }
 
 impl<'guard, D: TableDesc> TabularOps for &KvTableTransactional<'guard, '_, D> {
-    type Desc = D;
+    type TableDesc = D;
 }
 
 impl<'guard, D: TableDesc> TabularOpsMut for &mut KvTableTransactional<'guard, '_, D> {
-    type DescMut = D;
+    type TableDesc = D;
 }
 
 impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
@@ -354,8 +353,8 @@ pub struct RoTransaction<'guard, Storage> {
     pub(crate) owner: Owner,
 }
 
-impl<'guard, 'tx, Storage: StorageLike> Ops for &'tx RoTransaction<'guard, Storage> {
-    type ReadLock = RefReadGuard<'tx, 'guard, Storage>;
+impl<'guard, 'txn, Storage: StorageLike> Ops for &'txn RoTransaction<'guard, Storage> {
+    type ReadLock = RefReadGuard<'txn, 'guard, Storage>;
     type Storage = Storage;
 
     fn read_lock(self) -> Self::ReadLock {
@@ -365,7 +364,7 @@ impl<'guard, 'tx, Storage: StorageLike> Ops for &'tx RoTransaction<'guard, Stora
 
 impl<'guard, Storage: StorageLike> SingletonOps for &RoTransaction<'guard, Storage> {}
 
-impl<'guard, 'tx, 'table, D: TableDesc> Ops for &'table KvTableRoTransactional<'guard, 'tx, D> {
+impl<'guard, 'txn, 'table, D: TableDesc> Ops for &'table KvTableRoTransactional<'guard, 'txn, D> {
     type ReadLock = RefReadGuard<'table, 'guard, Self::Storage>;
     type Storage = Storage<D::Storage>;
 
@@ -375,7 +374,7 @@ impl<'guard, 'tx, 'table, D: TableDesc> Ops for &'table KvTableRoTransactional<'
 }
 
 impl<'guard, D: TableDesc> TabularOps for &KvTableRoTransactional<'guard, '_, D> {
-    type Desc = D;
+    type TableDesc = D;
 }
 
 impl<'guard, Gen: schema::GeneratedStorage> RoTransaction<'guard, Storage<Gen>> {
@@ -396,9 +395,7 @@ impl<'guard, Gen: schema::GeneratedStorage> RoTransaction<'guard, Storage<Gen>> 
     /// let txn = store.begin_ro_transaction(OWNER);
     /// let value = txn.table::<Foo>().get(key).unwrap();
     /// ```
-    pub fn table<'tx, D: TableDesc<Storage = Gen>>(
-        &'tx self,
-    ) -> KvTableRoTransactional<'guard, 'tx, D> {
+    pub fn table<D: TableDesc<Storage = Gen>>(&self) -> KvTableRoTransactional<'guard, '_, D> {
         KvTableRoTransactional { txn: self }
     }
 
@@ -413,9 +410,9 @@ impl<'guard, Gen: schema::GeneratedStorage> RoTransaction<'guard, Storage<Gen>> 
     ///
     /// Here `Foo` describes a tables and `bar` describes an index over `Foo` using the `bar` field
     /// as foreign key.
-    pub fn table_by<'tx, D: schema::IndexDesc<Storage = Gen>>(
-        &'tx self,
-    ) -> KvTableRoTransactionalIndex<'guard, 'tx, D> {
+    pub fn table_by<D: schema::IndexDesc<Storage = Gen>>(
+        &self,
+    ) -> KvTableRoTransactionalIndex<'guard, '_, D> {
         KvTableRoTransactionalIndex { txn: self }
     }
 
@@ -445,8 +442,8 @@ impl<'guard, Gen: schema::GeneratedStorage> RoTransaction<'guard, Storage<Gen>> 
 }
 
 /// Abstracts a table of key/values pairs in the store as part of a read-only transaction.
-pub struct KvTableRoTransactional<'guard, 'tx, D: TableDesc> {
-    txn: &'tx RoTransaction<'guard, Storage<D::Storage>>,
+pub struct KvTableRoTransactional<'guard, 'txn, D: TableDesc> {
+    txn: &'txn RoTransaction<'guard, Storage<D::Storage>>,
 }
 
 impl<'guard, D: TableDesc> KvTableRoTransactional<'guard, '_, D> {

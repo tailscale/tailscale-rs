@@ -17,8 +17,8 @@ pub struct Values;
 #[doc(hidden)]
 pub struct KeysAndValues;
 
-type IndexHandle<'guard, D> =
-    &'guard Table<<D as IndexDesc>::BaseTable, <<D as IndexDesc>::BaseTable as TableDesc>::Indexes>;
+type Indexes<D> =
+    Table<<D as IndexDesc>::BaseTable, <<D as IndexDesc>::BaseTable as TableDesc>::Indexes>;
 
 type TableIter<'guard, D> =
     std::collections::hash_map::Iter<'guard, <D as TableDesc>::Key, <D as TableDesc>::Value>;
@@ -103,7 +103,7 @@ pub struct IndexIterator<'guard, Guard, D: IndexDesc, Kind> {
     ///
     /// Invariants:
     ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<(IndexHandle<'guard, D>, TableIter<'guard, D>)>,
+    inner: Option<(&'guard Indexes<D>, TableIter<'guard, D>)>,
     _kind: PhantomData<Kind>,
 }
 

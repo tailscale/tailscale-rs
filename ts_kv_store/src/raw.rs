@@ -13,8 +13,8 @@ use crate::{
 impl<TableStorage: schema::GeneratedStorage> SingletonOps for &KvStore<TableStorage> {}
 impl<TableStorage: schema::GeneratedStorage> SingletonOpsMut for &KvStore<TableStorage> {}
 
-impl<'r, D: schema::TableDesc> Ops for &'r KvTable<'_, D> {
-    type ReadLock = std::sync::RwLockReadGuard<'r, Self::Storage>;
+impl<'a, D: schema::TableDesc> Ops for &'a KvTable<'_, D> {
+    type ReadLock = std::sync::RwLockReadGuard<'a, Self::Storage>;
     type Storage = Storage<D::Storage>;
 
     fn read_lock(self) -> Self::ReadLock {
@@ -23,12 +23,12 @@ impl<'r, D: schema::TableDesc> Ops for &'r KvTable<'_, D> {
 }
 
 impl<D: schema::TableDesc> TabularOps for &KvTable<'_, D> {
-    type Desc = D;
+    type TableDesc = D;
 }
 
-impl<'r, D: schema::TableDesc> OpsMut for &'r KvTable<'_, D> {
-    type WriteLock = std::sync::RwLockWriteGuard<'r, Self::StorageMut>;
-    type StorageMut = Storage<D::Storage>;
+impl<'a, D: schema::TableDesc> OpsMut for &'a KvTable<'_, D> {
+    type WriteLock = std::sync::RwLockWriteGuard<'a, Self::Storage>;
+    type Storage = Storage<D::Storage>;
 
     fn write_lock(self) -> Self::WriteLock {
         self.store.storage.write().unwrap()
@@ -36,7 +36,7 @@ impl<'r, D: schema::TableDesc> OpsMut for &'r KvTable<'_, D> {
 }
 
 impl<D: schema::TableDesc> TabularOpsMut for &KvTable<'_, D> {
-    type DescMut = D;
+    type TableDesc = D;
 }
 
 impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
