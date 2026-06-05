@@ -1,8 +1,11 @@
-use std::{borrow::Borrow, hash::Hash};
+use std::{
+    borrow::Borrow,
+    hash::Hash,
+    sync::{RwLockReadGuard, RwLockWriteGuard},
+};
 
 use crate::{
-    KvStore, Owner, RefReadGuard, RefWriteGuard, RefWriteGuardMut, Result, RoTransaction,
-    Transaction,
+    KvStore, Owner, Result, RoTransaction, Transaction,
     operations::{Base, BaseKey, BaseValue, IndexValue, IndexedOps, IndexedOpsMut, Ops, OpsMut},
     schema::{IndexDesc, TableDesc},
     storage::Storage,
@@ -27,7 +30,7 @@ impl<'idx, D: IndexDesc> Ops<D::Storage> for &'idx KvTableIndex<'_, D> {
     type ReadLock = std::sync::RwLockReadGuard<'idx, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        self.store.storage.read().unwrap()
+        self.store.get_read_lock()
     }
 }
 
@@ -35,7 +38,7 @@ impl<'idx, D: IndexDesc> OpsMut<D::Storage> for &'idx KvTableIndex<'_, D> {
     type WriteLock = std::sync::RwLockWriteGuard<'idx, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        self.store.storage.write().unwrap()
+        self.store.get_write_lock()
     }
 }
 
@@ -50,7 +53,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Initialize the base table by setting its owner (indexes don't have an owner).
     ///
     /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specifed in the first write.
+    /// its owner is set to the owner specified in the first write.
     ///
     /// Returns an error (containing the current owner of the table) if the table has already been
     /// initialized. In this case, the table will be in a consistent state and can be used as normal.
@@ -104,7 +107,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Insert a value into the table using the base table's key.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn insert(&self, key: BaseKey<D>, value: BaseValue<D>) -> Option<BaseValue<D>>
+    pub fn insert(&self, key: BaseKey<D>, value: BaseValue<D>)
     where
         <<D as IndexDesc>::BaseTable as TableDesc>::Key: Clone,
         IndexValue<D>: Eq + Hash,
@@ -120,6 +123,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         BaseKey<D>: Clone,
+        BaseValue<D>: Clone,
         IndexValue<D>: Eq + Hash,
     {
         <&Self as IndexedOpsMut<_>>::with_mut(self, key, f, self.owner)
@@ -128,11 +132,11 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Remove a row from the table.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn remove<Q>(&self, key: &Q) -> Option<BaseValue<D>>
+    pub fn remove<Q>(&self, key: &Q)
     where
         D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+        IndexValue<D>: Eq + Hash + ToOwned<Owned = BaseKey<D>>,
     {
         <&Self as IndexedOpsMut<_>>::remove(self, key, self.owner)
     }
@@ -170,7 +174,8 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Iterate all the key/value pairs in a table. Values are mutable.
     pub fn for_each_mut(&self, f: impl FnMut(&D::Key, &mut BaseValue<D>))
     where
-        IndexValue<D>: Eq + Hash,
+        IndexValue<D>: Eq + Hash + Clone,
+        BaseValue<D>: Clone,
     {
         <&Self as IndexedOpsMut<_>>::for_each_mut(self, f, self.owner)
     }
@@ -184,26 +189,26 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
 /// SAFETY: `D` and `B` must describe different tables (this is enforced by the macros, but possible
 /// to violate if building a schema by hand).
 pub struct KvTableTransactionalIndex<'guard, 'txn, D: IndexDesc> {
-    pub(crate) txn: &'txn mut Transaction<'guard, Storage<D::Storage>>,
+    pub(crate) txn: &'txn mut Transaction<'guard, D::Storage>,
 }
 
 impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
     for &'a KvTableTransactionalIndex<'guard, 'txn, D>
 {
-    type ReadLock = RefWriteGuard<'a, 'guard, Storage<D::Storage>>;
+    type ReadLock = &'a RwLockWriteGuard<'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        RefWriteGuard(&self.txn.guard)
+        &self.txn.guard
     }
 }
 
 impl<'guard, 'txn, 'a, D: IndexDesc> OpsMut<D::Storage>
     for &'a mut KvTableTransactionalIndex<'guard, 'txn, D>
 {
-    type WriteLock = RefWriteGuardMut<'a, 'guard, Storage<D::Storage>>;
+    type WriteLock = &'a mut RwLockWriteGuard<'guard, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        RefWriteGuardMut(&mut self.txn.guard)
+        &mut self.txn.guard
     }
 }
 
@@ -223,7 +228,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Initialize the base table by setting its owner (indexes don't have an owner).
     ///
     /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specifed in the first write.
+    /// its owner is set to the owner specified in the first write.
     ///
     /// Returns an error (containing the current owner of the table) if the table has already been
     /// initialized. In this case, the table will be in a consistent state and can be used as normal.
@@ -277,7 +282,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Insert a value into the table using the base table's key.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn insert(&mut self, key: BaseKey<D>, value: BaseValue<D>) -> Option<BaseValue<D>>
+    pub fn insert(&mut self, key: BaseKey<D>, value: BaseValue<D>)
     where
         BaseKey<D>: Clone,
         IndexValue<D>: Eq + Hash,
@@ -293,6 +298,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         BaseKey<D>: Clone,
+        BaseValue<D>: Clone,
         IndexValue<D>: Eq + Hash,
     {
         <&mut Self as IndexedOpsMut<_>>::with_mut::<Q, T>(self, key, f, self.txn.owner)
@@ -301,11 +307,11 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Remove a row from the table.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<BaseValue<D>>
+    pub fn remove<Q>(&mut self, key: &Q)
     where
         D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+        IndexValue<D>: Eq + Hash + ToOwned<Owned = BaseKey<D>>,
     {
         <&mut Self as IndexedOpsMut<_>>::remove::<Q>(self, key, self.txn.owner)
     }
@@ -342,7 +348,8 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Iterate all the key/value pairs in a table. Values are mutable.
     pub fn for_each_mut(&mut self, f: impl FnMut(&D::Key, &mut BaseValue<D>))
     where
-        IndexValue<D>: Eq + Hash,
+        IndexValue<D>: Eq + Hash + Clone,
+        BaseValue<D>: Clone,
     {
         <&mut Self as IndexedOpsMut<_>>::for_each_mut(self, f, self.txn.owner)
     }
@@ -356,16 +363,16 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
 /// SAFETY: `D` and `B` must describe different tables (this is enforced by the macros, but possible
 /// to violate if building a schema by hand).
 pub struct KvTableRoTransactionalIndex<'guard, 'txn, D: IndexDesc> {
-    pub(crate) txn: &'txn RoTransaction<'guard, Storage<D::Storage>>,
+    pub(crate) txn: &'txn RoTransaction<'guard, D::Storage>,
 }
 
 impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
     for &'a KvTableRoTransactionalIndex<'guard, 'txn, D>
 {
-    type ReadLock = RefReadGuard<'a, 'guard, Storage<D::Storage>>;
+    type ReadLock = &'a RwLockReadGuard<'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        RefReadGuard(&self.txn.guard)
+        &self.txn.guard
     }
 }
 
@@ -581,29 +588,6 @@ mod test {
     }
 
     #[test]
-    fn index_insert_returns_none_on_first() {
-        let store = KvStore::new();
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .insert(1, row("Alice"))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn index_insert_returns_previous_value_when_overwriting_base_key() {
-        let store = KvStore::new();
-        store
-            .table_by::<index::Users::name>(OWNER)
-            .insert(1, row("Alice"));
-        let old = store
-            .table_by::<index::Users::name>(OWNER)
-            .insert(1, row("Alice"));
-        assert_eq!(old, Some(row("Alice")));
-    }
-
-    #[test]
     fn index_insert_is_visible_via_base_table() {
         let store = KvStore::new();
         store
@@ -623,25 +607,6 @@ mod test {
                 .get("Alice")
                 .is_some()
         );
-    }
-
-    #[test]
-    fn index_remove_returns_none_when_absent() {
-        let store = KvStore::new();
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .remove("Alice")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn index_remove_returns_value() {
-        let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        let value = store.table_by::<index::Users::name>(OWNER).remove("Alice");
-        assert_eq!(value, Some(row("Alice")));
     }
 
     #[test]
@@ -1274,8 +1239,6 @@ mod test_transactional_index {
     #[cfg(debug_assertions)]
     const OTHER: &str = "other";
 
-    // Group A: KvTableTransactionalIndex - index maintenance
-
     #[test]
     fn txn_index_get_returns_none_when_absent() {
         let store = KvStore::new();
@@ -1291,6 +1254,21 @@ mod test_transactional_index {
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Alice"),
             Some(row("Alice"))
+        );
+        txn.commit().unwrap();
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Alice"),
+            Some(row("Alice"))
+        );
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table_by::<index::Users::name>().remove("Alice");
+        txn.commit().unwrap();
+        assert!(
+            store
+                .table_by::<index::Users::name>(OWNER)
+                .get("Alice")
+                .is_none()
         );
     }
 
@@ -1363,6 +1341,8 @@ mod test_transactional_index {
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>().remove("Alice");
         assert!(txn.table::<Users>().get(&1).is_none());
+        txn.commit().unwrap();
+        assert!(store.table::<Users>(OWNER).get(&1).is_none());
     }
 
     #[test]
@@ -1392,8 +1372,6 @@ mod test_transactional_index {
             })
         );
     }
-
-    // Group B: KvTableTransactional (base table) - index maintenance
 
     #[test]
     fn txn_base_insert_updates_index() {
@@ -1460,8 +1438,6 @@ mod test_transactional_index {
         );
     }
 
-    // Group C: KvTableRoTransactionalIndex - reads via index in RO transaction
-
     #[test]
     fn ro_txn_index_get_returns_none_when_absent() {
         let store = KvStore::new();
@@ -1525,8 +1501,6 @@ mod test_transactional_index {
         assert_eq!(names, vec!["Alice".to_owned(), "Bob".to_owned()]);
     }
 
-    // Group D: Ownership enforcement
-
     #[test]
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Ownership violation")]
@@ -1555,5 +1529,98 @@ mod test_transactional_index {
         store.table::<Users>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table_by::<index::Users::name>().for_each_mut(|_, _| {});
+    }
+
+    #[test]
+    fn txn_index_insert_rolled_back_on_drop() {
+        let store = KvStore::new();
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table_by::<index::Users::name>().insert(1, row("Alice"));
+        }
+        assert!(
+            store
+                .table_by::<index::Users::name>(OWNER)
+                .get("Alice")
+                .is_none()
+        );
+        assert!(store.table::<Users>(OWNER).get(&1).is_none());
+    }
+
+    #[test]
+    fn txn_index_base_mutate_indexed_field_rolled_back() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table_by::<index::Users::name>()
+                .with_mut("Alice", |v| v.name = "Bob".to_owned());
+        }
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Alice"),
+            Some(row("Alice"))
+        );
+        assert!(
+            store
+                .table_by::<index::Users::name>(OWNER)
+                .get("Bob")
+                .is_none()
+        );
+        assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice")));
+    }
+
+    #[test]
+    fn txn_index_remove_rolled_back_on_drop() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table_by::<index::Users::name>().remove("Alice");
+        }
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Alice"),
+            Some(row("Alice"))
+        );
+        assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice")));
+    }
+
+    #[test]
+    fn txn_index_clear_rolled_back_on_drop() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table_by::<index::Users::name>().clear();
+        }
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Alice"),
+            Some(row("Alice"))
+        );
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Bob"),
+            Some(row("Bob"))
+        );
+    }
+
+    #[test]
+    fn raw_base_then_txn_index_insert_commit_both_visible() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table_by::<index::Users::name>().insert(2, row("Bob"));
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Alice"),
+            Some(row("Alice"))
+        );
+        assert_eq!(
+            store.table_by::<index::Users::name>(OWNER).get("Bob"),
+            Some(row("Bob"))
+        );
+        assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice")));
+        assert_eq!(store.table::<Users>(OWNER).get(&2), Some(row("Bob")));
     }
 }

@@ -20,7 +20,7 @@ impl<'a, D: schema::TableDesc> Ops<D::Storage> for &'a KvTable<'_, D> {
     type ReadLock = std::sync::RwLockReadGuard<'a, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        self.store.storage.read().unwrap()
+        self.store.get_read_lock()
     }
 }
 
@@ -32,7 +32,7 @@ impl<'a, D: schema::TableDesc> OpsMut<D::Storage> for &'a KvTable<'_, D> {
     type WriteLock = std::sync::RwLockWriteGuard<'a, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        self.store.storage.write().unwrap()
+        self.store.get_write_lock()
     }
 }
 
@@ -104,39 +104,15 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     // Question: do we need separate insert/update/upsert methods?
-    pub fn insert<D: schema::Singleton>(
-        &self,
-        owner: Owner,
-        value: D::ArgValue,
-    ) -> Option<D::ArgValue> {
+    pub fn insert<D: schema::Singleton>(&self, owner: Owner, value: D::ArgValue) {
         <&Self as SingletonOpsMut<_>>::insert::<D>(self, value, owner)
-    }
-
-    /// Get mutable access to a value in the store.
-    ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<D: schema::MutSingleton, T>(
-        &self,
-        owner: Owner,
-        f: impl FnOnce(&mut D::Value) -> T,
-    ) -> Option<T> {
-        <&Self as SingletonOpsMut<_>>::with_mut::<D, T>(self, f, owner)
     }
 
     /// Remove a single value from the store.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn remove<D: schema::Singleton>(&self, owner: Owner) -> Option<D::ArgValue> {
+    pub fn remove<D: schema::Singleton>(&self, owner: Owner) {
         <&Self as SingletonOpsMut<_>>::remove::<D>(self, owner)
-    }
-
-    /// Remove a single value from the store while preserving ownership of the key/value.
-    ///
-    /// Can also be used to initialize a key/value with a key but without a value.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn clear<D: schema::Singleton>(&self, owner: Owner) -> Option<D::ArgValue> {
-        <&Self as SingletonOpsMut<_>>::clear::<D>(self, owner)
     }
 }
 
@@ -153,7 +129,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// Initialize a table by setting its owner.
     ///
     /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specifed in the first write.
+    /// its owner is set to the owner specified in the first write.
     ///
     /// Returns an error (containing the current owner of the table) if the table has already been
     /// initialized. In this case, the table will be in a consistent state and can be used as normal.
@@ -202,7 +178,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// Insert a value into the table.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn insert(&self, key: D::Key, value: D::Value) -> Option<D::Value>
+    pub fn insert(&self, key: D::Key, value: D::Value)
     where
         D::Key: Clone,
     {
@@ -216,6 +192,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+        D::Value: Clone,
     {
         <&Self as TabularOpsMut<_>>::with_mut(self, key, f, self.owner)
     }
@@ -223,10 +200,10 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// Remove a row from the table.
     ///
     /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    pub fn remove<Q>(&self, key: &Q) -> Option<D::Value>
+    pub fn remove<Q>(&self, key: &Q)
     where
         D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
         <&Self as TabularOpsMut<_>>::remove(self, key, self.owner)
     }
@@ -247,7 +224,10 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     }
 
     /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&self, f: impl FnMut(&D::Key, &mut D::Value)) {
+    pub fn for_each_mut(&self, f: impl FnMut(&D::Key, &mut D::Value))
+    where
+        D::Value: Clone,
+    {
         <&Self as TabularOpsMut<_>>::for_each_mut(self, f, self.owner)
     }
 }
@@ -259,7 +239,6 @@ mod test {
     use crate::{Error, singleton, tables};
 
     singleton!(Count(u64));
-    singleton!(Name(String as Box));
     singleton!(Shared(String as Arc));
     singleton!(Label(u64 as Ref));
 
@@ -279,14 +258,6 @@ mod test {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 42);
         assert_eq!(store.get::<Count>(OWNER), Some(42));
-    }
-
-    #[test]
-    fn get_returns_none_after_clear() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OWNER);
-        assert!(store.get::<Count>(OWNER).is_none());
     }
 
     #[test]
@@ -347,133 +318,11 @@ mod test {
     }
 
     #[test]
-    fn insert_returns_none_on_first_insert() {
-        let store = KvStore::new();
-        assert!(store.insert::<Count>(OWNER, 1).is_none());
-    }
-
-    #[test]
-    fn insert_returns_previous_value() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        assert_eq!(store.insert::<Count>(OWNER, 2), Some(1));
-    }
-
-    #[test]
-    fn insert_over_tombstone_returns_none() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OWNER);
-        assert!(store.insert::<Count>(OWNER, 2).is_none());
-    }
-
-    #[test]
-    fn insert_over_removed_returns_none() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.remove::<Count>(OWNER);
-        assert!(store.insert::<Count>(OWNER, 2).is_none());
-    }
-
-    #[test]
-    fn mutate_returns_none_and_does_not_call_f_when_absent() {
-        let store = KvStore::new();
-        let mut called = false;
-        let result = store.with_mut::<Count, ()>(OWNER, |_| {
-            called = true;
-        });
-        assert!(result.is_none());
-        assert!(!called);
-    }
-
-    #[test]
-    fn mutate_modifies_value_in_place() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 10);
-        assert_eq!(
-            store.with_mut::<Count, _>(OWNER, |v| {
-                *v += 5;
-                *v
-            }),
-            Some(15)
-        );
-        assert_eq!(store.get::<Count>(OWNER), Some(15));
-    }
-
-    #[test]
-    fn mutate_on_tombstone_returns_none() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OWNER);
-        assert!(store.with_mut::<Count, ()>(OWNER, |_| {}).is_none());
-    }
-
-    #[test]
-    fn mutate_box_singleton() {
-        let store = KvStore::new();
-        store.insert::<Name>(OWNER, "hello".to_owned());
-        store.with_mut::<Name, ()>(OWNER, |s| s.push_str(" world"));
-        assert_eq!(store.get::<Name>(OWNER), Some("hello world".to_owned()));
-    }
-
-    #[test]
-    fn remove_returns_none_when_absent() {
-        let store = KvStore::new();
-        assert!(store.remove::<Count>(OWNER).is_none());
-    }
-
-    #[test]
-    fn remove_returns_previous_value() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 7);
-        assert_eq!(store.remove::<Count>(OWNER), Some(7));
-    }
-
-    #[test]
     fn remove_makes_entry_absent() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
         store.remove::<Count>(OWNER);
         assert!(store.get::<Count>(OWNER).is_none());
-    }
-
-    #[test]
-    fn remove_allows_reinsert_by_other_owner() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.remove::<Count>(OWNER);
-        // Entry is fully gone — any owner can insert
-        store.insert::<Count>(OTHER, 2);
-        assert_eq!(store.get::<Count>(OTHER), Some(2));
-    }
-
-    #[test]
-    fn clear_returns_none_when_absent() {
-        let store = KvStore::new();
-        assert!(store.clear::<Count>(OWNER).is_none());
-    }
-
-    #[test]
-    fn clear_returns_previous_value() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 3);
-        assert_eq!(store.clear::<Count>(OWNER), Some(3));
-    }
-
-    #[test]
-    fn clear_makes_get_return_none() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OWNER);
-        assert!(store.get::<Count>(OWNER).is_none());
-    }
-
-    #[test]
-    fn double_clear_returns_none() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OWNER);
-        assert!(store.clear::<Count>(OWNER).is_none());
     }
 
     #[test]
@@ -488,39 +337,10 @@ mod test {
     #[test]
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Ownership violation")]
-    fn singleton_mutate_wrong_owner_panics() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.with_mut::<Count, ()>(OTHER, |_| {});
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
     fn singleton_remove_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
         store.remove::<Count>(OTHER);
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
-    fn singleton_clear_wrong_owner_panics() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OTHER);
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
-    fn singleton_clear_blocks_other_owner() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.clear::<Count>(OWNER);
-        // Tombstone preserves OWNER — OTHER cannot insert
-        store.insert::<Count>(OTHER, 2);
     }
 
     #[test]
@@ -556,27 +376,6 @@ mod test {
     fn table_get_returns_none_when_absent() {
         let store = KvStore::new();
         assert!(store.table::<Items>(OWNER).get("missing").is_none());
-    }
-
-    #[test]
-    fn table_insert_returns_none_on_first() {
-        let store = KvStore::new();
-        assert!(
-            store
-                .table::<Items>(OWNER)
-                .insert("k", "v".to_owned())
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn table_insert_returns_previous_value() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("k", "v1".to_owned());
-        assert_eq!(
-            store.table::<Items>(OWNER).insert("k", "v2".to_owned()),
-            Some("v1".to_owned()),
-        );
     }
 
     #[test]
@@ -635,26 +434,10 @@ mod test {
     }
 
     #[test]
-    fn table_remove_returns_none_when_absent() {
-        let store = KvStore::new();
-        assert!(store.table::<Items>(OWNER).remove("missing").is_none());
-    }
-
-    #[test]
-    fn table_remove_returns_previous_value() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("k", "v".to_owned());
-        assert_eq!(
-            store.table::<Items>(OWNER).remove("k"),
-            Some("v".to_owned())
-        );
-    }
-
-    #[test]
     fn table_remove_makes_get_return_none() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).insert("k", "v".to_owned());
-        store.table::<Items>(OWNER).remove("k");
+        store.table::<Items>(OWNER).remove(&"k");
         assert!(store.table::<Items>(OWNER).get("k").is_none());
     }
 
@@ -707,7 +490,7 @@ mod test {
         let table = store.table::<Items>(OWNER);
         table.insert("a", "alpha".to_owned());
         table.insert("b", "beta".to_owned());
-        table.remove("a");
+        table.remove(&"a");
         assert_eq!(table.len(), 1);
     }
 
@@ -857,7 +640,7 @@ mod test {
     fn table_remove_wrong_owner_panics() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).init().unwrap();
-        store.table::<Items>(OTHER).remove("k");
+        store.table::<Items>(OTHER).remove(&"k");
     }
 
     #[test]
@@ -867,5 +650,15 @@ mod test {
         let store = KvStore::new();
         store.table::<Items>(OWNER).init().unwrap();
         store.table::<Items>(OTHER).clear();
+    }
+
+    // `remove` no longer returns the removed value: it is used in statement position and its only
+    // observable effect is that the row becomes absent.
+    #[test]
+    fn table_remove_used_in_statement_position() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("k", "v".to_owned());
+        store.table::<Items>(OWNER).remove(&"k");
+        assert_eq!(store.table::<Items>(OWNER).get("k"), None);
     }
 }

@@ -1,10 +1,12 @@
 //! Iterate over a table
 
-use std::{hash::Hash, marker::PhantomData, ops::Deref};
+use std::{hash::Hash, marker::PhantomData};
 
 use crate::{
+    operations::StorageGuard,
     schema::{IndexDesc, TableDesc},
-    storage::{Storage, Table},
+    storage::{Table, TableIterator as InnerIterator},
+    transactions::TxnId,
 };
 
 /// Phantom type to iterate over keys.
@@ -20,9 +22,6 @@ pub struct KeysAndValues;
 type Indexes<D> =
     Table<<D as IndexDesc>::BaseTable, <<D as IndexDesc>::BaseTable as TableDesc>::Indexes>;
 
-type TableIter<'guard, D> =
-    std::collections::hash_map::Iter<'guard, <D as TableDesc>::Key, <D as TableDesc>::Value>;
-
 /// An iterator for a single table (described by the generic parameter `D`) in the KV store.
 ///
 /// This is basically just a wrapper for an iterator over the `HashMap` representing the table.
@@ -34,15 +33,15 @@ pub struct TableIterator<'guard, Guard, D: TableDesc, Kind> {
     ///
     /// Invariants:
     ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<TableIter<'guard, D>>,
-    _kind: PhantomData<Kind>,
+    inner: Option<InnerIterator<'guard, D>>,
+    _kind: PhantomData<(D, Kind)>,
 }
 
 impl<'guard, Guard, D: TableDesc, Kind> TableIterator<'guard, Guard, D, Kind> {
     /// Create an iterator over the table described by `D`.
     pub(crate) fn new(guard: Guard) -> Self
     where
-        Guard: Deref<Target = Storage<D::Storage>> + 'guard,
+        Guard: StorageGuard<D::Storage> + 'guard,
         D: 'guard,
     {
         let mut result = TableIterator {
@@ -50,7 +49,10 @@ impl<'guard, Guard, D: TableDesc, Kind> TableIterator<'guard, Guard, D, Kind> {
             inner: None,
             _kind: PhantomData,
         };
-        result.inner = Some(inner_iter::<D, Guard>(&result.guard));
+        result.inner = Some(inner_iter::<D, Guard>(
+            &result.guard,
+            result.guard.storage().txn_id(),
+        ));
         result
     }
 
@@ -59,7 +61,9 @@ impl<'guard, Guard, D: TableDesc, Kind> TableIterator<'guard, Guard, D, Kind> {
     }
 }
 
-impl<'guard, Guard, D: TableDesc> Iterator for TableIterator<'guard, Guard, D, KeysAndValues> {
+impl<'guard, Guard: StorageGuard<D::Storage>, D: TableDesc> Iterator
+    for TableIterator<'guard, Guard, D, KeysAndValues>
+{
     type Item = (&'guard D::Key, &'guard D::Value);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -77,7 +81,9 @@ impl<'guard, Guard, D: TableDesc> Iterator for TableIterator<'guard, Guard, D, K
     }
 }
 
-impl<'guard, Guard, D: TableDesc> Iterator for TableIterator<'guard, Guard, D, Values> {
+impl<'guard, Guard: StorageGuard<D::Storage>, D: TableDesc> Iterator
+    for TableIterator<'guard, Guard, D, Values>
+{
     type Item = &'guard D::Value;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -86,7 +92,7 @@ impl<'guard, Guard, D: TableDesc> Iterator for TableIterator<'guard, Guard, D, V
     }
 }
 
-impl<Guard, D: TableDesc, Kind> Drop for TableIterator<'_, Guard, D, Kind> {
+impl<'guard, Guard, D: TableDesc, Kind> Drop for TableIterator<'guard, Guard, D, Kind> {
     fn drop(&mut self) {
         // Ensure that `self.inner` is dropped before `self.guard`.
         self.inner = None;
@@ -102,7 +108,7 @@ pub struct IndexIterator<'guard, Guard, D: IndexDesc, Kind> {
     ///
     /// Invariants:
     ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<(&'guard Indexes<D>, TableIter<'guard, D>)>,
+    inner: Option<(&'guard Indexes<D>, InnerIterator<'guard, D>)>,
     _kind: PhantomData<Kind>,
 }
 
@@ -110,7 +116,7 @@ impl<'guard, Guard, D: IndexDesc, Kind> IndexIterator<'guard, Guard, D, Kind> {
     /// Create an iterator over the table described by `D` (the index).
     pub(crate) fn new(guard: Guard) -> Self
     where
-        Guard: Deref<Target = Storage<D::Storage>> + 'guard,
+        Guard: StorageGuard<D::Storage> + 'guard,
         D: 'guard,
     {
         let mut result = IndexIterator {
@@ -119,21 +125,22 @@ impl<'guard, Guard, D: IndexDesc, Kind> IndexIterator<'guard, Guard, D, Kind> {
             _kind: PhantomData,
         };
 
-        let base_table = <D::BaseTable as TableDesc>::get_table(&result.guard.tables);
+        let base_table = <D::BaseTable as TableDesc>::get_table(&result.guard.storage().tables);
 
         result.inner = Some((
             // SAFETY: for the same reasoning as `inner_iter`, we're extending the lifetime of this
             // internal reference to 'guard. This is safe for the same reasons, i.e. we ensure that
-            // guard is dropped first.
+            // guard is dropped last.
             unsafe { &*(base_table as *const _) },
-            inner_iter::<D, Guard>(&result.guard),
+            inner_iter::<D, Guard>(&result.guard, result.guard.storage().txn_id()),
         ));
 
         result
     }
 }
 
-impl<'guard, Guard, D: IndexDesc> Iterator for IndexIterator<'guard, Guard, D, KeysAndValues>
+impl<'guard, Guard: StorageGuard<D::Storage>, D: IndexDesc> Iterator
+    for IndexIterator<'guard, Guard, D, KeysAndValues>
 where
     D::Value: Hash + Eq,
 {
@@ -144,7 +151,7 @@ where
         let (base, iter) = self.inner.as_mut().unwrap();
         let (k, bk) = iter.next()?;
 
-        Some((k, base.data.get(bk)?))
+        Some((k, base.get(bk, self.guard.storage().txn_id())?))
     }
 }
 
@@ -158,7 +165,8 @@ impl<'guard, Guard, D: IndexDesc> Iterator for IndexIterator<'guard, Guard, D, K
     }
 }
 
-impl<'guard, Guard, D: IndexDesc> Iterator for IndexIterator<'guard, Guard, D, Values>
+impl<'guard, Guard: StorageGuard<D::Storage>, D: IndexDesc> Iterator
+    for IndexIterator<'guard, Guard, D, Values>
 where
     D::Value: Hash + Eq,
 {
@@ -169,11 +177,11 @@ where
         let (base, iter) = self.inner.as_mut().unwrap();
         let (_, bk) = iter.next()?;
 
-        base.data.get(bk)
+        base.get(bk, self.guard.storage().txn_id())
     }
 }
 
-impl<Guard, D: IndexDesc, Kind> Drop for IndexIterator<'_, Guard, D, Kind> {
+impl<'guard, Guard, D: IndexDesc, Kind> Drop for IndexIterator<'guard, Guard, D, Kind> {
     fn drop(&mut self) {
         // Ensure that `self.inner` is dropped before `self.guard`.
         self.inner = None;
@@ -181,14 +189,12 @@ impl<Guard, D: IndexDesc, Kind> Drop for IndexIterator<'_, Guard, D, Kind> {
 }
 
 // Create an iterator over a table's data to use as a base for these iterators.
-fn inner_iter<'guard, D, Guard>(
-    guard: &Guard,
-) -> std::collections::hash_map::Iter<'guard, D::Key, D::Value>
+fn inner_iter<'guard, D, Guard>(guard: &Guard, txn_id: TxnId) -> InnerIterator<'guard, D>
 where
     D: TableDesc + 'guard,
-    Guard: Deref<Target = Storage<D::Storage>> + 'guard,
+    Guard: StorageGuard<D::Storage> + 'guard,
 {
-    let tables: *const _ = &guard.tables;
+    let tables: *const _ = &guard.storage().tables;
     // SAFETY: here we're extending the lifetime of the reference to the KV storage to `'guard`.
     // We can't use a raw pointer because we won't be able to use that as input to create an
     // iterator. To ensure safety we must ensure that `self.guard` outlives `self.inner`. We can
@@ -197,5 +203,5 @@ where
     // `result` is moved, `&result.guard.tables` will point at the same address which is guaranteed
     // to outlive `'guard`.
     let tables = unsafe { &*tables };
-    D::get_table(tables).data.iter()
+    D::get_table(tables).iter(txn_id)
 }

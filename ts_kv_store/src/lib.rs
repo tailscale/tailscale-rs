@@ -39,7 +39,7 @@
 //! kind of data, but they have roughly the same operations available.
 //!
 //! The store is strongly typed. Both singletons and tables must be statically declared and both keys
-//! and values have types from these declarations. Macros for these declations are in the [`schema`]
+//! and values have types from these declarations. Macros for these declarations are in the [`schema`]
 //! module. They expand into an empty type for each singleton or table, and trait impls for these
 //! types. The types are then used as type parameters for all operations.
 //!
@@ -51,11 +51,12 @@
 //! into transactions which are atomic and serializable. Both singleton and tabular data can be part
 //! of a transaction. The `Table` types used for accessing tabular data do not add any transactional
 //! elements. That is, operations on a `Table` created from the main store are not part of a transaction,
-//! and operations on a `Table` created from a transaction are only part of that transacton.
+//! and operations on a `Table` created from a transaction are only part of that transaction.
 //!
-//! Transactions may be read/write or read-only. Transactions don't need to be explicitly committed,
-//! the effect is 'commit on drop' and currently operations are committed as they are called (with
-//! no rollback).
+//! Transactions may be read/write or read-only. Transactions can be committed or rolled-back, if a
+//! transaction is dropped without being committed, then it is rolled-back. The system should handle
+//! a panic or early return at any stage of a transaction (they are always atomic and leave the store
+//! internally consistent; i.e., transactions are ACID).
 //!
 //! All data is owned. An owner is a simple token, its up to the user of the library to decide how
 //! to use these tokens and what rules to follow. Every KV pair has a single owner and can only be
@@ -104,7 +105,7 @@
 //! for documentation.
 //!
 //! The implementation of storage for tabular data is one HashMap per table, and otherwise
-//! straighforward. For singleton data, we use a single HashMap which maps `TypeId` to `(Owner, SinValue)`.
+//! straightforward. For singleton data, we use a single HashMap which maps `TypeId` to `(Owner, SinValue)`.
 //! Where the `TypeId` id the id of the type used to describe the singleton. Values can be
 //! stored in different ways (inline, via an `Arc`, etc.) each of which is a variant of `SinValue`.
 //! The store transparently converts keys and values to their declared types.
@@ -114,21 +115,49 @@
 //! types, and transactional index types). These are implemented on traits in the `operations` module.
 //! For ease of use and documentation, the functions are implemented on each concrete type and
 //! delegated to the trait implementations. I.e., the traits and impls are an implementation detail.
+//!
+//! Transactions have an internal id (`TxnId`). Since we use a global lock to ensure serializability,
+//! transactions are only used to ensure atomicity. There can only ever be one (read/write) transaction
+//! in progress at a time. The store tracks the most recently committed transaction id, and optionally
+//! a current transaction id. Raw (non-transactional) operations use the most recently committed
+//! transaction id as their 'transaction' id (but there is no separate commit step for these operations).
+//!
+//! The KV store uses a simplified version of MVCC to implement transactions. Only two versions are
+//! required for each key, one will be the currently committed version and one will either be empty,
+//! the version belonging to the currently in-progress transaction, or the version belonging to a
+//! partially rolled-back or abandoned transaction. So, every value in the store is stored internally as a
+//! `VersionedValue`, which has these two slots and a version and value in each. Deletes are stored
+//! outside of the main storage in a per-table delete mask.
+//!
+//! Singletons work slightly differently: they still use a `VersionedValue`, but use a tombstone value
+//! for deletes (`SinValue::None`) rather than a delete mask.
+//!
+//! To commit a transaction, the delete masks are applied to their corresponding tables, the committed
+//! transaction id in the store is set to the committed transaction's, and the pending transaction
+//! id is cleared. Applying delete masks is implemented such that it will not panic or otherwise fail
+//! once application is started. That and the global lock ensures atomicity of commits.
+//!
+//! To rollback a transaction, all transaction state (i.e., versions belonging to the transaction and
+//! delete masks) is deleted, then the store's pending transaction id is cleared. If a transaction
+//! is abandoned without a proper rollback, then accessing the store and finding a pending transaction
+//! id will trigger garbage collection. A panic which poisons the global lock can be resolved by
+//! rolling back any pending transaction and un-poisoning.
+//!
+//! There is no way to time-out a transaction. So if a transaction takes the global lock and
+//! never gives it up (e.g., by panicking without calling destructors, or leaking the transaction
+//! handle), then the KV store cannot be recovered.
 
-use std::{
-    ops::{Deref, DerefMut},
-    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
-};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod index;
 mod iter;
 mod operations;
 mod raw;
 pub mod schema;
-mod singleton;
 #[doc(hidden)]
 pub mod storage;
-mod transactions;
+#[doc(hidden)]
+pub mod transactions;
 
 #[doc(inline)]
 pub use index::KvTableIndex;
@@ -152,6 +181,45 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     pub fn new_with_storage(storage: RwLock<storage::Storage<TableStorage>>) -> Self {
         KvStore { storage }
     }
+
+    /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
+    fn get_read_lock(&self) -> RwLockReadGuard<'_, storage::Storage<TableStorage>> {
+        self.clear_lock_poison();
+
+        let lock = self.storage.read().unwrap();
+        if lock.current_txn().is_none() {
+            return lock;
+        }
+
+        let mut wlock = self.storage.write().unwrap();
+        wlock.clear_transaction();
+
+        self.storage.read().unwrap()
+    }
+
+    /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
+    fn get_write_lock(&self) -> RwLockWriteGuard<'_, storage::Storage<TableStorage>> {
+        self.clear_lock_poison();
+        let mut lock = self.storage.write().unwrap();
+        lock.clear_transaction();
+        lock
+    }
+
+    /// Clear poison on the internal lock and recover the store.
+    ///
+    /// In theory, after calling this function, another thread could get the lock, panic, and poison
+    /// it again, so calling `clear_lock_poison` immediately followed by `get_read_lock` or `get_write_lock`
+    /// could panic. However, there is no easy way to avoid this because of the poisoning API.
+    /// Hopefully, the chance of that happening is small.
+    fn clear_lock_poison(&self) {
+        if self.storage.is_poisoned() {
+            self.storage.clear_poison();
+            let mut lock = self.storage.write().unwrap();
+            // The store should always be in a consistent state, so all we need to do is clear
+            // the current transaction (if there is one) and we're good to go.
+            lock.clear_transaction();
+        }
+    }
 }
 
 impl<'store, TableStorage: schema::GeneratedStorage> operations::Ops<TableStorage>
@@ -160,7 +228,7 @@ impl<'store, TableStorage: schema::GeneratedStorage> operations::Ops<TableStorag
     type ReadLock = RwLockReadGuard<'store, storage::Storage<TableStorage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        self.storage.read().unwrap()
+        self.get_read_lock()
     }
 }
 
@@ -170,7 +238,7 @@ impl<'store, TableStorage: schema::GeneratedStorage> operations::OpsMut<TableSto
     type WriteLock = RwLockWriteGuard<'store, storage::Storage<TableStorage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        self.storage.write().unwrap()
+        self.get_write_lock()
     }
 }
 
@@ -182,52 +250,11 @@ pub type Owner = &'static str;
 // TODO derive(Error)
 #[derive(Debug, Clone)]
 pub enum Error {
-    /// A table was expected to not be initialized, but was by the specifed `Owner`.
+    /// A table was expected to not be initialized, but was by the specified `Owner`.
     AlreadyInit(Owner),
+    /// An inconsistency caused a transaction to fail. It has not been committed and can be re-tried.
+    TransactionFailed,
 }
 
 /// `Result` alias for a KvStore [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// Helper type for using a reference to a [`RwLockWriteGuard`] as a generic argument
-/// with a `Deref` bound. Required because checking trait bounds does not take into account
-/// transitivity of `Deref`.
-struct RefWriteGuard<'a, 'inner, T>(&'a RwLockWriteGuard<'inner, T>);
-
-impl<'a, 'inner, T> Deref for RefWriteGuard<'a, 'inner, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-/// Helper type for using a mut reference to a [`RwLockWriteGuard`] as a generic argument
-/// with `Deref` and `DerefMut` bounds. Required because checking trait bounds does not take into
-/// account transitivity of `Deref`.
-struct RefWriteGuardMut<'a, 'inner, T>(&'a mut RwLockWriteGuard<'inner, T>);
-
-impl<'a, 'inner, T> Deref for RefWriteGuardMut<'a, 'inner, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-impl<'a, 'inner, T> DerefMut for RefWriteGuardMut<'a, 'inner, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.deref_mut()
-    }
-}
-/// Helper type for using a reference to a [`RwLockReadGuard`] as a generic argument
-/// with a `Deref` bound. Required because checking trait bounds does not take into account
-/// transitivity of `Deref`.
-struct RefReadGuard<'a, 'inner, T>(&'a RwLockReadGuard<'inner, T>);
-
-impl<'a, 'inner, T> Deref for RefReadGuard<'a, 'inner, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}

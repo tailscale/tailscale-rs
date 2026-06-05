@@ -1,8 +1,15 @@
 //! Traits and macros for defining the KvStore schema.
 
-use std::{any::Any, hash::Hash, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    hash::Hash,
+    sync::Arc,
+};
 
-use crate::storage::{SinValue, Table};
+use crate::{
+    storage::{SinValue, Table},
+    transactions::TxnId,
+};
 
 /// A singleton key/value.
 ///
@@ -58,9 +65,9 @@ pub trait MutSingleton: Singleton {
 /// Describes tabular key/values in the store.
 ///
 /// Prefer to use the macros in this module rather than this trait directly.
-pub trait TableDesc: Sized {
+pub trait TableDesc: Sized + 'static {
     /// The type of the key.
-    type Key: Hash + Eq;
+    type Key: Hash + Eq + Clone;
     /// The type of the value.
     type Value: Any + Send + Sync;
     /// The storage for the table.
@@ -74,6 +81,27 @@ pub trait TableDesc: Sized {
     fn get_table_mut(storage: &mut Self::Storage) -> &mut Table<Self, Self::Indexes>;
 }
 
+/// Similar to `TableDesc::get_table_mut`, but allows for getting two different tables at one time.
+///
+/// SAFETY: A and B must represent distinct tables.
+#[allow(clippy::type_complexity)]
+pub(crate) fn get_two_tables_mut<
+    Storage: GeneratedStorage,
+    A: TableDesc<Storage = Storage> + Any,
+    B: TableDesc<Storage = Storage> + Any,
+>(
+    storage: &mut Storage,
+) -> (&mut Table<A, A::Indexes>, &mut Table<B, B::Indexes>) {
+    debug_assert_ne!(TypeId::of::<A>(), TypeId::of::<B>());
+
+    // SAFETY: `A` and `B` are different tables, so `get_table_mut` will return pointers to
+    // different `Table` objects.
+    let storage = storage as *mut _;
+    let a = A::get_table_mut(unsafe { &mut *storage });
+    let b = B::get_table_mut(unsafe { &mut *storage });
+    (a, b)
+}
+
 /// Describes a table used as an index.
 pub trait IndexDesc: TableDesc {
     /// The table which is indexed.
@@ -83,35 +111,58 @@ pub trait IndexDesc: TableDesc {
 /// Operations on an index.
 pub trait IndexStorage<K: Hash + Eq, V: Any + Send + Sync>: Default {
     /// Clear the whole index.
-    fn clear(&mut self);
+    fn clear(
+        &mut self,
+        txn_id: crate::transactions::TxnId,
+        max_committed_id: crate::transactions::TxnId,
+    );
+
     /// An item has been inserted into the index.
-    fn on_insert<Q>(&mut self, key: &Q, value: &V)
-    where
+    fn on_insert<Q>(
+        &mut self,
+        key: &Q,
+        value: &V,
+        txn_id: crate::transactions::TxnId,
+        max_committed_id: crate::transactions::TxnId,
+    ) where
         K: std::borrow::Borrow<Q>,
         Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = K>;
+
     /// An item has been removed from the index.
-    fn on_remove(&mut self, value: &V);
-    /// Build the index from the base table.
-    fn build<'a>(&mut self, kvs: impl Iterator<Item = (&'a K, &'a V)>)
-    where
-        K: 'a,
-        V: 'a;
+    fn on_remove(
+        &mut self,
+        value: &V,
+        txn_id: crate::transactions::TxnId,
+        max_committed_id: crate::transactions::TxnId,
+    );
 }
 
 impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
-    fn clear(&mut self) {}
-    fn on_insert<Q>(&mut self, _key: &Q, _value: &V)
-    where
+    fn clear(
+        &mut self,
+        _txn_id: crate::transactions::TxnId,
+        _max_committed_id: crate::transactions::TxnId,
+    ) {
+    }
+
+    fn on_insert<Q>(
+        &mut self,
+        _key: &Q,
+        _value: &V,
+        _id: crate::transactions::TxnId,
+        _max_committed_id: crate::transactions::TxnId,
+    ) where
         K: std::borrow::Borrow<Q>,
         Q: ?Sized + std::hash::Hash + Eq,
     {
     }
-    fn on_remove(&mut self, _value: &V) {}
-    fn build<'a>(&mut self, _kvs: impl Iterator<Item = (&'a K, &'a V)>)
-    where
-        K: 'a,
-        V: 'a,
-    {
+
+    fn on_remove(
+        &mut self,
+        _value: &V,
+        _txn_id: crate::transactions::TxnId,
+        _max_committed_id: crate::transactions::TxnId,
+    ) {
     }
 }
 
@@ -120,7 +171,16 @@ impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
 /// This should be considered a sealed trait and not implemented except by the macros in this module.
 /// Unfortunately it has to be public because of macro visibility hygiene.
 #[doc(hidden)]
-pub trait GeneratedStorage: Default {}
+pub trait GeneratedStorage: Default {
+    /// Commit a transaction by applying all tables' transaction state to their permanent data.
+    ///
+    /// This operation must be atomic. I.e., it will only fail without any tables committed, and if it
+    /// succeeds, then all masks have committed.
+    fn commit_txn(&mut self, txn_id: TxnId) -> crate::Result<()>;
+
+    /// Delete any per-transaction state held in tables.
+    fn gc_txn(&mut self, txn_id: TxnId);
+}
 
 /// Macro to declare a singleton key/value in the store.
 ///
@@ -218,13 +278,13 @@ macro_rules! init_helper {
         $crate::storage::SinValue::U64($value)
     };
     (Box, $value:ident) => {
-        $crate::storage::SinValue::Box(Box::new($value) as Box<dyn Any + Send + Sync>)
+        $crate::storage::SinValue::Box(std::boxed::Box::new($value) as Box<dyn Any + Send + Sync>)
     };
     (Arc, $value:ident) => {
-        $crate::storage::SinValue::Arc($value.clone() as Arc<dyn Any + Send + Sync>)
+        $crate::storage::SinValue::Arc($value.clone() as std::sync::Arc<dyn Any + Send + Sync>)
     };
     (Ref, $value:ident) => {
-        $crate::storage::SinValue::Ref($value as &'static (dyn Any + Send + Sync))
+        $crate::storage::SinValue::Ref($value as &'static (dyn std::any::Any + Send + Sync))
     };
 }
 
@@ -355,7 +415,7 @@ macro_rules! tables {
             }
 
             $(
-                impl $crate::schema::TableDesc for index::$name::$field {
+                impl $crate::schema::TableDesc for index::$name::$field where $field_ty: Clone {
                     type Key = $field_ty;
                     type Value = $key_ty;
                     type Storage = TableStorage;
@@ -381,7 +441,28 @@ macro_rules! tables {
         pub struct TableStorage {
             $($name: $crate::storage::Table<$name, index::$name::Indexes>),*
         }
-        impl $crate::schema::GeneratedStorage for TableStorage {}
+
+        impl $crate::schema::GeneratedStorage for TableStorage {
+            fn commit_txn(&mut self, _txn_id: $crate::transactions::TxnId) -> $crate::Result<()> {
+                $(
+                    self.$name.check_txn_consistency(_txn_id)?;
+                    $(self.$name.indexes.$field.check_txn_consistency(_txn_id)?;)*
+                )*
+                $(
+                    self.$name.commit_txn(_txn_id);
+                    $(self.$name.indexes.$field.commit_txn(_txn_id);)*
+                )*
+
+                Ok(())
+            }
+
+            fn gc_txn(&mut self, _txn_id: $crate::transactions::TxnId) {
+                $(
+                    self.$name.gc_txn(_txn_id);
+                    $(self.$name.indexes.$field.gc_txn(_txn_id);)*
+                )*
+            }
+        }
 
         pub mod index {
             $(
@@ -412,44 +493,30 @@ macro_rules! tables {
             }
 
             impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Indexes {
-                fn clear(&mut self) {
+                fn clear(&mut self, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
                     $(
-                        self.$field.data.clear();
+                        self.$field.clear(_txn_id, _max_committed_id);
                     )*
                 }
 
-                fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty)
+                fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId)
                 where
                     $key_ty: std::borrow::Borrow<Q>,
                     Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = $key_ty>
                 {
                     $({
                         for value in index::$name::Indexes::$field(_value) {
-                            self.$field.data.insert(value, _key.to_owned());
+                            self.$field.insert(value, _key.to_owned(), _txn_id, _max_committed_id);
                         }
                     })*
                 }
 
-                fn on_remove(&mut self, _value: &$value_ty) {
+                fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
                     $({
                         for value in index::$name::Indexes::$field(_value) {
-                            self.$field.data.remove(&value);
+                            self.$field.remove(&value, _txn_id, _max_committed_id);
                         }
                     })*
-                }
-
-                fn build<'a>(&mut self, kvs: impl Iterator<Item = (&'a $key_ty, &'a $value_ty)>)
-                where
-                    $key_ty: 'a,
-                    $value_ty: 'a,
-                {
-                    for (_k, _v) in kvs {
-                        $({
-                            for value in index::$name::Indexes::$field(_v) {
-                                self.$field.data.insert(value, _k.to_owned());
-                            }
-                        })*
-                    }
                 }
             }
         )*

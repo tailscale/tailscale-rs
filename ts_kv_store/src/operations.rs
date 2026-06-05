@@ -12,21 +12,67 @@ use std::{
     any::TypeId,
     borrow::Borrow,
     hash::Hash,
-    ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{Arc, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use crate::{
     IndexIterator, Owner, Result, TableIterator, iter,
-    schema::{self, IndexDesc, IndexStorage, TableDesc},
-    singleton::{OptSingletonValue, assert_owner},
-    storage::{SinValue, Storage},
+    schema::{self, IndexDesc, TableDesc},
+    storage::Storage,
 };
 
 pub(crate) trait Ops<TableStorage: schema::GeneratedStorage>: Sized {
-    type ReadLock: Deref<Target = Storage<TableStorage>>;
+    type ReadLock: StorageGuard<TableStorage>;
 
     fn read_lock(self) -> Self::ReadLock;
+}
+
+pub(crate) trait StorageGuardMut<TableStorage: schema::GeneratedStorage> {
+    fn storage(&mut self) -> &mut Storage<TableStorage>;
+}
+
+pub(crate) trait StorageGuard<TableStorage: schema::GeneratedStorage> {
+    fn storage(&self) -> &Storage<TableStorage>;
+}
+
+impl<'store, TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
+    for RwLockReadGuard<'store, Storage<TableStorage>>
+{
+    fn storage(&self) -> &Storage<TableStorage> {
+        self
+    }
+}
+
+impl<'store, TableStorage: schema::GeneratedStorage> StorageGuardMut<TableStorage>
+    for RwLockWriteGuard<'store, Storage<TableStorage>>
+{
+    fn storage(&mut self) -> &mut Storage<TableStorage> {
+        self
+    }
+}
+
+impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
+    for &'a RwLockReadGuard<'inner, Storage<TableStorage>>
+{
+    fn storage(&self) -> &Storage<TableStorage> {
+        self
+    }
+}
+
+impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
+    for &'a RwLockWriteGuard<'inner, Storage<TableStorage>>
+{
+    fn storage(&self) -> &Storage<TableStorage> {
+        self
+    }
+}
+
+impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuardMut<TableStorage>
+    for &'a mut RwLockWriteGuard<'inner, Storage<TableStorage>>
+{
+    fn storage(&mut self) -> &mut Storage<TableStorage> {
+        self
+    }
 }
 
 pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
@@ -37,18 +83,18 @@ pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
         D::Value: Clone,
     {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let key = TypeId::of::<D>();
-        storage
-            .get_singleton_value(&key)
-            .map_singleton_value(|v| D::Value::clone(D::from_value_ref(v)))
+        let txn_id = storage.txn_id();
+        storage.get_singleton_value::<D>(key, txn_id).cloned()
     }
 
     fn get_arc<D: schema::ArcSingleton>(self, _owner: Owner) -> Option<Arc<D::Value>> {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let key = TypeId::of::<D>();
-        storage
-            .get_singleton_value(&key)
-            .map_singleton_value(|v| D::from_value_arc(v))
+        let txn_id = storage.txn_id();
+        storage.get_singleton_arc::<D>(key, txn_id)
     }
 
     fn with<D: schema::Singleton, T>(
@@ -57,12 +103,14 @@ pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
         _owner: Owner,
     ) -> Option<T> {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let key = TypeId::of::<D>();
-        storage
-            .get_singleton_value(&key)
-            .map_singleton_value(|v| f(D::from_value_ref(v)))
+        let txn_id = storage.txn_id();
+        let value = storage.get_singleton_value::<D>(key, txn_id)?;
+        Some(f(value))
     }
 }
+
 pub(crate) trait TabularOps<TableStorage: schema::GeneratedStorage>:
     Ops<TableStorage>
 {
@@ -70,14 +118,16 @@ pub(crate) trait TabularOps<TableStorage: schema::GeneratedStorage>:
 
     fn len(self) -> usize {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let table = Self::TableDesc::get_table(&storage.tables);
-        table.data.len()
+        table.len(storage.txn_id())
     }
 
     fn is_empty(self) -> bool {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let table = Self::TableDesc::get_table(&storage.tables);
-        table.data.is_empty()
+        table.is_empty(storage.txn_id())
     }
 
     fn get<Q>(self, key: &Q, _owner: Owner) -> Option<<Self::TableDesc as TableDesc>::Value>
@@ -87,8 +137,9 @@ pub(crate) trait TabularOps<TableStorage: schema::GeneratedStorage>:
         Q: ?Sized + Hash + Eq,
     {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let table = Self::TableDesc::get_table(&storage.tables);
-        table.data.get(key).cloned()
+        table.get(key, storage.txn_id()).cloned()
     }
 
     fn with<Q, T>(
@@ -102,9 +153,9 @@ pub(crate) trait TabularOps<TableStorage: schema::GeneratedStorage>:
         Q: ?Sized + Hash + Eq,
     {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let table = Self::TableDesc::get_table(&storage.tables);
-        let value = table.data.get(key)?;
-
+        let value = table.get(key, storage.txn_id())?;
         Some(f(value))
     }
 
@@ -163,14 +214,16 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
 
     fn len(self) -> usize {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
-        base.data.len()
+        base.len(storage.txn_id())
     }
 
     fn is_empty(self) -> bool {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
-        base.data.is_empty()
+        base.is_empty(storage.txn_id())
     }
 
     fn get<Q>(self, key: &Q, _owner: Owner) -> Option<BaseValue<Self::IndexDesc>>
@@ -181,10 +234,11 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         Q: ?Sized + Hash + Eq,
     {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
         let index = <Self::IndexDesc as TableDesc>::get_table(&storage.tables);
-        let base_key = index.data.get(key)?;
-        base.data.get(base_key).cloned()
+        let base_key = index.get(key, storage.txn_id())?;
+        base.get(base_key, storage.txn_id()).cloned()
     }
 
     fn with<Q, T>(
@@ -199,10 +253,11 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         Q: ?Sized + Hash + Eq,
     {
         let storage = self.read_lock();
+        let storage = storage.storage();
         let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
         let index = <Self::IndexDesc>::get_table(&storage.tables);
-        let base_key = index.data.get(key)?;
-        let value = base.data.get(base_key)?;
+        let base_key = index.get(key, storage.txn_id())?;
+        let value = base.get(base_key, storage.txn_id())?;
 
         Some(f(value))
     }
@@ -253,7 +308,7 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
 }
 
 pub(crate) trait OpsMut<TableStorage: schema::GeneratedStorage>: Sized {
-    type WriteLock: DerefMut<Target = Storage<TableStorage>>;
+    type WriteLock: StorageGuardMut<TableStorage>;
 
     fn write_lock(self) -> Self::WriteLock;
 }
@@ -261,47 +316,24 @@ pub(crate) trait OpsMut<TableStorage: schema::GeneratedStorage>: Sized {
 pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
     OpsMut<TableStorage>
 {
-    fn insert<D: schema::Singleton>(self, value: D::ArgValue, owner: Owner) -> Option<D::ArgValue> {
+    fn insert<D: schema::Singleton>(self, value: D::ArgValue, owner: Owner) {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
         let key = TypeId::of::<D>();
-        assert_owner(owner, &key, &*storage);
+        assert_owner(owner, key, storage);
 
-        storage
-            .insert_singleton(key, owner, D::to_value(value))
-            .map_singleton_value(|v| D::from_value(v))
+        let txn_id = storage.txn_id();
+        storage.insert_singleton::<D>(key, owner, value, txn_id);
     }
 
-    fn with_mut<D: schema::MutSingleton, T>(
-        self,
-        f: impl FnOnce(&mut D::Value) -> T,
-        owner: Owner,
-    ) -> Option<T> {
+    fn remove<D: schema::Singleton>(self, owner: Owner) {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
         let key = TypeId::of::<D>();
-        assert_owner(owner, &key, &*storage);
-        storage
-            .get_singleton_value_mut(&key)
-            .map_singleton_value(|v| f(D::from_value_mut(v)))
-    }
+        assert_owner(owner, key, storage);
 
-    fn remove<D: schema::Singleton>(self, owner: Owner) -> Option<D::ArgValue> {
-        let mut storage = self.write_lock();
-        let key = TypeId::of::<D>();
-        assert_owner(owner, &key, &*storage);
-
-        storage
-            .remove_singleton(&key)
-            .map_singleton_value(|v| D::from_value(v))
-    }
-
-    fn clear<D: schema::Singleton>(self, owner: Owner) -> Option<D::ArgValue> {
-        let mut storage = self.write_lock();
-        let key = TypeId::of::<D>();
-        assert_owner(owner, &key, &*storage);
-
-        storage
-            .insert_singleton(key, owner, SinValue::None)
-            .map_singleton_value(|v| D::from_value(v))
+        let txn_id = storage.txn_id();
+        storage.remove_singleton(key, txn_id);
     }
 }
 
@@ -313,16 +345,19 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
     fn init(self, owner: Owner) -> Result<()> {
         let mut storage = self.write_lock();
 
-        let table = Self::TableDesc::get_table_mut(&mut storage.tables);
+        let table = Self::TableDesc::get_table_mut(&mut storage.storage().tables);
         table.try_set_owner(owner)
     }
 
     fn clear(self, owner: Owner) {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
+
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_or_set_owner(owner);
-        table.indexes.clear();
-        table.data.clear();
+        table.clear(txn_id, max_committed_id);
     }
 
     fn insert(
@@ -330,18 +365,17 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         key: <Self::TableDesc as TableDesc>::Key,
         value: <Self::TableDesc as TableDesc>::Value,
         owner: Owner,
-    ) -> Option<<Self::TableDesc as TableDesc>::Value>
-    where
+    ) where
         <Self::TableDesc as TableDesc>::Key: Clone,
     {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_or_set_owner(owner);
-        if let Some(old_value) = table.data.get(&key) {
-            table.indexes.on_remove(old_value);
-        }
-        table.indexes.on_insert(&key, &value);
-        table.data.insert(key, value)
+
+        table.insert(key, value, txn_id, max_committed_id);
     }
 
     // TODO if `f` panics then the indexes will be left in an inconsistent state.
@@ -354,51 +388,48 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
     where
         <Self::TableDesc as TableDesc>::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = <Self::TableDesc as TableDesc>::Key>,
+        <Self::TableDesc as TableDesc>::Value: Clone,
     {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
-        let value = table.data.get_mut(key)?;
 
-        table.indexes.on_remove(value);
-        let result = f(value);
-        table.indexes.on_insert(key, value);
-
-        Some(result)
+        table.with_mut(key, f, txn_id, max_committed_id)
     }
 
-    fn remove<Q>(self, key: &Q, owner: Owner) -> Option<<Self::TableDesc as TableDesc>::Value>
+    fn remove<Q>(self, key: &Q, owner: Owner)
     where
         <Self::TableDesc as TableDesc>::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = <Self::TableDesc as TableDesc>::Key>,
     {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
-        let value = table.data.remove(key.borrow())?;
-        table.indexes.on_remove(&value);
-        Some(value)
+        table.remove(key, txn_id, max_committed_id);
     }
 
     // TODO if `f` panics then the indexes will be left in an inconsistent state.
     fn for_each_mut(
         self,
-        mut f: impl FnMut(
-            &<Self::TableDesc as TableDesc>::Key,
-            &mut <Self::TableDesc as TableDesc>::Value,
-        ),
+        f: impl FnMut(&<Self::TableDesc as TableDesc>::Key, &mut <Self::TableDesc as TableDesc>::Value),
         owner: Owner,
-    ) {
+    ) where
+        <Self::TableDesc as TableDesc>::Value: Clone,
+    {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
 
-        for (k, v) in &mut table.data {
-            f(k, v);
-        }
-
-        table.indexes.clear();
-        table.indexes.build(table.data.iter());
+        table.for_each_mut(f, txn_id, max_committed_id);
     }
 }
 
@@ -409,6 +440,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
 
     fn init(self, owner: Owner) -> Result<()> {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
         let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
         base.try_set_owner(owner)
     }
@@ -418,31 +450,28 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         IndexValue<Self::IndexDesc>: Hash + Eq,
     {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
+
         let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
         base.assert_or_set_owner(owner);
-        base.indexes.clear();
-        base.data.clear();
+        base.clear(txn_id, max_committed_id);
     }
 
-    fn insert(
-        self,
-        key: BaseKey<Self::IndexDesc>,
-        value: BaseValue<Self::IndexDesc>,
-        owner: Owner,
-    ) -> Option<BaseValue<Self::IndexDesc>>
+    fn insert(self, key: BaseKey<Self::IndexDesc>, value: BaseValue<Self::IndexDesc>, owner: Owner)
     where
         BaseKey<Self::IndexDesc>: Clone,
         IndexValue<Self::IndexDesc>: Hash + Eq,
     {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
         let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
         base.assert_or_set_owner(owner);
-        if let Some(old_value) = base.data.get(&key) {
-            base.indexes.on_remove(old_value);
-        }
-        base.indexes.on_insert(&key, &value);
 
-        base.data.insert(key, value)
+        base.insert(key, value, txn_id, max_committed_id);
     }
 
     // TODO if `f` panics then the indexes will be left in an inconsistent state.
@@ -457,43 +486,43 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         Q: ?Sized + Hash + Eq,
         BaseKey<Self::IndexDesc>: Clone,
         IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseValue<Self::IndexDesc>: Clone,
     {
         let mut storage = self.write_lock();
-        let index = <Self::IndexDesc as TableDesc>::get_table(&storage.tables);
-        let base_key: *const BaseKey<Self::IndexDesc> = index.data.get(key)? as *const _;
-        // SAFETY: `B` and `D` are different tables, so `get_table[_mut]` will return pointers to
-        // different `Table` objects. `base_key` is a pointer into `index` and cannot be a pointer
-        // into `base`.
-        let base_key = unsafe { &*base_key };
-        let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
+        let (base, index) = schema::get_two_tables_mut::<_, Base<Self::IndexDesc>, Self::IndexDesc>(
+            &mut storage.tables,
+        );
         base.assert_owner(owner);
-        let value = base.data.get_mut(base_key)?;
-        // TODO we could be more efficient and only update indexes if the foreign key changes
-        base.indexes.on_remove(value);
-        let result = f(value);
-        base.indexes.on_insert(base_key, value);
 
-        Some(result)
+        let base_key = index.get(key, txn_id)?;
+        base.with_mut(base_key, f, txn_id, max_committed_id)
     }
 
-    fn remove<Q>(self, key: &Q, owner: Owner) -> Option<BaseValue<Self::IndexDesc>>
+    fn remove<Q>(self, key: &Q, owner: Owner)
     where
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<Self::IndexDesc>: Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
+        IndexValue<Self::IndexDesc>: Hash + Eq + ToOwned<Owned = BaseKey<Self::IndexDesc>>,
     {
         let mut storage = self.write_lock();
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
 
+        let (base, index) = schema::get_two_tables_mut::<_, Base<Self::IndexDesc>, Self::IndexDesc>(
+            &mut storage.tables,
+        );
         // First check ownership, then do the operation.
-        let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
         base.assert_owner(owner);
 
-        let index = <Self::IndexDesc as TableDesc>::get_table_mut(&mut storage.tables);
-        let base_key = index.data.remove(key)?;
-        let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
-        let value = base.data.remove(base_key.borrow())?;
-        base.indexes.on_remove(&value);
-        Some(value)
+        let Some(base_key) = index.get(key, txn_id) else {
+            return;
+        };
+        base.remove(base_key, txn_id, max_committed_id);
+        index.remove(key, txn_id, max_committed_id);
     }
 
     // TODO if `f` panics then the indexes will be left in an inconsistent state.
@@ -503,27 +532,40 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         owner: Owner,
     ) where
         IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseKey<Self::IndexDesc>: Clone,
+        BaseValue<Self::IndexDesc>: Clone,
     {
         let mut storage = self.write_lock();
-        let tables: *mut _ = &mut storage.tables;
-        // SAFETY: `B` and `D` are different tables, so `get_table[_mut]` will return pointers to
-        // different `Table` objects. Although the compiler treats `base` and `index` as having
-        // a reference to `storage.tables`, they do not, so the references here are transient and
-        // all mutable references are unique.
-        let base =
-            <<Self::IndexDesc as IndexDesc>::BaseTable>::get_table_mut(unsafe { &mut *tables });
+        let storage = storage.storage();
+        let txn_id = storage.txn_id();
+        let max_committed_id = storage.max_committed_id();
+
+        let (base, index) = schema::get_two_tables_mut::<_, Base<Self::IndexDesc>, Self::IndexDesc>(
+            &mut storage.tables,
+        );
         base.assert_owner(owner);
-        let index = <Self::IndexDesc as TableDesc>::get_table(&storage.tables);
 
-        for (k, base_key) in &index.data {
-            let Some(v) = base.data.get_mut(base_key) else {
-                continue;
-            };
-            f(k, v);
+        for (k, base_key) in index.iter(txn_id) {
+            base.with_mut(
+                base_key,
+                |value| {
+                    f(k, value);
+                },
+                txn_id,
+                max_committed_id,
+            );
         }
+    }
+}
 
-        // TODO we could be more efficient and only update indexes if the foreign key changes
-        base.indexes.clear();
-        base.indexes.build(base.data.iter());
+#[allow(unused_variables)]
+#[track_caller]
+fn assert_owner(owner: Owner, key: TypeId, storage: &Storage<impl schema::GeneratedStorage>) {
+    #[cfg(debug_assertions)]
+    if let Some(prev_owner) = storage.get_singleton_owner(key) {
+        assert_eq!(
+            prev_owner, owner,
+            "Ownership violation: expected {prev_owner}, found {owner}"
+        );
     }
 }
