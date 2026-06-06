@@ -278,6 +278,17 @@ macro_rules! match_helper_rhs_mut {
     };
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _get_index {
+    ($value_ty:ty, $field:ident, $field_ty:ty) => {
+        |value: &$value_ty| Some(value.$field.clone())
+    };
+    ($value_ty:ty, $field:ident, $field_ty:ty, $get_idx:expr) => {
+        $get_idx
+    };
+}
+
 /// Declare the tables in a key/value store. Generates the store itself with the specified tables.
 ///
 /// The syntax is `tables!(Name(KeyType, ValueType indexes?),*)`, where `Name` is an identifier to name
@@ -304,21 +315,26 @@ macro_rules! match_helper_rhs_mut {
 ///
 /// ```rust
 /// # use ts_kv_store::tables;
-/// # pub struct Node { a: u32, b: String};
+/// # pub struct Node { a: u32, b: String };
 /// tables!(
-///   Nodes(&'static str => Node; index(a: u32); index(b: String))
+///   Nodes(&'static str => Node; index(a: u32); index(b: String); index(c: String = |node: &Node| Some(format!("{}-{}", node.a, node.b))))
 /// );
 /// ```
 ///
-/// This will create two indexes on nodes for fields `a` and `b`.
+/// This will create indexes on nodes for fields `a`, `b`, and `c`. `c`'s index key is
+/// computed by the specified closure, which is expected to return
+/// `impl IntoIterator<Item = I>` (where `I` is the index key type). Most commonly, this
+/// will likely be `Option`: you might want to return `None` in some cases if the value has
+/// an optional field or an index key can't be produced.
 ///
 /// Index fields must uniquely identify a row in the base table. If multiple rows in the base table
 /// have the same key in the index, then behavior is unspecified (might give partial or incorrect
-/// result, might panic, etc.). The type of an index key field and the type of the primary key of the
-/// data being indexed must both be `Clone` (since they will be cloned when inserted into the index).
+/// result, might panic, etc.). The type of the primary key of the data must be `Clone` (since it
+/// will be cloned when inserted into the index), and the index type must be `Clone` as well if a
+/// closure isn't specified (the behavior in this case is `|value| Some(value.$field.clone)`).
 #[macro_export]
 macro_rules! tables {
-    ($($name: ident ($key_ty: ty => $value_ty: ty $(; index($field: ident: $field_ty: ty))*)),*) => {
+    ($($name: ident ($key_ty: ty => $value_ty: ty $(; index($field: ident: $field_ty: ty $(= $get_idx:expr)?))* $(;)?)),*) => {
         $(
             /// Describes a table in the KV store.
             #[derive(Default)]
@@ -387,6 +403,14 @@ macro_rules! tables {
         }
 
         $(
+            impl index::$name::Indexes {
+                $(
+                    fn $field(val: &$value_ty) -> impl IntoIterator<Item = $field_ty> {
+                        ($crate::_get_index!($value_ty, $field, $field_ty $(, $get_idx)?))(val)
+                    }
+                )*
+            }
+
             impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Indexes {
                 fn clear(&mut self) {
                     $(
@@ -399,15 +423,19 @@ macro_rules! tables {
                     $key_ty: std::borrow::Borrow<Q>,
                     Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = $key_ty>
                 {
-                    $(
-                        self.$field.data.insert(_value.$field.clone(), _key.to_owned());
-                    )*
+                    $({
+                        for value in index::$name::Indexes::$field(_value) {
+                            self.$field.data.insert(value, _key.to_owned());
+                        }
+                    })*
                 }
 
                 fn on_remove(&mut self, _value: &$value_ty) {
-                    $(
-                        self.$field.data.remove(&_value.$field);
-                    )*
+                    $({
+                        for value in index::$name::Indexes::$field(_value) {
+                            self.$field.data.remove(&value);
+                        }
+                    })*
                 }
 
                 fn build<'a>(&mut self, kvs: impl Iterator<Item = (&'a $key_ty, &'a $value_ty)>)
@@ -416,9 +444,11 @@ macro_rules! tables {
                     $value_ty: 'a,
                 {
                     for (_k, _v) in kvs {
-                        $(
-                            self.$field.data.insert(_v.$field.clone(), _k.to_owned());
-                        )*
+                        $({
+                            for value in index::$name::Indexes::$field(_v) {
+                                self.$field.data.insert(value, _k.to_owned());
+                            }
+                        })*
                     }
                 }
             }

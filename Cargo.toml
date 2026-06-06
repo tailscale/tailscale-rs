@@ -124,6 +124,7 @@ ts_disco_protocol = { path = "ts_disco_protocol", version = "0.3.3" }
 ts_dynbitset = { path = "ts_dynbitset", version = "0.3.3" }
 ts_hexdump = { path = "ts_hexdump", version = "0.3.3" }
 ts_keys = { path = "ts_keys", version = "0.3.3" }
+ts_kv_store = { path = "ts_kv_store", version = "0.3.3" }
 ts_netcheck = { path = "ts_netcheck", version = "0.3.3" }
 ts_netmon = { path = "ts_netmon", version = "0.3.3" }
 ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.3.3" }
