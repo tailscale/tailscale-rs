@@ -379,6 +379,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
+name = "bitrs"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad65ba2eda683a8486f72c13f0e1f5afbaa99ccd08029e6a72b1cf46ef0f0309"
+dependencies = [
+ "bitrs-macro",
+ "zerocopy",
+]
+
+[[package]]
+name = "bitrs-macro"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "896dc69748b78a3bc4b815084e15cb51efdedc22a6d0ef5a443f6bd5e92af89a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5880,10 +5901,13 @@ dependencies = [
 name = "ts_dataplane"
 version = "0.3.3"
 dependencies = [
+ "bitrs",
+ "bytes",
  "etherparse",
  "tokio",
  "tracing",
  "ts_bart",
+ "ts_disco_protocol",
  "ts_overlay_router",
  "ts_packet",
  "ts_packetfilter",

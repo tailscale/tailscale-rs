@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+extern crate ts_disco_protocol as disco;
+
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use ts_bart::RoutingTable;
@@ -12,6 +14,9 @@ use ts_tunnel::{Endpoint, NodeKeyPair};
 use ts_underlay_router as ur;
 
 pub mod async_tokio;
+mod packet_ident;
+
+pub use packet_ident::{PacketIdent, PacketType};
 
 /// A data plane subsystem that can be the subject of timer events.
 pub enum Subsystem {

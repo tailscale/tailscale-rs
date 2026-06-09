@@ -24,10 +24,13 @@ ts_transport.workspace = true
 ts_underlay_router.workspace = true
 ts_tunnel.workspace = true
 ts_bart.workspace = true
+ts_disco_protocol.workspace = true
 
 # Unconditionally required dependencies.
+bytes.workspace = true
 etherparse = "0.19"
 tracing.workspace = true
+bitrs = "0.11"
 
 # Required dependencies for the async_tokio feature.
 tokio = { workspace = true, optional = true, features = ["time", "sync"] }
