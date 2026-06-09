@@ -141,8 +141,8 @@ impl Packet<Plaintext> {
     /// The byte slice must be sized exactly: use [`Packet::size_for_message`] to calculate
     /// this.
     ///
-    /// This does not set the header nonce or sender key: these are set at encryption time
-    /// (in [`Packet::encrypt_in_place`]).
+    /// This does not set the header: this is set at encryption time (in
+    /// [`Packet::encrypt_in_place`]).
     pub fn init_from_bytes<Msg>(
         b: &mut [u8],
         init_msg: impl FnOnce(&mut Msg),
@@ -193,8 +193,7 @@ impl Packet<Plaintext> {
     ) -> Result<&mut Packet<Encrypted>, Error> {
         let bx = crypto_box::SalsaBox::new(&receiver.into(), &secret.into());
 
-        self.header.sender_pub = secret.public_key();
-        self.header.nonce = nonce;
+        self.header = Header::new(secret.public_key(), nonce);
 
         let tag = bx
             .encrypt_in_place_detached(&GenericArray::from(nonce), &[], &mut self.payload.payload)
