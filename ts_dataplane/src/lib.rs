@@ -13,7 +13,7 @@ use ts_overlay_router as or;
 use ts_packet::PacketMut;
 use ts_packetfilter::{FilterExt, IpProto};
 use ts_time::{Handle, Scheduler, TimeRange};
-use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
+use ts_transport::PeerId;
 use ts_tunnel::{Endpoint, NodeKeyPair};
 use ts_underlay_router as ur;
 
@@ -260,7 +260,7 @@ impl DataPlane {
     ///
     /// Must be called at least as often as dictated by [`DataPlane::next_event`] for the
     /// data plane to function correctly. It is harmless to call it more frequently.
-    pub fn process_events(&mut self) -> EventResult {
+    pub fn process_events(&mut self) -> ts_underlay_router::outbound::Result {
         let mut to_peers = HashMap::new();
         let now = Instant::now();
         let mut should_gc = false;
@@ -307,7 +307,7 @@ impl DataPlane {
         let to_peers = self.ur_out.route(to_peers);
         self.ensure_events(now);
 
-        EventResult { to_peers }
+        to_peers
     }
 
     fn ensure_events(&mut self, now: Instant) {
@@ -344,28 +344,22 @@ impl DataPlane {
 /// The result of processing outbound packets.
 pub struct OutboundResult {
     /// Packets to be sent into underlay transports for transmission.
-    pub to_peers: HashMap<(UnderlayTransportId, PeerId), Vec<PacketMut>>,
+    pub to_peers: ts_underlay_router::outbound::Result,
+
     /// Packets to be looped back and delivered to overlay transports.
-    pub loopback: HashMap<OverlayTransportId, Vec<PacketMut>>,
+    pub loopback: ts_overlay_router::inbound::Result,
 }
 
 /// The result of processing inbound packets.
 pub struct InboundResult {
     /// Decrypted packets to be delivered to overlay transports.
-    pub to_local: HashMap<OverlayTransportId, Vec<PacketMut>>,
+    pub to_local: ts_overlay_router::inbound::Result,
     /// Encrypted packets to be sent to wireguard peers by the underlay.
-    pub to_peers: HashMap<(UnderlayTransportId, PeerId), Vec<PacketMut>>,
+    pub to_peers: ts_underlay_router::outbound::Result,
 
     /// Encrypted disco packets to be handled externally.
     pub disco: Vec<PacketMut>,
 
     /// STUN packets to be handled externally.
     pub stun: Vec<PacketMut>,
-}
-
-/// The result of processing an event.
-#[derive(Default)]
-pub struct EventResult {
-    /// Encrypted packets to be sent to wireguard peers by the underlay.
-    pub to_peers: HashMap<(UnderlayTransportId, PeerId), Vec<PacketMut>>,
 }

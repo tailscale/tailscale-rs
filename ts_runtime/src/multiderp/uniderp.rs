@@ -14,11 +14,9 @@ use tokio::sync::{Mutex, watch};
 use ts_control::DerpRegion;
 use ts_dataplane::async_tokio::{FromUnderlay, Rx, ToUnderlay, Tx};
 use ts_derp::RegionId;
-use ts_keys::{NodeKeyPair, NodePublicKey};
+use ts_keys::NodeKeyPair;
 use ts_packet::PacketMut;
-use ts_transport::{
-    BatchRecvIter, PeerId, UnderlayTransport, UnderlayTransportExt, UnderlayTransportId,
-};
+use ts_transport::{BatchRecvIter, DynEndpoint, UnderlayTransport, UnderlayTransportId};
 
 use crate::{
     Task,
@@ -241,7 +239,7 @@ impl Runner {
     }
 
     #[tracing::instrument(skip_all, level = "trace")]
-    async fn wait_for_activity(&mut self) -> Option<(PeerId, Vec<PacketMut>)> {
+    async fn wait_for_activity(&mut self) -> Option<(DynEndpoint, Vec<PacketMut>)> {
         tracing::trace!("waiting for packet activity or for this to become home derp");
 
         let mut from_dataplane = self.from_dataplane.lock().await;
@@ -265,19 +263,15 @@ impl Runner {
     #[tracing::instrument(skip_all, level = "trace")]
     async fn connect(
         &self,
-        pending: Option<(PeerId, Vec<PacketMut>)>,
-    ) -> Result<
-        impl UnderlayTransport<PeerKey = PeerId, Error = ts_derp::Error> + 'static,
-        ts_derp::Error,
-    > {
+        pending: Option<(DynEndpoint, Vec<PacketMut>)>,
+    ) -> Result<impl UnderlayTransport<Error = ts_derp::Error> + 'static, ts_derp::Error> {
         tracing::trace!("establishing derp connection");
 
-        let client = ts_derp::DefaultClient::connect(&self.region.servers, &self.keys).await?;
-        let transport = client.with_key_lookup(PeerDbLookup(self.peer_db.clone()));
+        let transport = ts_derp::DefaultClient::connect(&self.region.servers, &self.keys).await?;
 
-        if let Some(pending) = pending {
+        if let Some((info, pending)) = pending {
             tracing::trace!("sending queued packet");
-            transport.send([pending]).await?;
+            transport.send([(info, pending)]).await?;
         }
 
         Ok(transport)
@@ -286,7 +280,7 @@ impl Runner {
     #[tracing::instrument(skip_all, level = "trace")]
     async fn run_transport(
         &mut self,
-        transport: impl UnderlayTransport<PeerKey = PeerId, Error = ts_derp::Error>,
+        transport: impl UnderlayTransport<Error = ts_derp::Error>,
     ) -> Result<(), ts_derp::Error> {
         let mut last_activity = Instant::now();
         let mut from_dataplane = self.from_dataplane.lock().await;
@@ -302,12 +296,12 @@ impl Runner {
                     last_activity = Instant::now();
 
                     for ret in from_derp.batch_iter() {
-                        let (peer_id, pkts) = ret?;
+                        let (ep, pkts) = ret?;
                         let pkts = pkts.into_iter().collect::<Vec<_>>();
 
-                        tracing::trace!(parent: &span, %peer_id, len = pkts.len(), "packet from derp server");
+                        tracing::trace!(parent: &span, ?ep, len = pkts.len(), "packets from derp server");
 
-                        let Ok(()) = self.to_dataplane.send(pkts) else {
+                        let Ok(()) = self.to_dataplane.send((ep, pkts)) else {
                             tracing::error!(parent: &span, "underlay receive channel closed");
                             break;
                         };
@@ -317,14 +311,14 @@ impl Runner {
                 from_net = from_dataplane.recv() => {
                     last_activity = Instant::now();
 
-                    let Some(from_net) = from_net else {
+                    let Some((ep, pkts)) = from_net else {
                         tracing::warn!(parent: &span, "transport queue closed");
                         return Ok(());
                     };
 
-                    tracing::trace!(parent: &span, peer = %from_net.0, packets = from_net.1.len(), "packets to derp server");
+                    tracing::trace!(parent: &span, ?ep, packets = pkts.len(), "packets to derp server");
 
-                    transport.send([from_net]).await?;
+                    transport.send([(ep, pkts)]).await?;
                 },
 
                 _ = option_timeout(inactivity_timeout) => {
@@ -339,29 +333,6 @@ impl Runner {
                 },
             }
         }
-    }
-}
-
-struct PeerDbLookup(Arc<RwLock<Option<Arc<PeerDb>>>>);
-
-impl ts_transport::PeerLookup<PeerId, NodePublicKey> for PeerDbLookup {
-    fn lookup_key(&self, id: PeerId) -> Option<NodePublicKey> {
-        let db = self.0.read().unwrap();
-        let db = db.as_ref()?;
-
-        let (_, node) = db.get(&id)?;
-        Some(node.node_key)
-    }
-}
-
-impl ts_transport::PeerLookup<NodePublicKey, PeerId> for PeerDbLookup {
-    fn lookup_key(&self, key: NodePublicKey) -> Option<PeerId> {
-        let db = self.0.read().unwrap();
-        let db = db.as_ref()?;
-
-        let (id, _) = db.get(&key)?;
-
-        Some(id)
     }
 }
 

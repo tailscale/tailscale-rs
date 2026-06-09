@@ -1,0 +1,5 @@
+# false positives
+ignore-interior-mutability = [
+    "bytes::Bytes",
+    "smallbox::SmallBox",
+]

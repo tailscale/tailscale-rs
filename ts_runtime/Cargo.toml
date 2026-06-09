@@ -28,6 +28,7 @@ ts_packetfilter_state.workspace = true
 ts_transport.workspace = true
 ts_derp.workspace = true
 ts_tunnel.workspace = true
+ts_hexdump.workspace = true
 
 # Unconditionally required dependencies.
 futures.workspace = true
@@ -44,12 +45,12 @@ smallvec.workspace = true
 smol_str = "0.3"
 yoke.workspace = true
 url.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
 itertools.workspace = true
 proptest.workspace = true
-rand.workspace = true
 tokio-test = "0.4"
 ts_capabilityversion.workspace = true
 

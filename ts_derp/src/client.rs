@@ -10,7 +10,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use ts_http_util::Client as _;
 use ts_keys::{NodeKeyPair, NodePublicKey};
 use ts_packet::PacketMut;
-use ts_transport::{BatchRecvIter, BatchSendIter, UnderlayTransport};
+use ts_transport::{BatchRecvIter, BatchSendIter, DynEndpoint, UnderlayTransport};
 use url::Url;
 
 use crate::{
@@ -285,23 +285,28 @@ impl<Io> UnderlayTransport for Client<Io>
 where
     Io: AsyncRead + AsyncWrite + Send,
 {
-    type PeerKey = NodePublicKey;
     type Error = Error;
 
-    async fn send(
-        &self,
-        packet_batch: impl BatchSendIter<Self::PeerKey>,
-    ) -> Result<(), Self::Error> {
-        for (key, pkt) in packet_batch.batch_iter() {
+    async fn send(&self, packet_batch: impl BatchSendIter) -> Result<(), Self::Error> {
+        for (ep, pkt) in packet_batch.batch_iter() {
+            let Some(key) = ep.as_derp() else {
+                tracing::warn!(?ep, "derp transport got wrong endpoint info type");
+                continue;
+            };
+
             for pkt in pkt {
-                self.send_one(key, pkt.as_ref()).await?;
+                self.send_one(NodePublicKey::from(key), pkt.as_ref())
+                    .await?;
             }
         }
 
         Ok(())
     }
 
-    async fn recv(&self) -> impl BatchRecvIter<Self::PeerKey, Error = Self::Error> {
-        [self.recv_one().await.map(|(k, pkt)| (k, [pkt]))]
+    async fn recv(&self) -> impl BatchRecvIter<Error = Self::Error> {
+        [self
+            .recv_one()
+            .await
+            .map(|(k, pkt)| (DynEndpoint::derp(k.into()), [pkt]))]
     }
 }

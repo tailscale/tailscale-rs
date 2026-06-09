@@ -1396,6 +1396,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "dyn-eq"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c2d035d21af5cde1a6f5c7b444a5bf963520a9f142e5d06931178433d7d5388"
+
+[[package]]
+name = "dyn-hash"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fdab65db9274e0168143841eb8f864a0a21f8b1b8d2ba6812bbe6024346e99e"
+
+[[package]]
 name = "ecdsa"
 version = "0.17.0-rc.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4940,6 +4952,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "smallbox"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aca054fd9f8c2ebe8557a2433f307e038c0716124efd045daa0388afa5172189"
+
+[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6316,6 +6334,7 @@ dependencies = [
  "ts_dataplane",
  "ts_derp",
  "ts_disco_protocol",
+ "ts_hexdump",
  "ts_keys",
  "ts_netcheck",
  "ts_netmon",
@@ -6356,6 +6375,10 @@ dependencies = [
 name = "ts_transport"
 version = "0.4.0"
 dependencies = [
+ "dyn-eq",
+ "dyn-hash",
+ "smallbox",
+ "ts_hexdump",
  "ts_packet",
 ]
 

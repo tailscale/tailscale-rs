@@ -3,17 +3,17 @@
 use std::collections::HashMap;
 
 use ts_packet::PacketMut;
-use ts_transport::{PeerId, UnderlayTransportId};
+use ts_transport::{DynEndpoint, PeerId, UnderlayTransportId};
 
 /// Routes packets that originate from the local device.
 #[derive(Default)]
 pub struct Router {
     /// The transport to use for sending to each wireguard peer.
-    pub table: HashMap<PeerId, UnderlayTransportId>,
+    pub table: HashMap<PeerId, (UnderlayTransportId, DynEndpoint)>,
 }
 
 /// The outcome of routing packets.
-pub type Result = HashMap<(UnderlayTransportId, PeerId), Vec<PacketMut>>;
+pub type Result = HashMap<(UnderlayTransportId, DynEndpoint), Vec<PacketMut>>;
 
 impl Router {
     /// Assigns a batch of packets to their next hop.
@@ -23,8 +23,8 @@ impl Router {
         let mut ret = Result::default();
 
         for (peer_id, packets) in batches {
-            if let Some(transport) = self.table.get(&peer_id) {
-                ret.entry((*transport, peer_id))
+            if let Some((transport, ep)) = self.table.get(&peer_id) {
+                ret.entry((*transport, ep.clone()))
                     .or_default()
                     .extend(packets);
             }
@@ -36,7 +36,22 @@ impl Router {
 
 #[cfg(test)]
 mod tests {
+    use ts_transport::{Endpoint, EndpointStorage};
+
     use super::*;
+
+    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+    struct DummyEndpoint(&'static str);
+
+    impl Endpoint for DummyEndpoint {
+        fn ty(&self) -> &str {
+            "dummy"
+        }
+
+        fn ep_clone(&self) -> EndpointStorage {
+            ts_transport::smallbox::smallbox![*self]
+        }
+    }
 
     #[test]
     fn test_outbound_underlay() {
@@ -45,15 +60,21 @@ mod tests {
         let peer_c = PeerId(3);
         let peer_d = PeerId(4);
         let peer_e = PeerId(5);
+
+        let info_a: DynEndpoint = DummyEndpoint("abc").into();
+        let info_b: DynEndpoint = DummyEndpoint("def").into();
+        let info_c: DynEndpoint = DummyEndpoint("ghi").into();
+        let info_e: DynEndpoint = DummyEndpoint("jkl").into();
+
         let transport_a = 5.into();
         let transport_b = 6.into();
         let transport_c = 7.into();
 
         let mut router = Router::default();
-        router.table.insert(peer_a, transport_b);
-        router.table.insert(peer_b, transport_a);
-        router.table.insert(peer_c, transport_b);
-        router.table.insert(peer_e, transport_c);
+        router.table.insert(peer_a, (transport_b, info_a.clone()));
+        router.table.insert(peer_b, (transport_a, info_b.clone()));
+        router.table.insert(peer_c, (transport_b, info_c.clone()));
+        router.table.insert(peer_e, (transport_c, info_e.clone()));
 
         let mut got = router.route([
             (peer_a, vec![b"foo".into(), b"bar".into()]),
@@ -63,10 +84,16 @@ mod tests {
         ]);
 
         let mut want = Result::from([
-            ((transport_b, peer_a), vec![b"foo".into(), b"bar".into()]),
-            ((transport_a, peer_b), vec![b"qux".into(), b"xyzzy".into()]),
             (
-                (transport_b, peer_c),
+                (transport_b, info_a.clone()),
+                vec![b"foo".into(), b"bar".into()],
+            ),
+            (
+                (transport_a, info_b.clone()),
+                vec![b"qux".into(), b"xyzzy".into()],
+            ),
+            (
+                (transport_b, info_c.clone()),
                 vec![b"frobozz".into(), b"zork".into()],
             ),
         ]);
