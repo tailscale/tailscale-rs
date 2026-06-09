@@ -28,6 +28,11 @@ pub type ToUnderlay = (PeerId, Vec<PacketMut>);
 /// Packet batches received from an underlay.
 pub type FromUnderlay = Vec<PacketMut>;
 
+/// A batch of disco packets received from an underlay transport.
+pub type DiscoBatch = Vec<PacketMut>;
+/// A batch of stun packets received from an underlay transport.
+pub type StunBatch = Vec<PacketMut>;
+
 /// Shorthand for a sender channel.
 pub type Tx<T> = mpsc::UnboundedSender<T>;
 
@@ -58,6 +63,11 @@ struct CoreState {
     overlay_transports: HashMap<OverlayTransportId, Tx<ToOverlay>>,
     /// Queues to write packets to underlay transports.
     underlay_transports: HashMap<UnderlayTransportId, Tx<ToUnderlay>>,
+
+    /// Send handle for disco packets received from underlays.
+    disco_out: Tx<DiscoBatch>,
+    /// Send handle for stun packets received from underlays.
+    stun_out: Tx<StunBatch>,
 }
 
 /// State that must be held during async polling.
@@ -73,13 +83,19 @@ impl DataPlane {
     ///
     /// The caller must configure overlay/underlay output queues for the data plane to be useful,
     /// otherwise all it can do is drop packets.
-    pub fn new(my_key: NodeKeyPair) -> Self {
+    ///
+    /// The second and third elements of the return tuple are output queues for disco and
+    /// STUN messages, respectively.
+    pub fn new(my_key: NodeKeyPair) -> (Self, Rx<DiscoBatch>, Rx<StunBatch>) {
         let (overlay_up, overlay_down) = mpsc::unbounded_channel();
         let (underlay_down, underlay_up) = mpsc::unbounded_channel();
 
+        let (disco_tx, disco_rx) = mpsc::unbounded_channel();
+        let (stun_tx, stun_rx) = mpsc::unbounded_channel();
+
         let sync = crate::DataPlane::new(my_key);
 
-        Self {
+        let dp = Self {
             underlay_down,
             overlay_up,
 
@@ -90,6 +106,8 @@ impl DataPlane {
 
             core_state: Mutex::new(CoreState {
                 sync,
+                stun_out: stun_tx,
+                disco_out: disco_tx,
                 overlay_transports: Default::default(),
                 underlay_transports: Default::default(),
             }),
@@ -98,7 +116,9 @@ impl DataPlane {
                 from_overlay: overlay_down,
                 from_underlay: underlay_up,
             }),
-        }
+        };
+
+        (dp, disco_rx, stun_rx)
     }
 
     /// Allocate a new underlay transport.
@@ -230,7 +250,20 @@ impl DataPlane {
                 (Some(to_peers), Some(loopback))
             }
             SelectResult::UnderlayUp(underlay_up) => {
-                let InboundResult { to_local, to_peers } = core.sync.process_inbound(underlay_up);
+                let InboundResult {
+                    to_local,
+                    to_peers,
+                    disco,
+                    stun,
+                } = core.sync.process_inbound(underlay_up);
+
+                if !disco.is_empty() && core.disco_out.send(disco).is_err() {
+                    tracing::warn!("disco packets dropped: no receiver");
+                }
+
+                if !stun.is_empty() && core.stun_out.send(stun).is_err() {
+                    tracing::warn!("stun packets dropped: no receiver");
+                }
 
                 (Some(to_peers), Some(to_local))
             }
