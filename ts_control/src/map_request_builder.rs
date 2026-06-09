@@ -1,6 +1,8 @@
 use ts_capabilityversion::CapabilityVersion;
 use ts_control_serde::{HostInfo, MapRequest, NetInfo};
 
+use crate::Endpoint;
+
 /// Builder type for [`MapRequest`]s; smooths over the annoying parts of creating a request.
 #[derive(Debug, Clone)]
 pub struct MapRequestBuilder<'a> {
@@ -42,21 +44,40 @@ impl<'a> MapRequestBuilder<'a> {
     }
 
     /// Set the [`MapRequest::keep_alive`] field.
-    pub fn keep_alive(mut self, value: bool) -> Self {
+    pub const fn keep_alive(mut self, value: bool) -> Self {
         self.req.keep_alive = value;
         self
     }
 
     /// Set the [`MapRequest::omit_peers`] field.
-    pub fn omit_peers(mut self, value: bool) -> Self {
+    pub const fn omit_peers(mut self, value: bool) -> Self {
         self.req.omit_peers = value;
         self
     }
 
     /// Set the [`MapRequest::stream`] field.
-    pub fn stream(mut self, value: bool) -> Self {
+    pub const fn stream(mut self, value: bool) -> Self {
         self.req.stream = value;
         self
+    }
+
+    /// Set the [`MapRequest::Endpoints`] field.
+    pub fn endpoints(mut self, endpoints: Vec<Endpoint>) -> Self {
+        self.req.endpoints = endpoints;
+        self
+    }
+
+    /// Set the `stream`, `omit_peers`, and `keep_alive` flags so that this is treated as
+    /// a regular request to the API to update some node parameter (rather than as the long
+    /// poll stream).
+    pub const fn as_request(self) -> Self {
+        self.stream(false).omit_peers(true).keep_alive(false)
+    }
+
+    /// Set the `stream`, `omit_peers`, and `keep_alive` flags so that this is treated as
+    /// a long-poll stream.
+    pub const fn as_stream(self) -> Self {
+        self.stream(true).omit_peers(false).keep_alive(true)
     }
 
     /// Set the [`HostInfo::hostname`] field.

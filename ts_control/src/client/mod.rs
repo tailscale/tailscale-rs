@@ -76,10 +76,7 @@ impl AsyncControlClient {
 
         tracing::info!("registered, starting netmap stream");
 
-        let builder = MapRequestBuilder::new(node_keys)
-            .keep_alive(true)
-            .omit_peers(false)
-            .stream(true);
+        let builder = MapRequestBuilder::new(node_keys).as_stream();
 
         let mut request = if let Some(hostname) = &config.hostname {
             builder.hostname(hostname)
@@ -221,10 +218,7 @@ async fn run_once(
 
     register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
-    let builder = MapRequestBuilder::new(node_keys)
-        .keep_alive(true)
-        .omit_peers(false)
-        .stream(true);
+    let builder = MapRequestBuilder::new(node_keys).as_stream();
 
     let request = if let Some(hostname) = &config.hostname {
         builder.hostname(hostname)
@@ -264,9 +258,7 @@ async fn run_once(
                 match command.unwrap() {
                     Command::SetDerpHomeRegion { id, latencies } => {
                         let mut builder = MapRequestBuilder::new(node_keys)
-                            .keep_alive(false)
-                            .omit_peers(true)
-                            .stream(false)
+                            .as_request()
                             .preferred_derp(id)
                             .derp_latencies(latencies.iter().map(|(k, v)| (k.as_str(), *v)));
 
