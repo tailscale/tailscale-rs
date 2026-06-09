@@ -9,13 +9,10 @@ use netstack::{
     netcore::{Channel, NetstackControl},
 };
 use tokio::task::JoinSet;
+use ts_dataplane::async_tokio::{FromOverlay, Rx, ToOverlay, Tx};
 use ts_packet::PacketMut;
 
-use crate::{
-    Error,
-    dataplane::{OverlayFromDataplane, OverlayToDataplane},
-    env::Env,
-};
+use crate::{Error, env::Env};
 
 pub struct NetstackActor {
     _joinset: JoinSet<()>,
@@ -26,8 +23,8 @@ impl kameo::Actor for NetstackActor {
     type Args = (
         Env,
         netstack::netcore::Config,
-        OverlayToDataplane,
-        OverlayFromDataplane,
+        Tx<FromOverlay>,
+        Rx<ToOverlay>,
     );
     type Error = Error;
 
