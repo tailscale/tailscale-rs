@@ -1,8 +1,5 @@
 use core::net::{Ipv4Addr, Ipv6Addr};
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use futures::StreamExt;
 use kameo::{
@@ -13,30 +10,16 @@ use kameo::{
     supervision::RestartPolicy,
 };
 use ts_control::{
-    ControlDialer, DialPlan, Endpoint, EndpointType, Error as ControlError, Node,
-    RegistrationError, StateUpdate,
+    ControlDialer, DialPlan, Endpoint, Error as ControlError, Node, RegistrationError, StateUpdate,
     client::{HttpConn, handle_ping, send_map_request},
 };
 
 use crate::{
     Task,
     derp_latency::{DerpLatencyMeasurement, DerpLatencyMeasurer},
+    direct,
     env::Env,
-    netmon,
-    stunner::StunAddress,
 };
-
-/// Temporary debugging configuration to report the stun- and netmon-discovered endpoints to control
-/// with a dummy port. This does not result in direct UDP connectivity because there is no socket
-/// hooked up anywhere, it just creates endpoint entries in control.
-const SEND_DUMMY_ENDPOINTS: bool = false;
-
-// placeholder: we will actually get this from the direct udp actor, which will consume
-// these netmon::State messages to just directly give us an endpoint list to report.
-// for testing, just use this dummy port. it won't result in a functional configuration
-// because there's no udp socket listening, but should surface the endpoints in control
-// and induce disco traffic from peers.
-const DUMMY_PORT: u16 = 51823;
 
 /// Actor responsible for maintaining the connection to control.
 ///
@@ -47,10 +30,7 @@ pub struct ControlRunner {
 
     derp_latency_measurement: Option<DerpLatencyMeasurement>,
 
-    /// Endpoints not derived from public IPv4 STUN.
-    local_endpoints: Vec<Endpoint>,
-    /// Endpoint derived from public IPv4 STUN request.
-    stun_endpoint: Option<Endpoint>,
+    endpoints: Vec<Endpoint>,
 
     self_node: Option<Node>,
     pending_node_requests: Vec<PendingNodeRequest>,
@@ -164,8 +144,7 @@ impl kameo::Actor for ControlRunner {
         .await;
 
         params.env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
-        params.env.subscribe::<Arc<netmon::State>>(&slf).await?;
-        params.env.subscribe::<StunAddress>(&slf).await?;
+        params.env.subscribe::<direct::NewEndpoints>(&slf).await?;
 
         DerpLatencyMeasurer::supervise(&slf, params.env.clone())
             .spawn()
@@ -179,8 +158,7 @@ impl kameo::Actor for ControlRunner {
             },
             params,
             derp_latency_measurement: None,
-            local_endpoints: Default::default(),
-            stun_endpoint: None,
+            endpoints: Default::default(),
             self_node: None,
             pending_node_requests: Default::default(),
         })
@@ -278,7 +256,7 @@ impl ControlRunner {
 
         let mut mrb = ts_control::MapRequestBuilder::new(&self.params.env.keys)
             .as_request()
-            .endpoints(self.endpoints());
+            .endpoints(self.endpoints.clone());
 
         if let Some(hostname) = self.params.config.hostname.as_deref() {
             mrb = mrb.hostname(hostname);
@@ -313,13 +291,6 @@ impl ControlRunner {
         )
         .await
         .unwrap();
-    }
-
-    fn endpoints(&self) -> Vec<Endpoint> {
-        let mut eps = self.local_endpoints.clone();
-        eps.extend(self.stun_endpoint);
-
-        eps
     }
 }
 
@@ -465,6 +436,19 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
     }
 }
 
+impl Message<direct::NewEndpoints> for ControlRunner {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: direct::NewEndpoints, _ctx: &mut Context<Self, Self::Reply>) {
+        if self.endpoints == msg.0.as_ref() {
+            return;
+        }
+
+        self.endpoints = msg.0.to_vec();
+        self.update_map_request().await;
+    }
+}
+
 impl Message<DerpLatencyMeasurement> for ControlRunner {
     type Reply = ();
 
@@ -474,73 +458,6 @@ impl Message<DerpLatencyMeasurement> for ControlRunner {
         }
 
         self.derp_latency_measurement = Some(msg);
-        self.update_map_request().await;
-    }
-}
-
-const CGNAT_RANGE: ipnet::Ipv4Net = ipnet::Ipv4Net::new_assert(Ipv4Addr::new(100, 64, 0, 0), 10);
-const TS_IP6_ULA: ipnet::Ipv6Net =
-    ipnet::Ipv6Net::new_assert(Ipv6Addr::new(0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0), 48);
-
-impl Message<Arc<netmon::State>> for ControlRunner {
-    type Reply = ();
-
-    async fn handle(&mut self, msg: Arc<netmon::State>, _ctx: &mut Context<Self, Self::Reply>) {
-        if !SEND_DUMMY_ENDPOINTS {
-            return;
-        }
-
-        self.local_endpoints.clear();
-
-        for (_iface, addr) in msg.up_addrs() {
-            let ip = addr.addr();
-
-            let viable_endpoint = match ip {
-                IpAddr::V4(v4) => {
-                    let invalid_addr = v4.is_broadcast()
-                        || v4.is_loopback()
-                        || v4.is_unspecified()
-                        || v4.is_documentation()
-                        || v4.is_multicast();
-
-                    !invalid_addr && !CGNAT_RANGE.contains(&v4)
-                }
-                IpAddr::V6(v6) => {
-                    let invalid_addr = v6.is_multicast() || v6.is_unspecified() || v6.is_loopback();
-
-                    !invalid_addr && !TS_IP6_ULA.contains(&v6)
-                }
-            };
-
-            if !viable_endpoint {
-                continue;
-            }
-
-            let ep = Endpoint {
-                ty: EndpointType::Local,
-                endpoint: SocketAddr::new(ip, DUMMY_PORT),
-            };
-
-            self.local_endpoints.push(ep);
-        }
-
-        self.update_map_request().await;
-    }
-}
-
-impl Message<StunAddress> for ControlRunner {
-    type Reply = ();
-
-    async fn handle(&mut self, msg: StunAddress, _ctx: &mut Context<Self, Self::Reply>) {
-        if !SEND_DUMMY_ENDPOINTS {
-            return;
-        }
-
-        self.stun_endpoint = Some(Endpoint {
-            ty: EndpointType::Stun,
-            endpoint: SocketAddr::new(msg.addr, DUMMY_PORT),
-        });
-
         self.update_map_request().await;
     }
 }

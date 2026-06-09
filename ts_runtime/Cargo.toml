@@ -46,6 +46,9 @@ smol_str = "0.3"
 yoke.workspace = true
 url.workspace = true
 rand.workspace = true
+bytes.workspace = true
+itertools.workspace = true
+zerocopy.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true

@@ -92,6 +92,7 @@ impl State {
     }
 
     /// Iterate the routes on all interfaces in the `up` state.
+    #[expect(dead_code)]
     pub fn up_routes(&self) -> impl Iterator<Item = (InterfaceId, ts_netmon::Route)> {
         self.routes
             .iter()

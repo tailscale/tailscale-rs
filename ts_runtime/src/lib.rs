@@ -16,6 +16,8 @@ use crate::{
 pub mod control_runner;
 mod dataplane;
 mod derp_latency;
+mod direct;
+mod disco;
 mod env;
 mod error;
 mod multiderp;
@@ -79,7 +81,12 @@ impl kameo::Actor for Runtime {
             .ask::<DataplaneActor, _>(None, dataplane::NewOverlayTransport, true)
             .await?;
 
+        disco::Disco::supervise(&slf, env.clone()).spawn().await;
+
         Multiderp::supervise(&slf, env.clone()).spawn().await;
+        direct::DirectActor::supervise(&slf, env.clone())
+            .spawn()
+            .await;
 
         route_updater::RouteUpdater::supervise(&slf, (env.clone(), netstack_id))
             .spawn()

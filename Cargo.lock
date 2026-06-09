@@ -6310,6 +6310,7 @@ dependencies = [
 name = "ts_runtime"
 version = "0.4.0"
 dependencies = [
+ "bytes",
  "chrono",
  "futures",
  "futures-util",
@@ -6347,6 +6348,7 @@ dependencies = [
  "ts_tunnel",
  "url",
  "yoke",
+ "zerocopy",
 ]
 
 [[package]]

@@ -191,6 +191,24 @@ impl DataPlane {
         (id, self.overlay_up.clone(), rx)
     }
 
+    /// Send packets directly to an underlay transport by id.
+    ///
+    /// This is typically used to bypass the routing layer in order to directly send e.g. disco
+    /// packets.
+    pub async fn send_underlay(
+        &self,
+        underlay_transport_id: UnderlayTransportId,
+        ep: DynEndpoint,
+        buf: Vec<PacketMut>,
+    ) -> bool {
+        let state = self.core_state.lock().await;
+        let Some(transport) = state.underlay_transports.get(&underlay_transport_id) else {
+            return false;
+        };
+
+        transport.send((ep, buf)).is_ok()
+    }
+
     /// Run the data plane forever, moving packets from the input queues to output queues.
     pub async fn run(&self) -> Infallible {
         loop {
