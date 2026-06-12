@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use futures_util::{Stream, StreamExt, stream};
 
 #[cfg(target_os = "macos")]
-pub use crate::darwin::AfRouteMon as PlatformMon;
+pub use crate::bsd::PfRouteMon as PlatformMon;
 #[cfg(target_os = "linux")]
 pub use crate::linux::RtNetlinkMon as PlatformMon;
 #[cfg(windows)]
@@ -17,7 +17,7 @@ pub type BoxStream<T> = Pin<Box<dyn Stream<Item = T> + Send + 'static>>;
 /// Get the platform [`Netmon`] implementation if there is one.
 pub const fn platform_mon() -> Option<impl Netmon + 'static> {
     cfg_if::cfg_if! {
-        if #[cfg(any(windows, target_os = "linux"))] {
+        if #[cfg(any(windows, target_os = "linux", target_os = "macos"))] {
             Some(&PlatformMon)
         } else {
             struct NoopMon;

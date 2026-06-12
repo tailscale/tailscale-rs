@@ -11,18 +11,29 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bytes.workspace = true
 cfg-if.workspace = true
 flume.workspace = true
 futures-util.workspace = true
 ipnet.workspace = true
 pin-project-lite.workspace = true
+regex = "1.13"
 smallvec.workspace = true
+static_assertions.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
 
+ts_future_util.workspace = true
+ts_hexdump.workspace = true
+
 [dev-dependencies]
 ts_cli_util.workspace = true
+
+bstr = "1.13"
+clap.workspace = true
+proptest.workspace = true
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -35,9 +46,12 @@ windows = { version = "0.62", features = [
 rtnetlink = "0.21"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-nix = "0.31"
+bitflags = "2.13"
+libc = "0.2"
+nom = "8.0"
 socket2 = "0.6"
 tokio = { workspace = true, features = ["net"] }
+zerocopy.workspace = true
 
 [lints]
 workspace = true
