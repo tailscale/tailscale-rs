@@ -30,10 +30,10 @@ impl MonType {
     pub const RTNETLINK: Self = Self::new_static("rtnetlink");
 
     /// [`MonType`] for the canonical macOS-platform network monitor, built around messages
-    /// sent through `AF_ROUTE` sockets.
+    /// sent through `PF_ROUTE` sockets.
     ///
     /// [`InterfaceId`]s with this type are interface indices.
-    pub const AF_ROUTE: Self = Self::new_static("af_route");
+    pub const PF_ROUTE: Self = Self::new_static("pf_route");
 
     /// Convenience helper to construct a new mon type from a `&'static str`.
     ///
