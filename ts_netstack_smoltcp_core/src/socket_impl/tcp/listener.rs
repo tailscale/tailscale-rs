@@ -93,10 +93,10 @@ impl Netstack {
                     return Error::missing_listener().into();
                 };
 
-                // Iterate the half-open queue, re-queueing any sockets that are still in
-                // `SYN-RECEIVED`. Move any sockets in `ESTABLISHED` to the `accept_queue`, close
-                // any sockets in `CLOSE-WAIT`, and drop any sockets that moved back to `LISTEN`.
-                // All other states are unexpected.
+                // Iterate the half-open queue, re-queueing any socket handles that are still in
+                // `SYN-RECEIVED`. Move any sockets in `ESTABLISHED` to the `accept_queue`, and
+                // close any sockets in `CLOSE-WAIT` or that moved back to `LISTEN`. All other
+                // states are unexpected.
                 listener.half_open_queue.retain(|half_open| {
                     let sock = self.socket_set.get_mut::<tcp::Socket>(*half_open);
                     let state = sock.state();
@@ -119,17 +119,24 @@ impl Netstack {
                             listener.accept_queue.push_back(*half_open);
                             false
                         }
-                        tcp::State::CloseWait => {
-                            tracing::trace!("half-open socket moved to CLOSE-WAIT, closing");
+                        tcp::State::CloseWait | tcp::State::Listen => {
+                            // Closing a socket that moved back to LISTEN ensures there's only a
+                            // single LISTEN socket at a time for a specific endpoint; dropping the
+                            // socket handle doesn't remove the socket from the socket set, meaning
+                            // smoltcp would have multiple LISTEN sockets open for the same
+                            // endpoint, and likely (depending on socket set order) delivers packets
+                            // to a socket the netstack isn't tracking in any of its queues. In that
+                            // state, TCP handshakes still complete and clients are able to send
+                            // their initial packet(s), because smoltcp is still tracking the
+                            // socket. However, this function does not move the socket through the
+                            // accept loop and surface data to callers, as it has no handle to the
+                            // socket in its queues.
+                            tracing::trace!("half-open socket moved to {state}, closing");
                             sock.close();
                             self.pending_tcp_closes.push(*half_open);
                             if self.pending_tcp_closes.len() > 10000 {
                                 tracing::warn!("large number of pending closes");
                             }
-                            false
-                        }
-                        tcp::State::Listen => {
-                            tracing::trace!("half-open socket moved to LISTEN, dropping");
                             false
                         }
                         _ => {
