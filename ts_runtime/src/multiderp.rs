@@ -325,25 +325,43 @@ impl Message<DerpLatencyMeasurement> for Multiderp {
             return;
         };
 
-        if let Some(home_derp) = self.current_home_derp {
-            self.derps
-                .get_mut(&home_derp)
-                .unwrap()
-                .home_derp
-                .send_replace(false);
+        // Bail early if the home derp region hasn't changed.
+        let new_region_id = result.id;
+        if self.current_home_derp == Some(new_region_id) {
+            tracing::debug!("received home derp measurement message, no change to home region");
+            return;
         }
 
-        if self.current_home_derp.is_none_or(|id| id != result.id) {
-            self.current_home_derp = Some(result.id);
-            if let Some(derp) = self.derps.get_mut(&result.id) {
-                derp.home_derp.send_replace(true);
-            }
-
-            tracing::info!(
-                region_id = %result.id,
-                latency_ms = result.latency.as_secs_f32() * 1000.,
-                "new home derp region selected"
-            );
+        // We now know the home derp region has changed. Sanity check - ensure that both the current
+        // and new home derp regions exist in the region map. Doing this ahead of time and exiting
+        // early avoids nasty unwind logic if we detect a missing region when we try to change it.
+        if !self.derps.contains_key(&new_region_id) {
+            tracing::error!(%new_region_id, "new home derp region missing in map, not updating");
+            return;
+        } else if let Some(cur_region_id) = self.current_home_derp
+            && !self.derps.contains_key(&cur_region_id)
+        {
+            tracing::error!(%cur_region_id, "current home derp region missing in map, not updating");
+            return;
         }
+
+        // If the current home derp region is populated and differs from the new home derp region,
+        // we need to notify the current region that it is no longer the home region before we
+        // update.
+        if let Some(cur_region_id) = self.current_home_derp {
+            // Unwrap is safe, we verified self.derps holds cur_region_id above, and hold &mut self.
+            let cur_region = self.derps.get_mut(&cur_region_id).unwrap();
+            cur_region.home_derp.send_replace(false);
+        }
+
+        // Unwrap is safe, we verified self.derps holds new_region_id above, and hold &mut self.
+        let new_region = self.derps.get_mut(&new_region_id).unwrap();
+        self.current_home_derp = Some(new_region_id);
+        new_region.home_derp.send_replace(true);
+        tracing::info!(
+            region_id = %new_region_id,
+            latency_ms = result.latency.as_secs_f32() * 1000.,
+            "new home derp region selected"
+        );
     }
 }
