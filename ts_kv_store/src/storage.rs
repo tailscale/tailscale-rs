@@ -139,7 +139,8 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     }
 
     /// Commit a transaction. Returns an error if committing fails, usually because the store's
-    /// current transaction does not match the `txn_id`.
+    /// current transaction does not match the `txn_id` (which should be impossible with only safe
+    /// code).
     pub(crate) fn commit_transaction(&mut self, txn_id: TxnId) -> Result<()> {
         let Some((pending_txn, _)) = self.pending_txn else {
             return Err(Error::TransactionFailed);
@@ -276,13 +277,15 @@ impl<T> VersionedValue<T> {
             if txn_id == *aid {
                 Some(&mut self.slot_a.as_mut().unwrap().1)
             } else if let Some((bid, b)) = &mut self.slot_b {
-                // Overwrite the current transaction's value or the older of two committed values.
+                // Use the current transaction's value or the older of the other two (committed) values.
                 if txn_id == *bid {
                     Some(&mut self.slot_b.as_mut().unwrap().1)
                 } else if aid > bid {
+                    debug_assert!(txn_id > *aid && txn_id > *bid);
                     self.slot_b = Some((txn_id, a.clone()));
                     Some(&mut self.slot_b.as_mut().unwrap().1)
                 } else {
+                    debug_assert!(txn_id > *aid && txn_id > *bid);
                     self.slot_a = Some((txn_id, b.clone()));
                     Some(&mut self.slot_a.as_mut().unwrap().1)
                 }
@@ -303,14 +306,26 @@ impl<T> VersionedValue<T> {
     }
 
     pub(crate) fn get(&self, id: TxnId) -> Option<&T> {
-        match (&self.slot_a, &self.slot_b) {
-            (Some((aid, a)), Some((bid, b))) if id >= *aid && id >= *bid => {
+        // This could be expressed more simply with a match, but that doesn't work for `get_mut` because
+        // of mutable borrows. Since the functions do the same thing, I use the more complex code
+        // here too.
+        if let Some((aid, a)) = &self.slot_a
+            && id >= *aid
+        {
+            if let Some((bid, b)) = &self.slot_b
+                && id >= *bid
+            {
                 debug_assert_ne!(aid, bid);
                 if aid > bid { Some(a) } else { Some(b) }
+            } else {
+                Some(a)
             }
-            (Some((vid, v)), _) if id >= *vid => Some(v),
-            (_, Some((vid, v))) if id >= *vid => Some(v),
-            _ => None,
+        } else if let Some((bid, b)) = &self.slot_b
+            && id >= *bid
+        {
+            Some(b)
+        } else {
+            None
         }
     }
 
@@ -446,6 +461,7 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
         K: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
+        debug_assert!(self.check_txn_id(txn_id));
         match self {
             DeleteMask::All(self_id, present) if *self_id == txn_id => match present.get(k) {
                 Some(v) => match v.get(txn_id) {
@@ -473,28 +489,21 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
         debug_assert!(self.check_txn_id(txn_id));
         match self {
             DeleteMask::None => MaskStatus::Unknown,
-            DeleteMask::All(self_id, present) => {
-                if *self_id > txn_id {
-                    return MaskStatus::Unknown;
-                }
-                match present.get_mut(k) {
-                    Some(v) => match v.get_mut(txn_id) {
-                        Some(v) => MaskStatus::Overwritten(v),
-                        None => MaskStatus::Unknown,
-                    },
-                    None => MaskStatus::Removed,
-                }
-            }
-            DeleteMask::Some(self_id, removed) => {
-                if *self_id > txn_id {
-                    return MaskStatus::Unknown;
-                }
+            DeleteMask::All(self_id, present) if *self_id == txn_id => match present.get_mut(k) {
+                Some(v) => match v.get_mut(txn_id) {
+                    Some(v) => MaskStatus::Overwritten(v),
+                    None => MaskStatus::Unknown,
+                },
+                None => MaskStatus::Removed,
+            },
+            DeleteMask::Some(self_id, removed) if *self_id == txn_id => {
                 if removed.contains(k) {
                     MaskStatus::Removed
                 } else {
                     MaskStatus::Unknown
                 }
             }
+            _ => MaskStatus::Unknown,
         }
     }
 
@@ -602,7 +611,9 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
     /// Check if this table's transaction state is consistent for commit.
     ///
-    /// Must be called before calling `commit_txn`.
+    /// Must be called before calling `commit_txn`. In theory, because of the global lock, this
+    /// should never happen. But if we were to allow transactions to be timed-out (or multiple
+    /// mutating transaction), or in the presence of unsafe code, then inconsistency could happen.
     pub fn check_txn_consistency(&self, txn_id: TxnId) -> Result<()> {
         if let Some(modified) = &self.modified
             && modified.txn_id != txn_id
@@ -620,7 +631,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
     /// Apply this table's transaction state to its storage.
     ///
-    /// Precondition: `self.check_txn_consistency` returns `Ok`.
+    /// Precondition: `self.check_txn_consistency` returns `Ok`. (Otherwise, commit may not be atomic).
     ///
     /// Panics if `self.check_txn_consistency` would return an error.
     pub fn commit_txn(&mut self, txn_id: TxnId) {

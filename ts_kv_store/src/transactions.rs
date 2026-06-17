@@ -7,7 +7,7 @@ use std::{
     cell::UnsafeCell,
     hash::Hash,
     num::NonZeroU64,
-    sync::{Arc, RwLockReadGuard, RwLockWriteGuard, TryLockError},
+    sync::{Arc, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use crate::{
@@ -58,10 +58,10 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Returns `None` if the store's global lock is unavailable for write access.
     pub fn try_begin_transaction(&self, owner: Owner) -> Option<Transaction<'_, TableStorage>> {
         self.clear_lock_poison();
+
         let mut guard = match self.storage.try_write() {
             Ok(g) => g,
-            Err(TryLockError::WouldBlock) => return None,
-            Err(TryLockError::Poisoned(_)) => panic!(),
+            _ => return None,
         };
 
         // Garbage-collect any abandoned transaction before starting a new one (matches the blocking
@@ -96,34 +96,23 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         owner: Owner,
     ) -> Option<RoTransaction<'_, TableStorage>> {
         self.clear_lock_poison();
-        let guard = match self.storage.try_read() {
-            Ok(g) => g,
-            Err(TryLockError::WouldBlock) => return None,
-            Err(TryLockError::Poisoned(_)) => panic!(),
-        };
 
-        // Fast path: no abandoned transaction to clean up.
-        if guard.current_txn().is_none() {
+        if let Ok(guard) = self.storage.try_read() {
             return Some(RoTransaction { guard, owner });
         }
 
-        // Otherwise garbage-collect the abandoned transaction under a write lock before reading
-        // (matches the blocking `begin_ro_transaction`, which goes through `get_read_lock`).
-        drop(guard);
-        let mut wguard = match self.storage.try_write() {
-            Ok(g) => g,
-            Err(TryLockError::WouldBlock) => return None,
-            Err(TryLockError::Poisoned(_)) => panic!(),
+        // Garbage-collect the abandoned transaction before reading.
+        let Ok(mut guard) = self.storage.try_write() else {
+            return None;
         };
-        wguard.clear_transaction();
-        drop(wguard);
 
-        let guard = match self.storage.try_read() {
-            Ok(g) => g,
-            Err(TryLockError::WouldBlock) => return None,
-            Err(TryLockError::Poisoned(_)) => panic!(),
-        };
+        guard.clear_transaction();
+        let guard = RwLockWriteGuard::downgrade(guard);
+
         Some(RoTransaction { guard, owner })
+        // We only try once, rather than loop because if the user is calling `try_begin_...`, they
+        // presumably don't want to wait and we'd only need to retry if someone else grabbed the
+        // the lock before we could.
     }
 
     // TODO single-table transactions?

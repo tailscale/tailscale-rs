@@ -178,7 +178,7 @@ pub trait GeneratedStorage: Default {
     /// succeeds, then all masks have committed.
     fn commit_txn(&mut self, txn_id: TxnId) -> crate::Result<()>;
 
-    /// Delete any per-transaction state held in tables.
+    /// Delete any uncommitted per-transaction state associated with `txn_id` held in tables.
     fn gc_txn(&mut self, txn_id: TxnId);
 }
 

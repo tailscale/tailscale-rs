@@ -117,7 +117,7 @@
 //! delegated to the trait implementations. I.e., the traits and impls are an implementation detail.
 //!
 //! Transactions have an internal id (`TxnId`). Since we use a global lock to ensure serializability,
-//! transactions are only used to ensure atomicity. There can only ever be one (read/write) transaction
+//! transactions are only used to ensure atomicity. There can only ever be one (mutating) transaction
 //! in progress at a time. The store tracks the most recently committed transaction id, and optionally
 //! a current transaction id. Raw (non-transactional) operations use the most recently committed
 //! transaction id as their 'transaction' id (but there is no separate commit step for these operations).
@@ -191,10 +191,9 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             return lock;
         }
 
-        let mut wlock = self.storage.write().unwrap();
-        wlock.clear_transaction();
-
-        self.storage.read().unwrap()
+        let mut lock = self.storage.write().unwrap();
+        lock.clear_transaction();
+        RwLockWriteGuard::downgrade(lock)
     }
 
     /// Might (theoretically) panic, see the note on [`clear_lock_poison`].

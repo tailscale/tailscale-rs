@@ -57,7 +57,7 @@ repository = "https://github.com/tailscale/tailscale-rs"
 # if the toolchain is too old, unconditionally failing the compile, while our policy is just that we
 # only actively support the last two stables -- older compilers should still work as long as they
 # can still compile the project. This field is the de facto MSRV (the oldest compiler that works).
-rust-version = "1.91.0"
+rust-version = "1.92.0"
 
 [workspace.dependencies]
 aead = { version = "0.5", features = ["std"] }
