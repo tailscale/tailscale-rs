@@ -35,6 +35,7 @@ kameo = "0.21"
 kameo_actors = "0.6"
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 tokio-stream = { version = "0.1", default-features = false, features = ["time"] }
 tracing.workspace = true
 smallvec.workspace = true
@@ -44,6 +45,7 @@ chrono.workspace = true
 itertools.workspace = true
 proptest.workspace = true
 rand.workspace = true
+tokio-test = "0.4"
 ts_capabilityversion.workspace = true
 
 [features]
@@ -52,3 +54,6 @@ otel = ["kameo/otel", "kameo/tracing"]
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tokio-test"]
