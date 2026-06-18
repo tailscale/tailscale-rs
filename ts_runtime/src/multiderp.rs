@@ -35,6 +35,11 @@ pub struct Multiderp {
     env: Env,
     dataplane: ActorRef<DataplaneActor>,
     derps: HashMap<RegionId, RegionEntry>,
+    /// This device's home derp region ID, or `None` if the home region hasn't been determined yet.
+    ///
+    /// This field must always reflect the current home derp region this device has reported to the
+    /// control plane, regardless of the presence of a [`RegionEntry`] for the region in
+    /// `self.derps`.
     current_home_derp: Option<RegionId>,
     peer_db: Arc<RwLock<Option<Arc<PeerDb>>>>,
     tasks: JoinSet<()>,
@@ -325,25 +330,47 @@ impl Message<DerpLatencyMeasurement> for Multiderp {
             return;
         };
 
-        if let Some(home_derp) = self.current_home_derp {
-            self.derps
-                .get_mut(&home_derp)
-                .unwrap()
-                .home_derp
-                .send_replace(false);
+        // Bail early if the home derp region hasn't changed.
+        let new_region_id = result.id;
+        if self.current_home_derp == Some(new_region_id) {
+            tracing::debug!("received home derp measurement message, no change to home region");
+            return;
         }
 
-        if self.current_home_derp.is_none_or(|id| id != result.id) {
-            self.current_home_derp = Some(result.id);
-            if let Some(derp) = self.derps.get_mut(&result.id) {
-                derp.home_derp.send_replace(true);
-            }
+        // We now know the home derp region has changed. `self.current_derp_home` always needs to
+        // reflect the latest home derp region ID we reported to the control plane, even if there's
+        // no region entry for it in self.derps.
+        let old_region_id = self.current_home_derp;
+        self.current_home_derp = Some(new_region_id);
 
-            tracing::info!(
-                region_id = %result.id,
-                latency_ms = result.latency.as_secs_f32() * 1000.,
-                "new home derp region selected"
-            );
+        // Sanity check - ensure that both the old and new home derp regions exist in the region
+        // map. Doing this ahead of time and exiting early avoids nasty unwind logic if we detect a
+        // missing region entry when we try to change it.
+        if !self.derps.contains_key(&new_region_id) {
+            tracing::error!(%new_region_id, "new home derp region missing in map");
+            return;
+        } else if let Some(old) = old_region_id
+            && !self.derps.contains_key(&old)
+        {
+            tracing::error!(old_region_id = %old, "old home derp region missing in map");
+            return;
         }
+
+        // If the old home derp region is populated and differs from the new home derp region, we
+        // need to notify the old region that it is no longer the home region before we update.
+        if let Some(old) = old_region_id {
+            // Unwrap is safe, we verified self.derps holds old_region_id above, and hold &mut self.
+            let old_region = self.derps.get_mut(&old).unwrap();
+            old_region.home_derp.send_replace(false);
+        }
+
+        // Unwrap is safe, we verified self.derps holds new_region_id above, and hold &mut self.
+        let new_region = self.derps.get_mut(&new_region_id).unwrap();
+        new_region.home_derp.send_replace(true);
+        tracing::info!(
+            region_id = %new_region_id,
+            latency_ms = result.latency.as_secs_f32() * 1000.,
+            "new home derp region selected"
+        );
     }
 }
