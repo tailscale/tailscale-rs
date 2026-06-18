@@ -122,10 +122,9 @@ impl Runtime {
         let (netstack_id, netstack_up, netstack_down) =
             dataplane.ask(dataplane::NewOverlayTransport).await?;
 
-        let multiderp = Multiderp::spawn((env.clone(), dataplane.clone()));
+        Multiderp::spawn((env.clone(), dataplane.clone()));
 
-        let rt_upd =
-            route_updater::RouteUpdater::spawn((multiderp.clone(), env.clone(), netstack_id));
+        let rt_upd = route_updater::RouteUpdater::spawn((env.clone(), netstack_id));
         let pf_upd = packetfilter::PacketfilterUpdater::spawn(env.clone());
         let src_upd = src_filter::SourceFilterUpdater::spawn(env.clone());
         let stunner = stunner::Stunner::spawn(env.clone());

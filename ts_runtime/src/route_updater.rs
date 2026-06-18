@@ -13,27 +13,24 @@ use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
 use crate::{Error, env::Env, multiderp, multiderp::Multiderp, peer_tracker::PeerState};
 
 pub struct RouteUpdater {
-    multiderp: ActorRef<Multiderp>,
     default_overlay_transport: OverlayTransportId,
     env: Env,
 }
 
 impl kameo::Actor for RouteUpdater {
-    type Args = (ActorRef<Multiderp>, Env, OverlayTransportId);
+    type Args = (Env, OverlayTransportId);
     type Error = Error;
 
     async fn on_start(
-        (multiderp, env, default_transport): Self::Args,
-        actor_ref: ActorRef<Self>,
+        (env, default_transport): Self::Args,
+        slf: ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        env.subscribe::<Arc<PeerState>>(&actor_ref).await?;
-        env.subscribe::<Arc<ts_control::StateUpdate>>(&actor_ref)
-            .await?;
+        env.subscribe::<Arc<PeerState>>(&slf).await?;
+        env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
 
         env.register(None, &slf).await?;
 
         Ok(Self {
-            multiderp,
             default_overlay_transport: default_transport,
             env,
         })
@@ -84,8 +81,8 @@ impl Message<Arc<PeerState>> for RouteUpdater {
             tracing::trace!(parent: &span, "ask multiderp for transport id");
 
             match self
-                .multiderp
-                .ask(multiderp::TransportIdForRegion { id: region })
+                .env
+                .ask::<Multiderp, _>(None, multiderp::TransportIdForRegion { id: region }, true)
                 .await
             {
                 Ok(Some(transport_id)) => {
