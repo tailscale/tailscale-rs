@@ -38,6 +38,7 @@ tokio.workspace = true
 tokio-stream = { version = "0.1", default-features = false, features = ["time"] }
 tracing.workspace = true
 smallvec.workspace = true
+smol_str = "0.3"
 
 [dev-dependencies]
 chrono.workspace = true

@@ -28,12 +28,14 @@ mod netmon;
 mod netstack_actor;
 mod packetfilter;
 pub mod peer_tracker;
+mod registry;
 mod route_updater;
 mod src_filter;
 mod stunner;
 
 pub(crate) use env::Env;
 pub use error::{Error, ErrorKind};
+pub use registry::Registry;
 
 use crate::peer_tracker::PeerTracker;
 
