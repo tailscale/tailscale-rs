@@ -238,9 +238,11 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                 }
 
                 for update in patch {
-                    let id = self.peer_db.patch(update);
-
-                    upserts.insert(id);
+                    if let Some(id) = self.peer_db.patch(update) {
+                        upserts.insert(id);
+                    } else {
+                        tracing::warn!(?update, "no peer for update");
+                    }
                 }
             }
         }

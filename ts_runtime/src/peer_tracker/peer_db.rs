@@ -85,16 +85,11 @@ impl PeerDb {
     /// Apply an update to a node in the peer db.
     ///
     /// The [`NodeUpdate::id`] field is used as the primary key to identify the node.
-    ///
-    /// # Panics
-    /// If the peer db does not contain a node where [`Node::id`] == [`NodeUpdate::id`].
-    pub fn patch(&mut self, update: &NodeUpdate) -> PeerId {
-        let id = (update.id)
-            .lookup(self)
-            .expect("no matching peer for update");
+    pub fn patch(&mut self, update: &NodeUpdate) -> Option<PeerId> {
+        let id = update.id.lookup(self)?;
         let mut peer = self.peers.remove(&id).unwrap();
         peer.apply_update(update);
-        self.upsert(&peer)
+        Some(self.upsert(&peer))
     }
 
     /// Upsert a node into the peer db.
