@@ -30,6 +30,8 @@ impl kameo::Actor for RouteUpdater {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&actor_ref)
             .await?;
 
+        env.register(None, &slf).await?;
+
         Ok(Self {
             multiderp,
             default_overlay_transport: default_transport,

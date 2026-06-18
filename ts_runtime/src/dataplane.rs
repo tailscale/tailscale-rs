@@ -83,6 +83,7 @@ impl kameo::Actor for DataplaneActor {
         });
 
         tracing::trace!("dataplane running");
+        env.register(None, &slf).await?;
 
         Ok(Self { dataplane, task })
     }

@@ -79,6 +79,8 @@ impl kameo::Actor for Stunner {
             )
             .await?;
 
+        env.register(None, &slf).await?;
+
         Ok(Self {
             env,
             servers: vec![],

@@ -41,6 +41,7 @@ impl kameo::Actor for PeerTracker {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+        env.register(None, &slf).await?;
 
         Ok(Self {
             peer_db: PeerDb::default(),

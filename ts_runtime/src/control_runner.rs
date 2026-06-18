@@ -83,6 +83,7 @@ impl kameo::Actor for ControlRunner {
             .await;
 
         slf.attach_stream(stream.boxed(), (), ());
+        params.env.register(None, &slf).await?;
 
         Ok(Self {
             client,
