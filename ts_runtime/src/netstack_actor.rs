@@ -80,10 +80,18 @@ impl kameo::Actor for NetstackActor {
     }
 }
 
-#[kameo::messages]
-impl NetstackActor {
-    #[message]
-    pub fn get_channel(&self) -> (Channel,) {
+/// Get a netstack command channel.
+#[derive(Debug, Copy, Clone)]
+pub struct GetChannel;
+
+impl Message<GetChannel> for NetstackActor {
+    type Reply = (Channel,);
+
+    async fn handle(
+        &mut self,
+        _: GetChannel,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
         (self.channel.clone(),)
     }
 }
