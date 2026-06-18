@@ -3,7 +3,7 @@ use core::fmt::{Formatter, Write};
 use kameo::{
     Actor,
     actor::{ActorRef, WeakActorRef},
-    error::{HookError, SendError},
+    error::{HookError, Infallible, SendError},
 };
 
 pub(crate) trait ResultExt {
@@ -105,6 +105,12 @@ impl<E> From<HookError<E>> for Error {
                 message_ty: Some("ActorStartOrStop"),
             },
         }
+    }
+}
+
+impl From<Infallible> for Error {
+    fn from(_: Infallible) -> Self {
+        unreachable!()
     }
 }
 
