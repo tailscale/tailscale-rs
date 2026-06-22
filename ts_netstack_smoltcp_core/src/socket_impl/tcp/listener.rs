@@ -94,9 +94,8 @@ impl Netstack {
                 };
 
                 // Iterate the half-open queue, re-queueing any socket handles that are still in
-                // `SYN-RECEIVED`. Move any sockets in `ESTABLISHED` to the `accept_queue`, and
-                // close any sockets in `CLOSE-WAIT` or that moved back to `LISTEN`. All other
-                // states are unexpected.
+                // SYN-RECEIVED. Move any sockets in ESTABLISHED or CLOSE-WAIT to the accept queue,
+                // and close any sockets that moved back to LISTEN. All other states are unexpected.
                 listener.half_open_queue.retain(|half_open| {
                     let sock = self.socket_set.get_mut::<tcp::Socket>(*half_open);
                     let state = sock.state();
@@ -114,12 +113,20 @@ impl Netstack {
                             tracing::trace!("half-open socket unchanged, re-queueing");
                             true
                         }
-                        tcp::State::Established => {
+                        tcp::State::Established | tcp::State::CloseWait => {
+                            // CLOSE-WAIT indicates the peer closed their write half - they're not
+                            // going to write to the stream anymore. It doesn't mean the peer is
+                            // dropping the stream; it's likely waiting for some application-layer
+                            // response it can read from the stream. This is common with small HTTP
+                            // requests: the client completes a TCP handshake, sends a small GET
+                            // request, and immediately closes their write half of the stream - but
+                            // still expects the HTTP server to reply! Thus, we handle CLOSE-WAIT
+                            // and ESTABLISHED identically.
                             tracing::trace!("half-open socket ready, moving to accept queue");
                             listener.accept_queue.push_back(*half_open);
                             false
                         }
-                        tcp::State::CloseWait | tcp::State::Listen => {
+                        tcp::State::Listen => {
                             // Closing a socket that moved back to LISTEN ensures there's only a
                             // single LISTEN socket at a time for a specific endpoint; dropping the
                             // socket handle doesn't remove the socket from the socket set, meaning
@@ -131,7 +138,7 @@ impl Netstack {
                             // socket. However, this function does not move the socket through the
                             // accept loop and surface data to callers, as it has no handle to the
                             // socket in its queues.
-                            tracing::trace!("half-open socket moved to {state}, closing");
+                            tracing::trace!("half-open socket moved to LISTEN, closing");
                             sock.close();
                             self.pending_tcp_closes.push(*half_open);
                             if self.pending_tcp_closes.len() > 10000 {
@@ -146,8 +153,8 @@ impl Netstack {
                     }
                 });
 
-                // De-queue a single socket in the `ESTABLISHED` state from the `accept_queue` and
-                // return it to become a `TcpStream`.
+                // De-queue a single socket in the ESTABLISHED/CLOSE_WAIT state from the accept
+                // queue and return it to become a TcpStream.
                 while let Some(accept) = listener.accept_queue.pop_front() {
                     let sock = self.socket_set.get_mut::<tcp::Socket>(accept);
                     let state = sock.state();
@@ -161,22 +168,15 @@ impl Netstack {
                     )
                     .entered();
 
-                    match state {
-                        tcp::State::Established => {
-                            tracing::trace!("accept socket accepted, returning")
-                        }
-                        tcp::State::CloseWait => {
-                            tracing::trace!(?state, "accept socket no longer established, closing");
-                            sock.close();
-                            self.pending_tcp_closes.push(accept);
-                            continue;
-                        }
-                        _ => {
-                            tracing::warn!(?state, "accept socket in unexpected state, dropping");
-                            continue;
-                        }
+                    if ![tcp::State::Established, tcp::State::CloseWait].contains(&state) {
+                        // TODO (dylan): should we try closing these sockets? dropping the handles
+                        //               leaves them in the socket_set and has previously caused
+                        //               problems in the half-open handling above.
+                        tracing::warn!(?state, "accept socket in unexpected state, dropping");
+                        continue;
                     }
 
+                    tracing::trace!("accept socket accepted, returning");
                     let remote = sock.remote_endpoint().unwrap();
                     return TcpListenResponse::Accepted {
                         handle: accept,
@@ -254,7 +254,7 @@ impl Netstack {
                         .push_back(listener.current_socket_handle);
                 }
 
-                tcp::State::Established => {
+                tcp::State::Established | tcp::State::CloseWait => {
                     tracing::trace!("connection established");
                     listener
                         .accept_queue
