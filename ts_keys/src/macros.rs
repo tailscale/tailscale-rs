@@ -265,6 +265,54 @@ macro_rules! create_x25519_keypair_types {
                 }
             }
         }
+
+        impl From<$keypair_name> for ::x25519_dalek::PublicKey {
+            fn from(v: $keypair_name) -> Self {
+                v.public.into()
+            }
+        }
+
+        impl From<&$keypair_name> for ::x25519_dalek::PublicKey {
+            fn from(v: &$keypair_name) -> Self {
+                v.public.into()
+            }
+        }
+
+        impl From<$keypair_name> for ::crypto_box::PublicKey {
+            fn from(v: $keypair_name) -> Self {
+                v.public.into()
+            }
+        }
+
+        impl From<&$keypair_name> for ::crypto_box::PublicKey {
+            fn from(v: &$keypair_name) -> Self {
+                v.public.into()
+            }
+        }
+
+        impl From<$keypair_name> for ::x25519_dalek::StaticSecret {
+            fn from(v: $keypair_name) -> Self {
+                v.private.into()
+            }
+        }
+
+        impl From<&$keypair_name> for ::x25519_dalek::StaticSecret {
+            fn from(v: &$keypair_name) -> Self {
+                (&v.private).into()
+            }
+        }
+
+        impl From<$keypair_name> for ::crypto_box::SecretKey {
+            fn from(v: $keypair_name) -> Self {
+                v.private.into()
+            }
+        }
+
+        impl From<&$keypair_name> for ::crypto_box::SecretKey {
+            fn from(v: &$keypair_name) -> Self {
+                (&v.private).into()
+            }
+        }
     }
 }
 
