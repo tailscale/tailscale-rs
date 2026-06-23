@@ -23,6 +23,11 @@ pub struct Stunner {
 impl Stunner {
     #[tracing::instrument(skip_all, fields(n_server = self.servers.len()), level = "trace")]
     async fn try_stun(&self) {
+        if self.servers.is_empty() {
+            tracing::debug!("skipping stun, servers not populated yet");
+            return;
+        }
+
         for &server in &self.servers {
             if let Ok(Ok((_dur, x))) =
                 tokio::time::timeout(Duration::from_secs(3), self.stun.measure(server)).await
@@ -55,8 +60,8 @@ pub struct StunAddress {
 struct Tick;
 
 impl kameo::Actor for Stunner {
-    type Error = crate::Error;
     type Args = Env;
+    type Error = crate::Error;
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         // panicking in on_start is fine, this is checked as part of Runtime::spawn
