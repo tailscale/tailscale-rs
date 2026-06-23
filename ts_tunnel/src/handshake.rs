@@ -36,8 +36,11 @@ impl ReceivedHandshake {
             return None;
         };
 
-        let (noise, timestamp) =
-            ikpsk2::ReceivedHandshake::new(&mut pkt.noise, PROLOGUE, my_static.private.into())?;
+        let (noise, timestamp) = ikpsk2::ReceivedHandshake::new(
+            &mut pkt.noise,
+            PROLOGUE,
+            my_static.private.clone().into(), // TODO: pass by ref
+        )?;
 
         Some(ReceivedHandshake {
             send_id: pkt.sender_id,
@@ -274,8 +277,12 @@ mod tests {
         let a_mac_recv = MACReceiver::new(&a_static.public);
         let a_session = SessionId::random(); // A wants to receive at this ID
         let a_init_time = TAI64N::now();
-        let (a_handshake, init_pkt) =
-            initiate_handshake(a_static.private, b_static.public, a_session, a_init_time);
+        let (a_handshake, init_pkt) = initiate_handshake(
+            a_static.private.clone(),
+            b_static.public,
+            a_session,
+            a_init_time,
+        );
 
         let mut init_pkt = PacketMut::from(init_pkt.as_bytes());
         let handshake_mac = a_mac_send.write_macs(init_pkt.as_mut());

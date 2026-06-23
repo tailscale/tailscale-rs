@@ -166,11 +166,12 @@ pub async fn connect(
         CapabilityVersion::CURRENT,
     );
 
+    // TODO: pass key by ref
     let conn = upgrade_ts2021(
         control_url,
         &init_msg,
         handshake,
-        machine_keys.private,
+        machine_keys.private.clone(),
         h1_client,
     )
     .await?;

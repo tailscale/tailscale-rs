@@ -67,7 +67,7 @@ impl kameo::Actor for DataplaneActor {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         let dataplane = Arc::new(ts_dataplane::async_tokio::DataPlane::new(
-            env.keys.node_keys,
+            env.keys.node_keys.clone(),
         ));
 
         env.subscribe::<PeerRouteUpdate>(&slf).await?;

@@ -34,9 +34,10 @@ macro_rules! impl_to_from {
                 key(value.into())
             }
         }
+
         impl From<&$key> for key {
             fn from(value: &$key) -> Self {
-                key((*value).into())
+                key(value.into())
             }
         }
     };

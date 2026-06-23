@@ -66,7 +66,7 @@ impl Multiderp {
         }
 
         let region = region.clone();
-        let keys = self.env.keys.node_keys;
+        let keys = self.env.keys.node_keys.clone();
 
         let (transport_id, mut up, down) = match self.dataplane.ask(NewUnderlayTransport).await {
             Ok(val) => val,
@@ -92,7 +92,7 @@ impl Multiderp {
                     ret = run_derp_once(
                         id,
                         &region,
-                        keys,
+                        keys.clone(),
                         &down,
                         &mut up,
                         &mut home_derp_rx,
