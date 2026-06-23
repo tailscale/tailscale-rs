@@ -4,7 +4,7 @@
 macro_rules! _create_x25519_base_key_type {
     ($(#[$attr:meta])* $key_name:ident, $key_prefix:literal) => {
         $(#[$attr])*
-        #[derive(Clone, Copy, Eq, PartialEq, ::zerocopy::FromBytes, ::zerocopy::Immutable, ::zerocopy::IntoBytes, ::zerocopy::KnownLayout)]
+        #[derive(Clone, Eq, PartialEq, ::zerocopy::FromBytes, ::zerocopy::Immutable, ::zerocopy::IntoBytes, ::zerocopy::KnownLayout)]
         pub struct $key_name(
             [u8; $key_name::KEY_LEN_BYTES]
         );
@@ -97,6 +97,12 @@ macro_rules! _create_x25519_base_key_type {
             }
         }
 
+        impl From<&$key_name> for [u8; $key_name::KEY_LEN_BYTES] {
+            fn from(v: &$key_name) -> [u8; $key_name::KEY_LEN_BYTES] {
+                v.0
+            }
+        }
+
         #[cfg(feature = "serde")]
         impl<'de> ::serde::Deserialize<'de> for $key_name {
             fn deserialize<D>(deserializer: D) -> ::core::result::Result<$key_name, D::Error> where D: ::serde::Deserializer<'de> {
@@ -136,7 +142,7 @@ macro_rules! _create_x25519_base_key_type {
 /// Generates a struct that implements all the fields/methods needed by X25519 public keys.
 macro_rules! create_x25519_public_key_type {
     ($(#[$attr:meta])* $public_name:ident, $key_prefix:literal) => {
-        _create_x25519_base_key_type!($(#[$attr])* #[derive(Default, Hash, PartialOrd, Ord)] $public_name, $key_prefix);
+        _create_x25519_base_key_type!($(#[$attr])* #[derive(Copy, Default, Hash, PartialOrd, Ord)] $public_name, $key_prefix);
 
         impl From<$public_name> for ::x25519_dalek::PublicKey {
             fn from(v: $public_name) -> Self {
@@ -176,7 +182,7 @@ macro_rules! create_x25519_private_key_type {
             }
 
             /// Calculate the corresponding public key for this private key.
-            pub fn public_key(self) -> $public_name {
+            pub fn public_key(&self) -> $public_name {
                 ::crypto_box::SecretKey::from(self).public_key().to_bytes().into()
             }
         }
@@ -224,7 +230,7 @@ macro_rules! create_x25519_keypair_types {
 
         $(#[$pair_attr])*
         #[cfg_attr(feature = "serde", derive(::serde::Deserialize, ::serde::Serialize))]
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, ::zerocopy::FromBytes, ::zerocopy::Immutable, ::zerocopy::IntoBytes, ::zerocopy::KnownLayout)]
+        #[derive(Clone, Debug, Eq, PartialEq, ::zerocopy::FromBytes, ::zerocopy::Immutable, ::zerocopy::IntoBytes, ::zerocopy::KnownLayout)]
         pub struct $keypair_name {
             /// This keypair's public key.
             pub public: $public_name,
@@ -236,9 +242,10 @@ macro_rules! create_x25519_keypair_types {
             /// Generate a new X25519 public/private key pair.
             pub fn new() -> Self {
                 let private = $private_name::random();
+                let public = private.public_key();
                 Self {
                     private,
-                    public: private.into(),
+                    public,
                 }
             }
         }
@@ -251,9 +258,10 @@ macro_rules! create_x25519_keypair_types {
 
         impl From<$private_name> for $keypair_name {
             fn from(private: $private_name) -> Self {
+                let public = private.public_key();
                 Self {
                     private,
-                    public: private.into(),
+                    public,
                 }
             }
         }

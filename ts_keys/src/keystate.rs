@@ -25,9 +25,9 @@ pub struct PersistState {
 impl From<&NodeState> for PersistState {
     fn from(value: &NodeState) -> Self {
         Self {
-            node_key: value.node_keys.private,
-            machine_key: value.machine_keys.private,
-            network_lock_key: value.network_lock_keys.private,
+            node_key: value.node_keys.private.clone(),
+            machine_key: value.machine_keys.private.clone(),
+            network_lock_key: value.network_lock_keys.private.clone(),
         }
     }
 }
@@ -95,9 +95,9 @@ impl From<&PersistState> for NodeState {
     fn from(value: &PersistState) -> Self {
         Self {
             disco_keys: Default::default(),
-            node_keys: value.node_key.into(),
-            machine_keys: value.machine_key.into(),
-            network_lock_keys: value.network_lock_key.into(),
+            node_keys: value.node_key.clone().into(),
+            machine_keys: value.machine_key.clone().into(),
+            network_lock_keys: value.network_lock_key.clone().into(),
         }
     }
 }

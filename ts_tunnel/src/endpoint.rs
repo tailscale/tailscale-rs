@@ -515,7 +515,7 @@ impl Peer {
         // TODO most of this logic might be better in the `handshake` module.
         let session_id = endpoint.ids.allocate_session(self.id);
         let (handshake, packet) = initiate_handshake(
-            endpoint.my_key.private,
+            endpoint.my_key.private.clone(), // TODO: pass by ref
             self.config.key,
             session_id,
             endpoint.timestamps.now(),
@@ -555,10 +555,11 @@ struct EndpointState {
 impl Endpoint {
     /// Construct a new endpoint with the given keypair.
     pub fn new(my_key: NodeKeyPair) -> Self {
+        let my_cookie = MACReceiver::new(&my_key.public);
         Self {
             state: EndpointState {
                 my_key,
-                my_cookie: MACReceiver::new(&my_key.public),
+                my_cookie,
                 ids: Default::default(),
                 timestamps: Default::default(),
                 scheduler: Default::default(),
@@ -822,7 +823,10 @@ mod tests {
         let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
         let psk = rand::random();
 
-        let (mut a_ep, mut b_ep) = (Endpoint::new(a_static), Endpoint::new(b_static));
+        let (mut a_ep, mut b_ep) = (
+            Endpoint::new(a_static.clone()),
+            Endpoint::new(b_static.clone()),
+        );
 
         let a_peer = PeerId(1);
         let b_peer = PeerId(1);
