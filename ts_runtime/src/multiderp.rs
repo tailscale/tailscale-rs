@@ -92,7 +92,7 @@ impl Multiderp {
                     ret = run_derp_once(
                         id,
                         &region,
-                        keys.clone(),
+                        &keys,
                         &down,
                         &mut up,
                         &mut home_derp_rx,
@@ -160,7 +160,7 @@ impl ts_transport::PeerLookup<NodePublicKey, PeerId> for PeerDbLookup<'_> {
 async fn run_derp_once(
     id: RegionId,
     region: &DerpRegion,
-    keys: NodeKeyPair,
+    keys: &NodeKeyPair,
     to_dataplane: &UnderlayToDataplane,
     from_dataplane: &mut UnderlayFromDataplane,
     home_derp_rx: &mut watch::Receiver<bool>,
@@ -189,7 +189,7 @@ async fn run_derp_once(
 
         tracing::trace!("establishing derp connection");
 
-        let client = ts_derp::DefaultClient::connect(&region.servers, &keys).await?;
+        let client = ts_derp::DefaultClient::connect(&region.servers, keys).await?;
         let transport = client.with_key_lookup(PeerDbLookup(peer_db));
 
         if let Some(pending) = pending {
