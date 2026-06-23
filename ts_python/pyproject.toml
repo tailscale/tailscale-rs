@@ -29,9 +29,18 @@ Repository = "https://github.com/tailscale/tailscale-rs"
 requires = ["maturin>=1.13.1,<2.0"]
 build-backend = "maturin"
 
+[project.optional-dependencies]
+dev = [
+    "maturin>=1.13.1,<2.0"
+]
+
 [tool.maturin]
 python-source = "python"
 module-name = "tailscale._internal"
+
+[tool.uv]
+# Rebuild/reinstall on a "uv sync" if the Rust source changed.
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
 
 [[tool.uv.index]]
 name = "pypi"

@@ -13,7 +13,7 @@ pub struct Keystate {
 #[pyo3::pymethods]
 impl Keystate {
     #[new]
-    #[pyo3(signature = (machine=None, node=None, network_lock=None))]
+    #[pyo3(signature = (machine: "bytes | None" = None, node: "bytes | None" = None, network_lock: "bytes | None" = None))]
     pub fn new(
         machine: Option<Vec<u8>>,
         node: Option<Vec<u8>>,

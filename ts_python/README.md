@@ -47,20 +47,62 @@ The easiest way to get the library is through PyPI:
 $ pip install tailscale-py
 ```
 
-### In development
+## Developing
 
-If you want to use the module from within this repo, you'll need to build it. The best way to do
-that is with [`maturin`](https://www.maturin.rs/):
+This package uses [`uv`](). All other tooling (`maturin`, `ruff`, etc.) is managed by `uv`.
+
+### Setup
+
+1. Install an appropriate Rust toolchain for your platform. [See here](../README.md#msrv-and-edition)
+   for supported toolchain versions.
+2. [Install `uv`](https://docs.astral.sh/uv/getting-started/installation/).
+3. Clone the `tailscale-rs` repository.
+4. Create, activate, and populate a virtual environment for `ts_python` development:
 
 ```sh
-# In the project where you want to use the tailscale bindings:
-$ python -m virtualenv .venv
-$ . .venv/bin/activate
-$ pip install maturin
+# At the root of your tailscale-rs checkout:
+~/tailscale-rs $ cd ts_python
 
-# Then in tailscale-rs:
-$ cd ~/tailscale-rs/ts_python # use your path to a local clone of tailscale-rs
-$ maturin develop             # build and install python bindings into your virtualenv
+# Create a virtual environment for ts_python development.
+~/tailscale-rs/ts_python $ uv venv
+...
+Activate with: source .venv/bin/activate
 
-$ python -c 'import tailscale' && echo "ready!" # bindings are available!
+# Activate the new virtual environment.
+~/tailscale-rs/ts_python $ source .venv/bin/activate
+
+# Install dependencies, including optional dev dependencies such as maturin.
+(ts_python) ~/tailscale-rs/ts_python $ uv sync --extra dev
+...
 ```
+
+### Formatting
+
+We use `ruff` (via `uv`) to format the Python in our codebase:
+
+```sh
+~/tailscale-rs/ts_python $ uv format --preview-features format
+...
+4 files reformatted
+```
+
+### Generating Type Stubs
+
+The type stubs in `ts_python/python/tailscale/_internal.pyi` need to be generated any time the Rust
+source code (in `ts_python/src/`) changes. To re-generate the stubs:
+
+```sh
+# Make sure ts_python is built/up-to-date and maturin is installed.
+~/tailscale-rs/ts_python $ uv sync --extra dev
+...
+~/tailscale-rs/ts_python $ maturin generate-stubs --out python/tailscale
+🍹 Building a mixed python/rust project
+...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.09s
+
+# The stubs are typically not properly formatted, so format them.
+~/tailscale-rs/ts_python $ uv format --preview-features format
+```
+
+Currently, you need to **manually check the generated type stubs** and add any missing imports by
+hand.

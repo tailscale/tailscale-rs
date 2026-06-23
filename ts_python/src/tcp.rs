@@ -22,6 +22,8 @@ impl TcpListener {
     /// Accept a new incoming connection.
     ///
     /// Blocks indefinitely until a connection is ready to be accepted.
+    #[pyo3(signature = () -> "Awaitable[TcpStream]")]
+
     pub fn accept<'p>(&self, py: Python<'p>) -> PyFut<'p> {
         let sock = Arc::clone(&self.listener);
 
@@ -35,6 +37,8 @@ impl TcpListener {
     }
 
     /// Get the local endpoint this TCP listener is listening on.
+    #[pyo3(signature = () -> "tuple[IPv4Address | IPv6Address, int]")]
+
     pub fn local_addr(&self) -> (IpAddr, u16) {
         sockaddr_as_tuple(self.listener.local_addr())
     }
@@ -49,6 +53,7 @@ impl TcpStream {
     /// Send bytes to the stream, returning the number of bytes transmitted.
     ///
     /// Always sends at least one byte if not an error.
+    #[pyo3(signature = (msg: "bytes") -> "Awaitable[int]")]
     pub fn send<'p>(&self, py: Python<'p>, msg: &[u8]) -> PyFut<'p> {
         let sock = Arc::clone(&self.sock);
         let msg = msg.to_vec();
@@ -63,6 +68,7 @@ impl TcpStream {
     /// Receive bytes from the stream.
     ///
     /// Always returns at least one byte if not an error.
+    #[pyo3(signature = () -> "Awaitable[bytes]")]
     pub fn recv<'p>(&self, py: Python<'p>) -> PyFut<'p> {
         let sock = Arc::clone(&self.sock);
 
@@ -74,11 +80,13 @@ impl TcpStream {
     }
 
     /// Get the local endpoint this socket is bound to.
+    #[pyo3(signature = () -> "tuple[IPv4Address | IPv6Address, int]")]
     pub fn local_addr(&self) -> (IpAddr, u16) {
         sockaddr_as_tuple(self.sock.local_addr())
     }
 
     /// Get the remote endpoint this socket is connected to.
+    #[pyo3(signature = () -> "tuple[IPv4Address | IPv6Address, int]")]
     pub fn remote_addr(&self) -> (IpAddr, u16) {
         sockaddr_as_tuple(self.sock.remote_addr())
     }

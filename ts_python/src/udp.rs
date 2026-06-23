@@ -18,6 +18,7 @@ impl UdpSocket {
     ///
     /// The address argument is currently expected to adopt the 2-tuple form (host, port),
     /// where host is strictly an IP address -- DNS lookup is not yet supported.
+    #[pyo3(signature = (addr: "tuple[IPv4Address | IPv6Address | str, int]", msg: "bytes") -> "Awaitable[None]")]
     pub fn sendto<'p>(&self, py: Python<'p>, addr: (IpRepr, u16), msg: &[u8]) -> PyFut<'p> {
         let (ip, port) = addr;
 
@@ -40,6 +41,7 @@ impl UdpSocket {
     /// Receive a datagram from the socket.
     ///
     /// Returns a tuple `(bytes, address)`, e.g. `(b"hello", ("127.0.0.1", 1234))`.
+    #[pyo3(signature = () -> "Awaitable[tuple[bytes, tuple[IPv4Address | IPv6Address | str, int]]]")]
     pub fn recvfrom<'p>(&self, py: Python<'p>) -> PyFut<'p> {
         let sock = self.sock.clone();
 
@@ -51,6 +53,7 @@ impl UdpSocket {
     }
 
     /// Get the local endpoint this socket is bound to.
+    #[pyo3(signature = () -> "tuple[IPv4Address | IPv6Address, int]")]
     pub fn local_addr(&self) -> (IpAddr, u16) {
         sockaddr_as_tuple(self.sock.local_addr())
     }
