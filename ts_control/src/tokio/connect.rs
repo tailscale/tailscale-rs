@@ -166,12 +166,11 @@ pub async fn connect(
         CapabilityVersion::CURRENT,
     );
 
-    // TODO: pass key by ref
     let conn = upgrade_ts2021(
         control_url,
         &init_msg,
         handshake,
-        machine_keys.private.clone(),
+        &machine_keys.private,
         h1_client,
     )
     .await?;
@@ -234,7 +233,7 @@ pub async fn upgrade_ts2021(
     control_url: &Url,
     init_msg: &str,
     handshake: ts_control_noise::Handshake,
-    machine_private_key: MachinePrivateKey,
+    machine_private_key: &MachinePrivateKey,
     h1_client: impl ts_http_util::Client<EmptyBody>,
 ) -> Result<impl AsyncRead + AsyncWrite + Unpin + 'static, ConnectionError> {
     let ts2021_url = control_url.join("/ts2021")?;
@@ -260,7 +259,7 @@ pub async fn upgrade_ts2021(
         ConnectionError::Internal(InternalErrorKind::Http)
     })?;
 
-    let conn = handshake.complete(upgraded, &machine_private_key).await?;
+    let conn = handshake.complete(upgraded, machine_private_key).await?;
 
     tracing::debug!("upgraded control connection from HTTP/1.1 to TS2021");
 
