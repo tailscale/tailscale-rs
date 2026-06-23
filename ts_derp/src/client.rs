@@ -236,8 +236,7 @@ fn make_clientinfo(
     node_keypair: &NodeKeyPair,
     server_key: &ts_keys::DerpServerPublicKey,
 ) -> Result<(ClientInfo, Vec<u8>), Error> {
-    // TODO: nicer way to handle reference gore around keypair?
-    let cbox = crypto_box::SalsaBox::new(&server_key.into(), &(&node_keypair.private).into());
+    let cbox = crypto_box::SalsaBox::new(&server_key.into(), &node_keypair.into());
     let nonce = crypto_box::SalsaBox::generate_nonce(&mut OsRng);
 
     let json = serde_json::to_vec(&frame::ClientInfoPayload {
@@ -267,7 +266,7 @@ fn decrypt_server_info(
 ) -> Result<frame::ServerInfoPayload, Error> {
     let mut payload = PacketMut::from(payload);
 
-    let mut cbox = crypto_box::SalsaBox::new(&sk.key.into(), &(&node_keypair.private).into());
+    let mut cbox = crypto_box::SalsaBox::new(&sk.key.into(), &node_keypair.into());
     cbox.decrypt_in_place(&server_info.nonce.into(), &[], &mut payload)
         .map_err(|e| frame::Error::DecryptionFailed(format!("err: {e}")))?;
 
