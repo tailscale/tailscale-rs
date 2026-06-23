@@ -36,11 +36,8 @@ impl ReceivedHandshake {
             return None;
         };
 
-        let (noise, timestamp) = ikpsk2::ReceivedHandshake::new(
-            &mut pkt.noise,
-            PROLOGUE,
-            my_static.private.clone().into(), // TODO: pass by ref
-        )?;
+        let (noise, timestamp) =
+            ikpsk2::ReceivedHandshake::new(&mut pkt.noise, PROLOGUE, my_static.into())?;
 
         Some(ReceivedHandshake {
             send_id: pkt.sender_id,
