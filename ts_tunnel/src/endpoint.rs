@@ -515,8 +515,8 @@ impl Peer {
         // TODO most of this logic might be better in the `handshake` module.
         let session_id = endpoint.ids.allocate_session(self.id);
         let (handshake, packet) = initiate_handshake(
-            endpoint.my_key.private.clone(), // TODO: pass by ref
-            self.config.key,
+            &endpoint.my_key.private,
+            &self.config.key,
             session_id,
             endpoint.timestamps.now(),
         );

@@ -81,8 +81,8 @@ impl ReceivedHandshake {
 
 /// Generate a handshake initiation message for a peer.
 pub fn initiate_handshake(
-    endpoint_static: NodePrivateKey,
-    peer_static: NodePublicKey,
+    endpoint_static: &NodePrivateKey,
+    peer_static: &NodePublicKey,
     session_id: SessionId,
     timestamp: TAI64N,
 ) -> (SentHandshake, HandshakeInitiation) {
@@ -277,12 +277,8 @@ mod tests {
         let a_mac_recv = MACReceiver::new(&a_static.public);
         let a_session = SessionId::random(); // A wants to receive at this ID
         let a_init_time = TAI64N::now();
-        let (a_handshake, init_pkt) = initiate_handshake(
-            a_static.private.clone(),
-            b_static.public,
-            a_session,
-            a_init_time,
-        );
+        let (a_handshake, init_pkt) =
+            initiate_handshake(&a_static.private, &b_static.public, a_session, a_init_time);
 
         let mut init_pkt = PacketMut::from(init_pkt.as_bytes());
         let handshake_mac = a_mac_send.write_macs(init_pkt.as_mut());
