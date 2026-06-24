@@ -4,17 +4,14 @@ use kameo::{
     actor::{ActorRef, Spawn},
     message::Message,
 };
-use kameo_actors::{
-    message_bus::{MessageBus, Publish, Register},
-    scheduler::Scheduler,
-};
+use kameo_actors::scheduler::Scheduler;
 use tokio::sync::watch;
 
-use crate::{Error, error::ResultExt};
+use crate::{Error, error::ResultExt, retained_bus::RetainedBus};
 
 #[derive(Clone)]
 pub struct Env {
-    pub bus: ActorRef<MessageBus>,
+    pub bus: ActorRef<RetainedBus>,
     pub scheduler: ActorRef<Scheduler>,
 
     pub keys: Arc<ts_keys::NodeState>,
@@ -33,7 +30,7 @@ pub struct Env {
 impl Env {
     pub fn new(keys: ts_keys::NodeState, shutdown: watch::Receiver<bool>) -> Self {
         Self {
-            bus: MessageBus::spawn_default(),
+            bus: RetainedBus::spawn_default(),
             scheduler: Scheduler::spawn_default(),
             keys: Arc::new(keys),
             shutdown,
@@ -45,7 +42,7 @@ impl Env {
         M: Clone + Send + 'static,
     {
         self.bus
-            .tell(Register(slf.clone().recipient::<M>()))
+            .tell(crate::retained_bus::Register(slf.clone().recipient::<M>()))
             .await
             .with_actor_info(&self.bus)?;
 
@@ -57,7 +54,19 @@ impl Env {
         M: Clone + Send + 'static,
     {
         self.bus
-            .tell(Publish(msg))
+            .tell(crate::retained_bus::Publish::retained(msg))
+            .await
+            .with_actor_info(&self.bus)?;
+
+        Ok(())
+    }
+
+    pub async fn publish_noretain<M>(&self, msg: M) -> Result<(), Error>
+    where
+        M: Clone + Send + 'static,
+    {
+        self.bus
+            .tell(crate::retained_bus::Publish::unretained(msg))
             .await
             .with_actor_info(&self.bus)?;
 
