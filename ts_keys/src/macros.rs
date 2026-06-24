@@ -266,6 +266,24 @@ macro_rules! create_x25519_keypair_types {
             }
         }
 
+        impl From<$keypair_name> for X25519KeyPair {
+            fn from(v: $keypair_name) -> Self {
+                X25519KeyPair{
+                    public: v.public.into(),
+                    private: v.private.into(),
+                }
+            }
+        }
+
+        impl From<&$keypair_name> for X25519KeyPair {
+            fn from(v: &$keypair_name) -> Self {
+                X25519KeyPair{
+                    public: (&v.public).into(),
+                    private: (&v.private).into(),
+                }
+            }
+        }
+
         impl From<$keypair_name> for ::x25519_dalek::PublicKey {
             fn from(v: $keypair_name) -> Self {
                 v.public.into()
