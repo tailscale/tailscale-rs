@@ -71,8 +71,8 @@ Activate with: source .venv/bin/activate
 # Activate the new virtual environment.
 ~/tailscale-rs/ts_python $ source .venv/bin/activate
 
-# Install dependencies, including optional dev dependencies such as maturin.
-(ts_python) ~/tailscale-rs/ts_python $ uv sync --extra dev
+# Install runtime and dev dependencies (for generating type stubs, testing, etc.).
+(ts_python) ~/tailscale-rs/ts_python $ uv sync --dev
 ...
 ```
 
@@ -93,7 +93,7 @@ source code (in `ts_python/src/`) changes. To re-generate the stubs:
 
 ```sh
 # Make sure ts_python is built/up-to-date and maturin is installed.
-~/tailscale-rs/ts_python $ uv sync --extra dev
+~/tailscale-rs/ts_python $ uv sync --dev
 ...
 ~/tailscale-rs/ts_python $ maturin generate-stubs --out python/tailscale
 🍹 Building a mixed python/rust project

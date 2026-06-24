@@ -29,8 +29,9 @@ Repository = "https://github.com/tailscale/tailscale-rs"
 requires = ["maturin>=1.13.1,<2.0"]
 build-backend = "maturin"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
+    # Install maturin as a dev dependency for generating type stubs.
     "maturin>=1.13.1,<2.0"
 ]
 

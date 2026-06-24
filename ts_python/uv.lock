@@ -28,11 +28,12 @@ name = "tailscale-py"
 version = "0.3.3"
 source = { editable = "." }
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "maturin" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "maturin", marker = "extra == 'dev'", specifier = ">=1.13.1,<2.0" }]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "maturin", specifier = ">=1.13.1,<2.0" }]
