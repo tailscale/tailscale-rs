@@ -42,6 +42,8 @@ module-name = "tailscale._internal"
 [tool.uv]
 # Rebuild/reinstall on a "uv sync" if the Rust source changed.
 cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
+# Don't require '--preview-features format' on 'uv format'.
+preview-features = ["format"]
 
 [[tool.uv.index]]
 name = "pypi"

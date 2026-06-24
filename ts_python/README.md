@@ -78,10 +78,10 @@ Activate with: source .venv/bin/activate
 
 ### Formatting
 
-We use `ruff` (via `uv`) to format the Python in our codebase:
+We use `ruff` (via `uv`'s preview feature) to format Python code:
 
 ```sh
-~/tailscale-rs/ts_python $ uv format --preview-features format
+~/tailscale-rs/ts_python $ uv format
 ...
 4 files reformatted
 ```
@@ -100,8 +100,8 @@ source code (in `ts_python/src/`) changes. To re-generate the stubs:
 ...
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.09s
 
-# The stubs are typically not properly formatted, so format them.
-~/tailscale-rs/ts_python $ uv format --preview-features format
+# The stubs are not properly formatted.
+~/tailscale-rs/ts_python $ uv format
 ```
 
 Currently, you need to **manually check the generated type stubs** and add any missing imports by
