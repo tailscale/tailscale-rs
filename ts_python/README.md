@@ -49,7 +49,8 @@ $ pip install tailscale-py
 
 ## Developing
 
-This package uses [`uv`](). All other tooling (`maturin`, `ruff`, etc.) is managed by `uv`.
+This package uses [`uv`](https://docs.astral.sh/uv/). All other tooling (`maturin`, `ruff`, etc.)
+is managed by `uv`.
 
 ### Setup
 
