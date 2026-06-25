@@ -233,7 +233,7 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
 
         if index.is_poisoned(storage.txn_id()) {
             Err(crate::Error::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::name(),
+                <Self::IndexDesc as TableDesc>::NAME,
             ))
         } else {
             Ok(())
@@ -253,7 +253,7 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         let index = <Self::IndexDesc as TableDesc>::get_table(&storage.tables);
         if index.is_poisoned(storage.txn_id()) {
             return Err(AccessError::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::name(),
+                <Self::IndexDesc as TableDesc>::NAME,
             ));
         }
         let base_key = index
@@ -281,7 +281,7 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         let index = <Self::IndexDesc>::get_table(&storage.tables);
         if index.is_poisoned(storage.txn_id()) {
             return Err(AccessError::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::name(),
+                <Self::IndexDesc as TableDesc>::NAME,
             ));
         }
         let base_key = index
@@ -529,7 +529,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         );
         if index.is_poisoned(txn_id) {
             return Err(AccessError::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::name(),
+                <Self::IndexDesc as TableDesc>::NAME,
             ));
         }
         base.assert_owner(owner);

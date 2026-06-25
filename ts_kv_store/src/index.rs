@@ -86,7 +86,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
 
     /// Get a row of the table from the store by cloning the value.
     ///
-    /// Returns `None` if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` if there is no value for the specified key.
     pub fn get<Q>(&self, key: &Q) -> AccessResult<BaseValue<D>>
     where
         BaseValue<D>: Clone,
@@ -99,7 +99,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
 
     /// Get immutable access to a row of the table in the store by reference.
     ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` (and does not call `f`) if there is no value for the specified key.
     pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseValue<D>) -> T) -> AccessResult<T>
     where
         D::Key: Borrow<Q>,
@@ -122,7 +122,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
 
     /// Get mutable access to a row of the table in the store in the store.
     ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` (and does not call `f`) if there is no value for the specified key.
     pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut BaseValue<D>) -> T) -> AccessResult<T>
     where
         D::Key: Borrow<Q>,
@@ -265,7 +265,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
 
     /// Get a row of the table from the store by cloning the value.
     ///
-    /// Returns `None` if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` if there is no value for the specified key.
     pub fn get<Q>(&self, key: &Q) -> AccessResult<BaseValue<D>>
     where
         BaseValue<D>: Clone,
@@ -278,7 +278,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
 
     /// Get immutable access to a row of the table in the store by reference.
     ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` (and does not call `f`) if there is no value for the specified key.
     pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseValue<D>) -> T) -> AccessResult<T>
     where
         D::Key: Borrow<Q>,
@@ -301,7 +301,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
 
     /// Get mutable access to a row of the table in the store in the store.
     ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` (and does not call `f`) if there is no value for the specified key.
     pub fn with_mut<Q, T>(
         &mut self,
         key: &Q,
@@ -412,7 +412,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
 
     /// Get a row of the table from the store by cloning the value.
     ///
-    /// Returns `None` if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` if there is no value for the specified key.
     pub fn get<Q>(&self, key: &Q) -> AccessResult<BaseValue<D>>
     where
         BaseValue<D>: Clone,
@@ -425,7 +425,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
 
     /// Get immutable access to a row of the table in the store by reference.
     ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    /// Returns `AccessError::NotPresent` (and does not call `f`) if there is no value for the specified key.
     pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseValue<D>) -> T) -> AccessResult<T>
     where
         D::Key: Borrow<Q>,
@@ -1894,6 +1894,36 @@ mod test_poison {
         assert!(index.check_consistent().is_ok());
         assert!(index.get("Alice").is_none());
         assert!(store.table::<Users>(OWNER).is_empty());
+    }
+
+    #[test]
+    fn txn_poison_against_committed_rolled_back() {
+        let store = KvStore::new();
+        // Commit Alice(1) first, so the "Alice" name-index entry is already committed.
+        store
+            .table::<Users>(OWNER)
+            .insert(1, row("Alice", "alice1@x.com"));
+
+        {
+            // This txn collides with the *already-committed* "Alice" index entry, so the index is
+            // poisoned without it ever being recorded as `modified` within the txn.
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+            // rollback on drop
+        }
+
+        // An unrelated, valid commit must succeed — the rolled-back poison must not leak into it.
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Users>().insert(3, row("Bob", "bob@x.com"));
+        txn.commit().unwrap();
+
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert!(
+            index.check_consistent().is_ok(),
+            "index should not be poisoned after the colliding txn was rolled back"
+        );
+        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
+        assert_eq!(index.get("Bob").unwrap(), row("Bob", "bob@x.com"));
     }
 
     #[test]

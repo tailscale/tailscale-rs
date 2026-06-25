@@ -66,6 +66,8 @@ pub trait MutSingleton: Singleton {
 ///
 /// Prefer to use the macros in this module rather than this trait directly.
 pub trait TableDesc: Sized + 'static {
+    /// The name of the table.
+    const NAME: &'static str;
     /// The type of the key.
     type Key: Hash + Eq + Clone;
     /// The type of the value.
@@ -75,8 +77,6 @@ pub trait TableDesc: Sized + 'static {
     /// The storage type for keeping this table's indexes.
     type Indexes: IndexStorage<Self::Key, Self::Value>;
 
-    /// Return the name of the table.
-    fn name() -> &'static str;
     /// Get a reference to the table in storage.
     fn get_table(storage: &Self::Storage) -> &Table<Self, Self::Indexes>;
     /// Get a mutable reference to the table in storage.
@@ -396,14 +396,12 @@ macro_rules! tables {
             pub struct $name;
 
             impl $crate::schema::TableDesc for $name {
+                const NAME: &'static str = stringify!($name);
                 type Key = $key_ty;
                 type Value = $value_ty;
                 type Storage = TableStorage;
                 type Indexes = index::$name::Indexes;
 
-                fn name() -> &'static str {
-                    stringify!($name)
-                }
                 fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::Indexes> {
                     &storage.$name
                 }
@@ -414,14 +412,12 @@ macro_rules! tables {
 
             $(
                 impl $crate::schema::TableDesc for index::$name::$field where $field_ty: Clone {
+                    const NAME: &'static str = stringify!($name by $field);
                     type Key = $field_ty;
                     type Value = $key_ty;
                     type Storage = TableStorage;
                     type Indexes = ();
 
-                    fn name() -> &'static str {
-                        stringify!($name by $field)
-                    }
                     fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::Indexes> {
                         &storage.$name.indexes.$field
                     }
@@ -572,15 +568,15 @@ macro_rules! on_insert_each {
     ) => {
         for index_key in index::$name::Indexes::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
-            $self
-                .$field
-                .insert(index_key, $key.to_owned(), $txn_id, $max_committed_id);
             assert!(
                 unique,
                 "Index key is non-unique for index `{}` of table `{}`",
-                stringify!($name),
                 stringify!($field),
+                stringify!($name),
             );
+            $self
+                .$field
+                .insert(index_key, $key.to_owned(), $txn_id, $max_committed_id);
         }
     };
     (

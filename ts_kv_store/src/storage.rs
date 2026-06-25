@@ -592,12 +592,13 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         self.poisoned.set(true, txn_id);
     }
 
-    pub fn is_poisoned(&self, txn_id: TxnId) -> bool {
+    pub(crate) fn is_poisoned(&self, txn_id: TxnId) -> bool {
         *self.poisoned.get(txn_id).unwrap_or(&false)
     }
 
     pub fn gc_txn(&mut self, txn_id: TxnId) {
         self.delete_mask = DeleteMask::None;
+        self.poisoned.gc_txn(txn_id);
 
         let Some(modified) = &self.modified else {
             return;
@@ -607,8 +608,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             modified.txn_id, txn_id,
             "Found mismatched modified set to GC"
         );
-
-        self.poisoned.gc_txn(txn_id);
 
         for k in &modified.keys {
             if let Some(value) = self.data.get_mut(k) {
@@ -637,7 +636,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         }
 
         if self.is_poisoned(txn_id) {
-            return Err(crate::Error::NonUniqueIndexKey(D::name()));
+            return Err(crate::Error::NonUniqueIndexKey(D::NAME));
         }
 
         match &self.delete_mask {
