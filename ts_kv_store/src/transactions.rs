@@ -237,16 +237,11 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     }
 
     /// Insert a single value into the store.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    // Question: do we need separate insert/update/upsert methods?
     pub fn insert<D: schema::Singleton>(&mut self, value: D::ArgValue) {
         <&mut Self as SingletonOpsMut<_>>::insert::<D>(self, value, self.owner)
     }
 
     /// Remove a single value from the store.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn remove<D: schema::Singleton>(&mut self) {
         <&mut Self as SingletonOpsMut<_>>::remove::<D>(self, self.owner)
     }
@@ -286,17 +281,6 @@ impl<'guard, D: TableDesc> TabularOpsMut<D::Storage> for &mut KvTableTransaction
 }
 
 impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
-    /// Initialize a table by setting its owner.
-    ///
-    /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specified in the first write.
-    ///
-    /// Returns an error (containing the current owner of the table) if the table has already been
-    /// initialized. In this case, the table will be in a consistent state and can be used as normal.
-    pub fn init(&mut self) -> Result<()> {
-        <&mut Self as TabularOpsMut<_>>::init(self, self.txn.owner)
-    }
-
     /// The number of key/value pairs in the table.
     pub fn len(&self) -> usize {
         <&Self as TabularOps<_>>::len(self)
@@ -307,7 +291,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
         <&Self as TabularOps<_>>::is_empty(self)
     }
 
-    /// Clear a table by removing all its KVs, but preserving ownership.
+    /// Clear a table by removing all its KVs.
     pub fn clear(&mut self) {
         <&mut Self as TabularOpsMut<_>>::clear(self, self.txn.owner)
     }
@@ -336,8 +320,6 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
     }
 
     /// Insert a value into the table.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn insert(&mut self, key: D::Key, value: D::Value)
     where
         D::Key: Clone,
@@ -358,8 +340,6 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
     }
 
     /// Remove a row from the table.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn remove<Q>(&mut self, key: &Q)
     where
         D::Key: Borrow<Q>,
@@ -566,12 +546,12 @@ impl<'guard, D: TableDesc> KvTableRoTransactional<'guard, '_, D> {
 mod test {
     use std::{any::Any, sync::Arc};
 
-    use crate::{Error, singleton, tables};
+    use crate::{singleton, tables};
 
-    singleton!(Count(u64));
-    singleton!(Shared(String as Arc));
+    singleton!(Count(u64; OWNER));
+    singleton!(Shared(String as Arc; OWNER));
 
-    tables!(Items(&'static str => String), Counters(u32 => u64));
+    tables!(Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER));
 
     const OWNER: &str = "owner";
     #[cfg(debug_assertions)]
@@ -771,24 +751,6 @@ mod test {
     }
 
     #[test]
-    fn txn_table_init_succeeds() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        let mut table = txn.table::<Items>();
-        assert!(table.init().is_ok());
-    }
-
-    #[test]
-    fn txn_table_init_second_call_err() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        let mut table = txn.table::<Items>();
-        table.init().unwrap();
-        let err = table.init().unwrap_err();
-        assert!(matches!(err, Error::AlreadyInit(o) if o == OWNER));
-    }
-
-    #[test]
     fn txn_table_get_returns_none_when_absent() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
@@ -832,7 +794,6 @@ mod test {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         let mut table = txn.table::<Items>();
-        table.init().unwrap();
         assert!(table.with_mut(&"missing", |v| v.len()).is_none());
     }
 
@@ -1002,7 +963,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn txn_table_insert_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table::<Items>().insert("k", "v".to_owned());
     }
@@ -1012,7 +972,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn txn_table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table::<Items>()
             .with_mut(&"k", |v: &mut String| v.len());
@@ -1023,7 +982,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn txn_table_remove_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table::<Items>().remove(&"k");
     }

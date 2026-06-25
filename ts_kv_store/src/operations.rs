@@ -351,18 +351,18 @@ pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
     fn insert<D: schema::Singleton>(self, value: D::ArgValue, owner: Owner) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
+        assert_owner::<D>(owner);
         let key = TypeId::of::<D>();
-        assert_owner(owner, key, storage);
 
         let txn_id = storage.txn_id();
-        storage.insert_singleton::<D>(key, owner, value, txn_id);
+        storage.insert_singleton::<D>(key, value, txn_id);
     }
 
     fn remove<D: schema::Singleton>(self, owner: Owner) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
         let key = TypeId::of::<D>();
-        assert_owner(owner, key, storage);
+        assert_owner::<D>(owner);
 
         let txn_id = storage.txn_id();
         storage.remove_singleton(key, txn_id);
@@ -374,13 +374,6 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
 {
     type TableDesc: TableDesc<Storage = TableStorage>;
 
-    fn init(self, owner: Owner) -> Result<()> {
-        let mut storage = self.write_lock();
-
-        let table = Self::TableDesc::get_table_mut(&mut storage.storage().tables);
-        table.try_set_owner(owner)
-    }
-
     fn clear(self, owner: Owner) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
@@ -388,7 +381,7 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         let max_committed_id = storage.max_committed_id();
 
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_or_set_owner(owner);
+        table.assert_owner(owner);
         table.clear(txn_id, max_committed_id);
     }
 
@@ -405,7 +398,7 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         let txn_id = storage.txn_id();
         let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_or_set_owner(owner);
+        table.assert_owner(owner);
 
         table.insert(key, value, txn_id, max_committed_id);
     }
@@ -470,13 +463,6 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
 {
     type IndexDesc: IndexDesc<Storage = TableStorage>;
 
-    fn init(self, owner: Owner) -> Result<()> {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
-        base.try_set_owner(owner)
-    }
-
     fn clear(self, owner: Owner)
     where
         IndexValue<Self::IndexDesc>: Hash + Eq,
@@ -487,7 +473,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         let max_committed_id = storage.max_committed_id();
 
         let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
-        base.assert_or_set_owner(owner);
+        base.assert_owner(owner);
         base.clear(txn_id, max_committed_id);
     }
 
@@ -501,7 +487,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         let txn_id = storage.txn_id();
         let max_committed_id = storage.max_committed_id();
         let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
-        base.assert_or_set_owner(owner);
+        base.assert_owner(owner);
 
         base.insert(key, value, txn_id, max_committed_id);
     }
@@ -598,12 +584,12 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
 
 #[allow(unused_variables)]
 #[track_caller]
-fn assert_owner(owner: Owner, key: TypeId, storage: &Storage<impl schema::GeneratedStorage>) {
+fn assert_owner<D: schema::Singleton>(owner: Owner) {
     #[cfg(debug_assertions)]
-    if let Some(prev_owner) = storage.get_singleton_owner(key) {
-        assert_eq!(
-            prev_owner, owner,
-            "Ownership violation: expected {prev_owner}, found {owner}"
-        );
-    }
+    assert_eq!(
+        D::OWNER,
+        owner,
+        "Ownership violation: expected {}, found {owner}",
+        D::OWNER,
+    );
 }

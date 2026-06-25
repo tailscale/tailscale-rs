@@ -50,17 +50,6 @@ impl<D: IndexDesc> IndexedOpsMut<D::Storage> for &KvTableIndex<'_, D> {
 }
 
 impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
-    /// Initialize the base table by setting its owner (indexes don't have an owner).
-    ///
-    /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specified in the first write.
-    ///
-    /// Returns an error (containing the current owner of the table) if the table has already been
-    /// initialized. In this case, the table will be in a consistent state and can be used as normal.
-    pub fn init(&self) -> Result<()> {
-        <&Self as IndexedOpsMut<_>>::init(self, self.owner)
-    }
-
     /// The number of key/value pairs in the base table.
     pub fn len(&self) -> usize {
         <&Self as IndexedOps<_>>::len(self)
@@ -76,7 +65,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         <&Self as IndexedOps<_>>::check_consistent(self)
     }
 
-    /// Clear the base table by removing all its KVs, but preserving ownership.
+    /// Clear the base table by removing all its KVs.
     pub fn clear(&self)
     where
         IndexValue<D>: Eq + Hash,
@@ -110,8 +99,6 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     }
 
     /// Insert a value into the table using the base table's key.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn insert(&self, key: BaseKey<D>, value: BaseValue<D>)
     where
         <<D as IndexDesc>::BaseTable as TableDesc>::Key: Clone,
@@ -135,8 +122,6 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     }
 
     /// Remove a row from the table.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn remove<Q>(&self, key: &Q)
     where
         D::Key: Borrow<Q>,
@@ -230,17 +215,6 @@ impl<'guard, 'txn, D: IndexDesc> IndexedOpsMut<D::Storage>
 }
 
 impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
-    /// Initialize the base table by setting its owner (indexes don't have an owner).
-    ///
-    /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specified in the first write.
-    ///
-    /// Returns an error (containing the current owner of the table) if the table has already been
-    /// initialized. In this case, the table will be in a consistent state and can be used as normal.
-    pub fn init(&mut self) -> Result<()> {
-        <&mut Self as IndexedOpsMut<_>>::init(self, self.txn.owner)
-    }
-
     /// The number of key/value pairs in the base table.
     pub fn len(&self) -> usize {
         <&Self as IndexedOps<_>>::len(self)
@@ -255,7 +229,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         <&Self as IndexedOps<_>>::check_consistent(self)
     }
 
-    /// Clear the base table by removing all its KVs, but preserving ownership.
+    /// Clear the base table by removing all its KVs.
     pub fn clear(&mut self)
     where
         IndexValue<D>: Eq + Hash,
@@ -289,8 +263,6 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Insert a value into the table using the base table's key.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn insert(&mut self, key: BaseKey<D>, value: BaseValue<D>)
     where
         BaseKey<D>: Clone,
@@ -318,8 +290,6 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Remove a row from the table.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn remove<Q>(&mut self, key: &Q)
     where
         D::Key: Borrow<Q>,
@@ -464,7 +434,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
 
 #[cfg(test)]
 mod test {
-    use crate::{AccessErrorExt, Error, tables};
+    use crate::{AccessErrorExt, tables};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -477,46 +447,10 @@ mod test {
         }
     }
 
-    tables!(Users(u32 => Row; index(name: String)));
+    tables!(Users(u32 => Row; OWNER; index(name: String)));
 
     const OWNER: &str = "owner";
     const OTHER: &str = "other";
-
-    #[test]
-    fn index_init_succeeds_on_fresh_table() {
-        let store = KvStore::new();
-        assert!(store.table_by::<index::Users::name>(OWNER).init().is_ok());
-    }
-
-    #[test]
-    fn index_init_second_call_returns_err() {
-        let store = KvStore::new();
-        store.table_by::<index::Users::name>(OWNER).init().unwrap();
-        let err = store
-            .table_by::<index::Users::name>(OWNER)
-            .init()
-            .unwrap_err();
-        assert!(matches!(err, Error::AlreadyInit(o) if o == OWNER));
-    }
-
-    #[test]
-    fn index_init_with_different_owner_returns_err() {
-        let store = KvStore::new();
-        store.table_by::<index::Users::name>(OWNER).init().unwrap();
-        let err = store
-            .table_by::<index::Users::name>(OTHER)
-            .init()
-            .unwrap_err();
-        assert!(matches!(err, Error::AlreadyInit(o) if o == OWNER));
-    }
-
-    #[test]
-    fn index_init_and_base_init_share_owner() {
-        let store = KvStore::new();
-        store.table_by::<index::Users::name>(OWNER).init().unwrap();
-        let err = store.table::<Users>(OWNER).init().unwrap_err();
-        assert!(matches!(err, Error::AlreadyInit(o) if o == OWNER));
-    }
 
     #[test]
     fn index_len_is_zero_on_fresh_store() {
@@ -924,7 +858,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn index_insert_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table_by::<index::Users::name>(OWNER).init().unwrap();
         store
             .table_by::<index::Users::name>(OTHER)
             .insert(1, row("Alice"));
@@ -935,7 +868,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn index_clear_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table_by::<index::Users::name>(OWNER).init().unwrap();
         store.table_by::<index::Users::name>(OTHER).clear();
     }
 }
@@ -957,7 +889,7 @@ mod test_two_indexes {
         }
     }
 
-    tables!(People(u32 => Person; index(email: String); index(username: Vec<u8>)));
+    tables!(People(u32 => Person; OWNER; index(email: String); index(username: Vec<u8>)));
 
     const OWNER: &str = "owner";
 
@@ -1264,7 +1196,7 @@ mod test_transactional_index {
         }
     }
 
-    tables!(Users(u32 => Row; index(name: String)));
+    tables!(Users(u32 => Row; OWNER; index(name: String)));
 
     const OWNER: &str = "owner";
     #[cfg(debug_assertions)]
@@ -1544,7 +1476,6 @@ mod test_transactional_index {
     #[should_panic(expected = "Ownership violation")]
     fn txn_index_insert_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
     }
@@ -1554,7 +1485,6 @@ mod test_transactional_index {
     #[should_panic(expected = "Ownership violation")]
     fn txn_index_clear_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table_by::<index::Users::name>().clear();
     }
@@ -1564,7 +1494,6 @@ mod test_transactional_index {
     #[should_panic(expected = "Ownership violation")]
     fn txn_index_for_each_mut_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).init().unwrap();
         let mut txn = store.begin_transaction(OTHER);
         txn.table_by::<index::Users::name>().for_each_mut(|_, _| {});
     }
@@ -1700,8 +1629,8 @@ mod test_poison {
     }
 
     tables!(
-        Users(u32 => Row; index(name: String); index(email: String)),
-        AssertingUsers(u32 => Row; index(name: String; assert_unique))
+        Users(u32 => Row; OWNER; index(name: String); index(email: String)),
+        AssertingUsers(u32 => Row; OWNER; index(name: String; assert_unique))
     );
 
     const OWNER: &str = "owner";

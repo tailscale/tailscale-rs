@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    Owner,
     storage::{SinValue, Table},
     transactions::TxnId,
 };
@@ -15,6 +16,9 @@ use crate::{
 ///
 /// Prefer to use the macros in this module rather than this trait directly.
 pub trait Singleton: 'static {
+    /// The datum's owner.
+    const OWNER: Owner;
+
     /// The type of the value.
     type Value: Any + Send + Sync;
     /// The type used to initialize and access the value. For values stored as `Arc`s this should be
@@ -68,6 +72,9 @@ pub trait MutSingleton: Singleton {
 pub trait TableDesc: Sized + 'static {
     /// The name of the table.
     const NAME: &'static str;
+    /// The table's owner.
+    const OWNER: Owner;
+
     /// The type of the key.
     type Key: Hash + Eq + Clone;
     /// The type of the value.
@@ -192,18 +199,20 @@ pub trait GeneratedStorage: Default {
 ///
 /// # Syntax:
 ///
-/// - `singleton!(u64)` to declare a value with type `u64` and inline storage.
-/// - `singleton!(ValueType as Box)` to declare a value with type `Box<ValueType>`.
-/// - `singleton!(ValueType as Arc)` to declare a value with type `Arc<ValueType>`.
-/// - `singleton!(ValueType as Ref)` to declare a value with type `&'static ValueType`.
+/// - `singleton!(u64; owner)` to declare a value with type `u64` and inline storage.
+/// - `singleton!(ValueType as Box; owner)` to declare a value with type `Box<ValueType>`.
+/// - `singleton!(ValueType as Arc; owner)` to declare a value with type `Arc<ValueType>`.
+/// - `singleton!(ValueType as Ref; owner)` to declare a value with type `&'static ValueType`.
 ///
 /// The storage class is separate to the value type since they have different representations in the
 /// store and slightly different APIs (e.g., whether mutable access is supported or access by cloning
 /// or copying a shared reference).
+///
+/// `owner` is an expression which evaluates to an `Owner` to specify the owner of the data.
 #[macro_export]
 macro_rules! singleton {
-    ($name:ident(u64)) => {
-        $crate::singleton_types!($name(u64, u64, U64));
+    ($name:ident(u64; $owner:expr)) => {
+        $crate::singleton_types!($name(u64, u64, U64), $owner);
 
         impl $crate::schema::MutSingleton for $name {
             fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
@@ -214,8 +223,8 @@ macro_rules! singleton {
             }
         }
     };
-    ($name:ident($value_ty:ty as Box)) => {
-        $crate::singleton_types!($name($value_ty, $value_ty, Box));
+    ($name:ident($value_ty:ty as Box; $owner:expr)) => {
+        $crate::singleton_types!($name($value_ty, $value_ty, Box), $owner);
 
         impl $crate::schema::MutSingleton for $name {
             fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
@@ -226,25 +235,26 @@ macro_rules! singleton {
             }
         }
     };
-    ($name:ident($value_ty:ty as Arc)) => {
-        $crate::singleton_types!($name($value_ty, std::sync::Arc<$value_ty>, Arc));
+    ($name:ident($value_ty:ty as Arc; $owner:expr)) => {
+        $crate::singleton_types!($name($value_ty, std::sync::Arc<$value_ty>, Arc), $owner);
 
         impl $crate::schema::ArcSingleton for $name {}
     };
-    ($name:ident($value_ty:ty as Ref)) => {
-        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref));
+    ($name:ident($value_ty:ty as Ref; $owner:expr)) => {
+        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref), $owner);
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! singleton_types {
-    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident)) => {
+    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident), $owner:expr) => {
         /// Describes a singleton in the KV store.
         #[allow(non_camel_case_types)]
         pub struct $name;
 
         impl $crate::schema::Singleton for $name {
+            const OWNER: $crate::Owner = $owner;
             type Value = $value_ty;
             type ArgValue = $arg_value_ty;
 
@@ -342,34 +352,41 @@ macro_rules! match_helper_rhs_mut {
 
 /// Declare the tables in a key/value store. Generates the store itself with the specified tables.
 ///
-/// The syntax is `tables!(Name(KeyType, ValueType indexes?),*)`, where `Name` is an identifier to name
-/// the table, and `KeyType` and `ValueType` are types. `Name` is used as a type argument to
-/// KvStore methods to identify the table. Use with an empty list of tables to generate a store
-/// for use only with singleton key/value pairs.
+/// The syntax is `tables!(Name(KeyType => ValueType; owner; indexes?),*)`, where `Name` is an
+/// identifier to name the table, `KeyType` and `ValueType` are types, and `owner` is an expression
+/// which evaluates to an `Owner`. `Name` is used as a type argument to KvStore methods to identify
+/// the table.
+///
+/// Use with an empty list of tables to generate a store for use only with singleton key/value pairs.
 ///
 /// # Example:
 ///
 /// ```rust
 /// # use ts_kv_store::tables;
+/// # const NODES_OWNER: ts_kv_store::Owner = "foo";
+/// # const EDGES_OWNER: ts_kv_store::Owner = "bar";
 /// # pub struct Node;
 /// # pub trait Edge {}
 /// tables!(
-///   Nodes(&'static str => Node),
-///   Edges(u32 => Box<dyn Edge + Send + Sync>)
+///   Nodes(&'static str => Node; NODES_OWNER),
+///   Edges(u32 => Box<dyn Edge + Send + Sync>; EDGES_OWNER)
 /// );
 /// ```
+///
 /// # Indexes
 ///
-/// The syntax of an index is `index(field: Type)` where `field` is the name of a field in the value
-/// type of the base table and `Type` is the type of that field. You can specify multiple indexes
-/// for each table, separated with a semicolon. E.g.,
+/// The syntax of an index is `index(field: Type(; assert_unique)?)` where `field` is the name of
+/// a field in the value type of the base table and `Type` is the type of that field. You can
+/// specify multiple indexes for each table, separated with a semicolon. E.g.,
 ///
 /// ```rust
 /// # use ts_kv_store::tables;
+/// # const NODES_OWNER: ts_kv_store::Owner = "foo";
 /// # pub struct Node { a: u32, b: String };
 /// tables!(
 ///   Nodes(
 ///     &'static str => Node;
+///     NODES_OWNER;
 ///     index(a: u32);
 ///     index(b: String; assert_unique);
 ///     index(c: String = |node: &Node| [format!("{}-{}", node.a, node.b)]);
@@ -389,7 +406,7 @@ macro_rules! match_helper_rhs_mut {
 /// attempting to store multiple rows with the same index key will cause a panic.
 #[macro_export]
 macro_rules! tables {
-    ($($name: ident ($key_ty: ty => $value_ty: ty $(; index($field: ident: $field_ty: ty $(= $get_idx: expr)? $(; $unique:ident)?))* $(;)?)),*) => {
+    ($($name: ident ($key_ty: ty => $value_ty: ty; $owner: expr $(; index($field: ident: $field_ty: ty $(= $get_idx: expr)? $(; $unique:ident)?))* $(;)?)),*) => {
         $(
             /// Describes a table in the KV store.
             #[derive(Default)]
@@ -397,6 +414,7 @@ macro_rules! tables {
 
             impl $crate::schema::TableDesc for $name {
                 const NAME: &'static str = stringify!($name);
+                const OWNER: $crate::Owner = $owner;
                 type Key = $key_ty;
                 type Value = $value_ty;
                 type Storage = TableStorage;
@@ -413,6 +431,7 @@ macro_rules! tables {
             $(
                 impl $crate::schema::TableDesc for index::$name::$field where $field_ty: Clone {
                     const NAME: &'static str = stringify!($name by $field);
+                    const OWNER: $crate::Owner = $owner;
                     type Key = $field_ty;
                     type Value = $key_ty;
                     type Storage = TableStorage;
@@ -606,10 +625,10 @@ mod test {
 
     #[test]
     fn single() {
-        singleton!(Foo(u64 as Box));
-        singleton!(Bar(u64 as Arc));
-        singleton!(Baz(u64 as Ref));
-        singleton!(Qux(u64));
+        singleton!(Foo(u64 as Box; "owner"));
+        singleton!(Bar(u64 as Arc; "owner"));
+        singleton!(Baz(u64 as Ref; "owner"));
+        singleton!(Qux(u64; "owner"));
 
         assert_eq!(&42, Foo::from_value_ref(&Foo::to_value(42)));
         assert_eq!(&42, Bar::from_value_ref(&Bar::to_value(Arc::new(42))));
@@ -625,7 +644,7 @@ mod test {
 
     #[test]
     fn table() {
-        tables!(Foo(&'static str => String), Bar(u32 => Vec<String>));
+        tables!(Foo(&'static str => String; "owner"), Bar(u32 => Vec<String>; "owner"));
 
         let store = KvStore::new();
 
@@ -650,8 +669,8 @@ mod test {
             a: String,
         }
         tables!(
-            Foo(&'static str => String; index(len: usize = |v: &String| [v.len()])),
-            Bar(u32 => BarT; index(a: String; assert_unique))
+            Foo(&'static str => String; "owner"; index(len: usize = |v: &String| [v.len()])),
+            Bar(u32 => BarT; "owner"; index(a: String; assert_unique))
         );
 
         let store = KvStore::new();

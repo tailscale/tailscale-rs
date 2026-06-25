@@ -3,7 +3,7 @@
 use std::{borrow::Borrow, hash::Hash, sync::Arc};
 
 use crate::{
-    KvStore, Owner, Result,
+    KvStore, Owner,
     index::KvTableIndex,
     operations::{Ops, OpsMut, SingletonOps, SingletonOpsMut, TabularOps, TabularOpsMut},
     schema,
@@ -101,16 +101,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Insert a single value into the store.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
-    // Question: do we need separate insert/update/upsert methods?
     pub fn insert<D: schema::Singleton>(&self, owner: Owner, value: D::ArgValue) {
         <&Self as SingletonOpsMut<_>>::insert::<D>(self, value, owner)
     }
 
     /// Remove a single value from the store.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn remove<D: schema::Singleton>(&self, owner: Owner) {
         <&Self as SingletonOpsMut<_>>::remove::<D>(self, owner)
     }
@@ -126,17 +121,6 @@ pub struct KvTable<'store, D: schema::TableDesc> {
 }
 
 impl<D: schema::TableDesc> KvTable<'_, D> {
-    /// Initialize a table by setting its owner.
-    ///
-    /// Calling this function is optional, a table can be used without initialization in which case,
-    /// its owner is set to the owner specified in the first write.
-    ///
-    /// Returns an error (containing the current owner of the table) if the table has already been
-    /// initialized. In this case, the table will be in a consistent state and can be used as normal.
-    pub fn init(&self) -> Result<()> {
-        <&Self as TabularOpsMut<_>>::init(self, self.owner)
-    }
-
     /// The number of key/value pairs in the table.
     pub fn len(&self) -> usize {
         <&Self as TabularOps<_>>::len(self)
@@ -147,7 +131,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
         <&Self as TabularOps<_>>::is_empty(self)
     }
 
-    /// Clear a table by removing all its KVs, but preserve ownership.
+    /// Clear a table by removing all its KVs.
     pub fn clear(&self) {
         <&Self as TabularOpsMut<_>>::clear(self, self.owner)
     }
@@ -176,8 +160,6 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     }
 
     /// Insert a value into the table.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn insert(&self, key: D::Key, value: D::Value)
     where
         D::Key: Clone,
@@ -198,8 +180,6 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     }
 
     /// Remove a row from the table.
-    ///
-    /// Returns the previous value if there is one, or `None` if there is no value for the specified key.
     pub fn remove<Q>(&self, key: &Q)
     where
         D::Key: Borrow<Q>,
@@ -236,13 +216,13 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
 mod test {
     use std::{any::Any, sync::Arc};
 
-    use crate::{Error, singleton, tables};
+    use crate::{singleton, tables};
 
-    singleton!(Count(u64));
-    singleton!(Shared(String as Arc));
-    singleton!(Label(u64 as Ref));
+    singleton!(Count(u64; OWNER));
+    singleton!(Shared(String as Arc; OWNER));
+    singleton!(Label(u64 as Ref; OWNER));
 
-    tables!(Items(&'static str => String), Counters(u32 => u64));
+    tables!(Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER));
 
     const OWNER: &str = "owner";
     const OTHER: &str = "other";
@@ -344,35 +324,6 @@ mod test {
     }
 
     #[test]
-    fn table_init_succeeds_on_fresh_table() {
-        let store = KvStore::new();
-        assert!(store.table::<Items>(OWNER).init().is_ok());
-    }
-
-    #[test]
-    fn table_init_second_call_returns_err() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
-        let err = store.table::<Items>(OWNER).init().unwrap_err();
-        assert!(matches!(err, Error::AlreadyInit(o) if o == OWNER));
-    }
-
-    #[test]
-    fn table_init_with_different_owner_returns_err() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
-        let err = store.table::<Items>(OTHER).init().unwrap_err();
-        assert!(matches!(err, Error::AlreadyInit(o) if o == OWNER));
-    }
-
-    #[test]
-    fn table_init_is_optional() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("k", "v".to_owned());
-        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("v".to_owned()));
-    }
-
-    #[test]
     fn table_get_returns_none_when_absent() {
         let store = KvStore::new();
         assert!(store.table::<Items>(OWNER).get("missing").is_none());
@@ -413,7 +364,6 @@ mod test {
     #[test]
     fn table_mutate_returns_none_when_absent() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         assert!(
             store
                 .table::<Items>(OWNER)
@@ -621,7 +571,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn table_insert_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         store.table::<Items>(OTHER).insert("k", "v".to_owned());
     }
 
@@ -630,7 +579,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         store.table::<Items>(OTHER).with_mut(&"k", |v| v.len());
     }
 
@@ -639,7 +587,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn table_remove_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         store.table::<Items>(OTHER).remove(&"k");
     }
 
@@ -648,7 +595,6 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn table_clear_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OWNER).init().unwrap();
         store.table::<Items>(OTHER).clear();
     }
 
