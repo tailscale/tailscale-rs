@@ -17,7 +17,7 @@ use crate::{
 pub struct Storage<TableStorage: schema::GeneratedStorage> {
     /// The key is the TypeId of the generated marker type for the KV data. See [`SinValue`] for
     /// how values are represented in the store.
-    pub(crate) singletons: HashMap<TypeId, (Owner, VersionedValue<SinValue>)>,
+    pub(crate) singletons: HashMap<TypeId, VersionedValue<SinValue>>,
     /// Storage for tabular data. The concrete type will be macro-generated, see the [`crate::schema`]
     /// module.
     pub(crate) tables: TableStorage,
@@ -78,28 +78,24 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     pub(crate) fn insert_singleton<D: schema::Singleton>(
         &mut self,
         key: TypeId,
-        owner: Owner,
         value: D::ArgValue,
         txn_id: TxnId,
     ) {
         self.record_mutation(key, txn_id);
         match self.singletons.get_mut(&key) {
-            Some((_, v)) => {
+            Some(v) => {
                 v.set(D::to_value(value), txn_id);
             }
             None => {
-                self.singletons.insert(
-                    key,
-                    (owner, VersionedValue::new(D::to_value(value), txn_id)),
-                );
+                self.singletons
+                    .insert(key, VersionedValue::new(D::to_value(value), txn_id));
             }
         }
     }
 
     pub(crate) fn remove_singleton(&mut self, key: TypeId, txn_id: TxnId) {
         self.record_mutation(key, txn_id);
-        if let Some((_, value)) = self.singletons.get_mut(&key) {
-            // TODO ownership is wrong, but we're getting rid of dynamic ownership
+        if let Some(value) = self.singletons.get_mut(&key) {
             value.set(SinValue::None, txn_id);
         }
     }
@@ -110,7 +106,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         key: TypeId,
         txn_id: TxnId,
     ) -> Option<&D::Value> {
-        let value = self.singletons.get(&key).map(|(_, v)| v);
+        let value = self.singletons.get(&key);
         map_singleton_value(value, txn_id, |v| D::from_value_ref(v))
     }
 
@@ -120,14 +116,8 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         key: TypeId,
         txn_id: TxnId,
     ) -> Option<Arc<D::Value>> {
-        let value = self.singletons.get(&key).map(|(_, v)| v);
+        let value = self.singletons.get(&key);
         map_singleton_value(value, txn_id, |v| D::from_value_arc(v))
-    }
-
-    /// Retrieve the owner of a singleton KV pair using the given type-key.
-    #[cfg(debug_assertions)]
-    pub(crate) fn get_singleton_owner(&self, key: TypeId) -> Option<Owner> {
-        self.singletons.get(&key).map(|(o, _)| *o)
     }
 
     /// Begin a new transaction. Returns the transactions unique id.
@@ -174,7 +164,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     pub(crate) fn clear_transaction(&mut self) {
         if let Some((id, modified)) = &self.pending_txn {
             for k in modified {
-                let Some((_, v)) = self.singletons.get_mut(k) else {
+                let Some(v) = self.singletons.get_mut(k) else {
                     continue;
                 };
                 v.gc_txn(*id);
@@ -546,8 +536,6 @@ enum MaskInsertResult<K, V> {
 /// implementing `TableStorage` in [`Storage`].
 #[doc(hidden)]
 pub struct Table<D: schema::TableDesc, I> {
-    /// Owner of the table.
-    pub(crate) owner: Option<Owner>,
     /// KV data.
     data: HashMap<D::Key, VersionedValue<D::Value>>,
     /// A mask of deleted rows in the table. Should be checked before reading from `data`.
@@ -567,7 +555,6 @@ pub struct Table<D: schema::TableDesc, I> {
 impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
     fn default() -> Self {
         Self {
-            owner: None,
             data: HashMap::new(),
             delete_mask: DeleteMask::None,
             modified: None,
@@ -578,16 +565,6 @@ impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
 }
 
 impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
-    pub(crate) fn try_set_owner(&mut self, owner: Owner) -> Result<()> {
-        match &self.owner {
-            Some(owner) => Err(Error::AlreadyInit(owner)),
-            None => {
-                self.owner = Some(owner);
-                Ok(())
-            }
-        }
-    }
-
     pub fn set_poisoned(&mut self, txn_id: TxnId) {
         self.poisoned.set(true, txn_id);
     }
@@ -857,25 +834,13 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         self.indexes.clear(txn_id, max_committed_id);
     }
 
-    pub(crate) fn assert_or_set_owner(&mut self, owner: Owner) {
-        match &self.owner {
-            Some(prev_owner) => debug_assert_eq!(
-                *prev_owner, owner,
-                "Ownership violation: expected {prev_owner}, found {owner}"
-            ),
-            None => {
-                self.owner = Some(owner);
-            }
-        }
-    }
-
     pub(crate) fn assert_owner(&mut self, owner: Owner) {
-        if let Some(prev_owner) = &self.owner {
-            debug_assert_eq!(
-                *prev_owner, owner,
-                "Ownership violation: expected {prev_owner}, found {owner}"
-            );
-        }
+        debug_assert_eq!(
+            D::OWNER,
+            owner,
+            "Ownership violation: expected {}, found {owner}",
+            D::OWNER,
+        );
     }
 }
 
@@ -1163,7 +1128,7 @@ mod txn_test {
 
     use crate::{Error, singleton, storage::Storage, tables};
 
-    singleton!(Count(u64));
+    singleton!(Count(u64; "owner"));
     tables!();
 
     #[test]
@@ -1194,7 +1159,7 @@ mod txn_test {
         let mut storage = Storage::<TableStorage>::new();
         let id = storage.begin_transaction();
         let key = TypeId::of::<Count>();
-        storage.insert_singleton::<Count>(key, "owner", 42, id);
+        storage.insert_singleton::<Count>(key, 42, id);
         // Visible to the in-progress transaction.
         assert_eq!(storage.get_singleton_value::<Count>(key, id), Some(&42));
 

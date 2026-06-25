@@ -7,8 +7,8 @@
 //! ```rust
 //! # use ts_kv_store::{Owner, singleton, tables};
 //! # const OWNER: Owner = "owner";
-//! singleton!(foo(u64));
-//! tables!(Nodes(u32 => String));
+//! singleton!(foo(u64; OWNER));
+//! tables!(Nodes(u32 => String; OWNER));
 //!
 //! pub fn main() {
 //!     let store = KvStore::new();
@@ -69,7 +69,7 @@
 //!
 //! For example, consider a table `Base` which maps `u64` keys to `Foo` values where `Foo` has a
 //! field `bar: Url` (and `bar` is a unique identifier for a `Foo` in `Base`). The schema would look
-//! like `tables!(Base(u64 => Foo; index(bar: Url)));` which will create a `Base` table and an
+//! like `tables!(Base(u64 => Foo; OWNER; index(bar: Url)));` which will create a `Base` table and an
 //! `index::Base::bar` table. By using `store.table_by::<index::Base::bar>(...)` the `Base` table
 //! can be accessed as if it were a table mapping `Url`s to `Foo`s. The index is maintained whenever
 //! `Base` is modified (directly or via any index) by using the `bar` field of the values in `Base`.
@@ -248,9 +248,6 @@ pub type Owner = &'static str;
 /// An error from a [`KvStore`].
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum Error {
-    /// A table was expected to not be initialized, but was by the specified `Owner`.
-    #[error("A table has already been initialized with owner `{0}`")]
-    AlreadyInit(Owner),
     /// An inconsistency caused a transaction to fail. It has not been committed and can be re-tried.
     #[error("Transaction Failed")]
     TransactionFailed,
