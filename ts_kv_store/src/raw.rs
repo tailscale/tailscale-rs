@@ -3,18 +3,24 @@
 use std::{borrow::Borrow, hash::Hash, sync::Arc};
 
 use crate::{
-    KvStore, Owner,
+    Error, KvStore, KvTableTransactional, Owner, Result,
     index::KvTableIndex,
-    operations::{Ops, OpsMut, SingletonOps, SingletonOpsMut, TabularOps, TabularOpsMut},
+    operations::{Ops, SingletonOps, SingletonOpsMut, TabularOps, TabularOpsMut},
     schema,
     storage::Storage,
 };
 
-impl<TableStorage: schema::GeneratedStorage> SingletonOps<TableStorage> for &KvStore<TableStorage> {}
-impl<TableStorage: schema::GeneratedStorage> SingletonOpsMut<TableStorage>
-    for &KvStore<TableStorage>
+impl<'store, TableStorage: schema::GeneratedStorage> Ops<TableStorage>
+    for &'store KvStore<TableStorage>
 {
+    type ReadLock = std::sync::RwLockReadGuard<'store, Storage<TableStorage>>;
+
+    fn read_lock(self) -> Self::ReadLock {
+        self.get_read_lock()
+    }
 }
+
+impl<TableStorage: schema::GeneratedStorage> SingletonOps<TableStorage> for &KvStore<TableStorage> {}
 
 impl<'a, D: schema::TableDesc> Ops<D::Storage> for &'a KvTable<'_, D> {
     type ReadLock = std::sync::RwLockReadGuard<'a, Storage<D::Storage>>;
@@ -25,18 +31,6 @@ impl<'a, D: schema::TableDesc> Ops<D::Storage> for &'a KvTable<'_, D> {
 }
 
 impl<D: schema::TableDesc> TabularOps<D::Storage> for &KvTable<'_, D> {
-    type TableDesc = D;
-}
-
-impl<'a, D: schema::TableDesc> OpsMut<D::Storage> for &'a KvTable<'_, D> {
-    type WriteLock = std::sync::RwLockWriteGuard<'a, Storage<D::Storage>>;
-
-    fn write_lock(self) -> Self::WriteLock {
-        self.store.get_write_lock()
-    }
-}
-
-impl<D: schema::TableDesc> TabularOpsMut<D::Storage> for &KvTable<'_, D> {
     type TableDesc = D;
 }
 
@@ -102,12 +96,18 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
 
     /// Insert a single value into the store.
     pub fn insert<D: schema::Singleton>(&self, owner: Owner, value: D::ArgValue) {
-        <&Self as SingletonOpsMut<_>>::insert::<D>(self, value, owner)
+        let mut txn = self.begin_transaction(owner);
+        SingletonOpsMut::insert::<D>(&mut txn, value, owner);
+        // Should never panic since transaction should only fail on index inserts.
+        txn.commit().unwrap();
     }
 
     /// Remove a single value from the store.
     pub fn remove<D: schema::Singleton>(&self, owner: Owner) {
-        <&Self as SingletonOpsMut<_>>::remove::<D>(self, owner)
+        let mut txn = self.begin_transaction(owner);
+        SingletonOpsMut::remove::<D>(&mut txn, owner);
+        // Should never panic since transaction should only fail on index inserts.
+        txn.commit().unwrap();
     }
 }
 
@@ -133,7 +133,11 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
 
     /// Clear a table by removing all its KVs.
     pub fn clear(&self) {
-        <&Self as TabularOpsMut<_>>::clear(self, self.owner)
+        let mut txn = self.store.begin_transaction(self.owner);
+        let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
+        TabularOpsMut::clear(&mut txn_table, self.owner);
+        // Should never panic since transaction should only fail on index inserts.
+        txn.commit().unwrap();
     }
 
     /// Get a row of the table from the store by cloning the value.
@@ -159,24 +163,43 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
         <&Self as TabularOps<_>>::with(self, key, f, self.owner)
     }
 
-    /// Insert a value into the table.
+    /// Insert a `value` into the table.
+    ///
+    /// Panics if the value is already indexed with the same index key.
     pub fn insert(&self, key: D::Key, value: D::Value)
     where
         D::Key: Clone,
     {
-        <&Self as TabularOpsMut<_>>::insert(self, key, value, self.owner)
+        self.try_insert(key, value).unwrap();
+    }
+
+    /// Insert a `value` into the table.
+    ///
+    /// Returns an error if `insert` would panic.
+    pub fn try_insert(&self, key: D::Key, value: D::Value) -> Result<()>
+    where
+        D::Key: Clone,
+    {
+        let mut txn = self.store.begin_transaction(self.owner);
+        let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
+        TabularOpsMut::insert(&mut txn_table, key, value, self.owner);
+        txn.commit()
     }
 
     /// Get mutable access to a row of the table in the store in the store.
     ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
+    /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
+    pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Result<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
         D::Value: Clone,
     {
-        <&Self as TabularOpsMut<_>>::with_mut(self, key, f, self.owner)
+        let mut txn = self.store.begin_transaction(self.owner);
+        let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
+        let result = TabularOpsMut::with_mut(&mut txn_table, key, f, self.owner);
+        txn.commit()?;
+        result.ok_or(Error::NotPresent)
     }
 
     /// Remove a row from the table.
@@ -185,7 +208,11 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        <&Self as TabularOpsMut<_>>::remove(self, key, self.owner)
+        let mut txn = self.store.begin_transaction(self.owner);
+        let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
+        TabularOpsMut::remove(&mut txn_table, key, self.owner);
+        // Should never panic since transaction should only fail on index inserts.
+        txn.commit().unwrap();
     }
 
     /// Iterate all the key/value pairs in a table.
@@ -208,7 +235,10 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     where
         D::Value: Clone,
     {
-        <&Self as TabularOpsMut<_>>::for_each_mut(self, f, self.owner)
+        let mut txn = self.store.begin_transaction(self.owner);
+        let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
+        TabularOpsMut::for_each_mut(&mut txn_table, f, self.owner);
+        txn.commit().unwrap();
     }
 }
 
@@ -216,7 +246,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
 mod test {
     use std::{any::Any, sync::Arc};
 
-    use crate::{singleton, tables};
+    use crate::{KvErrorExt, singleton, tables};
 
     singleton!(Count(u64; OWNER));
     singleton!(Shared(String as Arc; OWNER));
@@ -376,7 +406,10 @@ mod test {
     fn table_mutate_modifies_value() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).insert("k", "hello".to_owned());
-        store.table::<Items>(OWNER).with_mut(&"k", |v| v.push('!'));
+        store
+            .table::<Items>(OWNER)
+            .with_mut(&"k", |v| v.push('!'))
+            .unwrap();
         assert_eq!(
             store.table::<Items>(OWNER).get("k"),
             Some("hello!".to_owned())
@@ -478,10 +511,12 @@ mod test {
         let store = KvStore::new();
         let table = store.table::<Items>(OWNER);
         table.insert("k", "v1".to_owned());
-        table.with_mut(&"k", |v| {
-            v.clear();
-            v.push_str("v2");
-        });
+        table
+            .with_mut(&"k", |v| {
+                v.clear();
+                v.push_str("v2");
+            })
+            .unwrap();
         let items: Vec<_> = table.iter().collect();
         assert_eq!(items, vec![(&"k", &"v2".to_owned())]);
     }
@@ -579,7 +614,10 @@ mod test {
     #[should_panic(expected = "Ownership violation")]
     fn table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
-        store.table::<Items>(OTHER).with_mut(&"k", |v| v.len());
+        store
+            .table::<Items>(OTHER)
+            .with_mut(&"k", |v| v.len())
+            .unwrap();
     }
 
     #[test]

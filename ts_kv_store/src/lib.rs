@@ -1,6 +1,6 @@
 //! # ts-kvstore
 //!
-//! An in-memory, async, concurrent, and strongly-typed KV store for the Rust Tailscale client.
+//! An in-memory, async, concurrent, ACID, and strongly-typed KV store for the Rust Tailscale client.
 //!
 //! # Example:
 //!
@@ -119,8 +119,9 @@
 //! Transactions have an internal id (`TxnId`). Since we use a global lock to ensure serializability,
 //! transactions are only used to ensure atomicity. There can only ever be one (mutating) transaction
 //! in progress at a time. The store tracks the most recently committed transaction id, and optionally
-//! a current transaction id. Raw (non-transactional) operations use the most recently committed
-//! transaction id as their 'transaction' id (but there is no separate commit step for these operations).
+//! a current transaction id. Raw (non-transactional) writes are 'mini-transactions' of just a single
+//! operation. That means even raw operations consisting of multiple sub-operations are atomic. Raw
+//! reads use the most recently committed transaction id as their 'transaction' id.
 //!
 //! The KV store uses a simplified version of MVCC to implement transactions. Only two versions are
 //! required for each key, one will be the currently committed version and one will either be empty,
@@ -221,26 +222,6 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 }
 
-impl<'store, TableStorage: schema::GeneratedStorage> operations::Ops<TableStorage>
-    for &'store KvStore<TableStorage>
-{
-    type ReadLock = RwLockReadGuard<'store, storage::Storage<TableStorage>>;
-
-    fn read_lock(self) -> Self::ReadLock {
-        self.get_read_lock()
-    }
-}
-
-impl<'store, TableStorage: schema::GeneratedStorage> operations::OpsMut<TableStorage>
-    for &'store KvStore<TableStorage>
-{
-    type WriteLock = RwLockWriteGuard<'store, storage::Storage<TableStorage>>;
-
-    fn write_lock(self) -> Self::WriteLock {
-        self.get_write_lock()
-    }
-}
-
 /// A token indicating ownership of a KV singleton or table. See crate docs for what ownership means
 /// for a store.
 pub type Owner = &'static str;
@@ -248,6 +229,9 @@ pub type Owner = &'static str;
 /// An error from a [`KvStore`].
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum Error {
+    /// The requested key is not present in the store.
+    #[error("Key not found")]
+    NotPresent,
     /// An inconsistency caused a transaction to fail. It has not been committed and can be re-tried.
     #[error("Transaction Failed")]
     TransactionFailed,
@@ -257,61 +241,46 @@ pub enum Error {
     NonUniqueIndexKey(&'static str),
 }
 
-/// An error occuring during accessing of the store.
-#[derive(thiserror::Error, Debug, Clone, PartialEq)]
-pub enum AccessError {
-    /// The requested key is not present in the store.
-    #[error("Key not found")]
-    NotPresent,
-    /// An index had multiple primary keys for a single index key. If returned when committing a
-    /// transaction, the transaction will not have been committed.
-    #[error("An attempt to store a non-unique index key in `{0}`")]
-    NonUniqueIndexKey(&'static str),
-}
-
 /// `Result` alias for a KvStore [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// `Result` alias for a KvStore [`AccessError`].
-pub type AccessResult<T> = std::result::Result<T, AccessError>;
-
-/// Helper trait for making it easier for [`AccessError`] and `Option` to interoperate.
+/// Helper trait for making it easier for [`Error`] and `Option` to interoperate.
 ///
-/// The key observation is that `Result<T, AccessError>` is logically equivalent to `Result<Option<T>, Error>`
-/// (well a 'subtype' of sorts). This trait allows treating `Result<T, AccessError>` a bit more like
-/// an `Option` in various ways so that using functions which return `Result<T, AccessError>` can be
+/// `Err(Error::NotPresent)` for `Result<T, Error>`has the same meaning as `None` for `Option<T>`
+/// for most map operations. This trait allows treating `Result<T, Error>` a bit more like
+/// an `Option` in various ways so that using functions which return `Result<T, Error>` can be
 /// more ergonomic. (Annoyingly we can't implement helpers directly on `Result` or make conversion
 /// via `From` work).
-pub trait AccessErrorExt<T> {
-    /// Convert a `Result<T, AccessError>` into `Result<Option<T>, Error>`.
+pub trait KvErrorExt<T> {
+    /// Convert a `Result<T, Error>` into `Result<Option<T>, Error>`.
     fn try_opt(self) -> Result<Option<T>>;
-    /// Convert a `Result<T, AccessError>` into `Option<T>`, panicking if the `AccessError` is anything
+    /// Convert a `Result<T, Error>` into `Option<T>`, panicking if the `Error` is anything
     /// other than `NotPresent`.
     fn unwrap_opt(self) -> Option<T>;
-    /// Convert a `&Result<T, AccessError>` into `&Option<T>`, panicking if the `AccessError` is anything
+    /// Convert a `&Result<T, Error>` into `Option<&T>`, panicking if the `Error` is anything
     /// other than `NotPresent`.
     fn unwrap_opt_ref(&self) -> Option<&T>;
     /// True if self is `Ok`, i.e., there was no error and the requested key was present.
     fn is_some(&self) -> bool;
-    /// True if self is `Err(AccessError::NotPresent)`, i.e., there was no error and the requested
+    /// True if self is `Err(Error::NotPresent)`, i.e., there was no other error and the requested
     /// key was not present.
     fn is_none(&self) -> bool;
 }
 
-impl<T> AccessErrorExt<T> for AccessResult<T> {
+impl<T> KvErrorExt<T> for Result<T> {
     fn try_opt(self) -> Result<Option<T>> {
         match self {
             Ok(t) => Ok(Some(t)),
-            Err(AccessError::NotPresent) => Ok(None),
-            Err(AccessError::NonUniqueIndexKey(t)) => Err(Error::NonUniqueIndexKey(t)),
+            Err(Error::NotPresent) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 
     fn unwrap_opt(self) -> Option<T> {
         match self {
             Ok(t) => Some(t),
-            Err(AccessError::NotPresent) => None,
-            Err(e @ AccessError::NonUniqueIndexKey(_)) => {
+            Err(Error::NotPresent) => None,
+            Err(e) => {
                 panic!("Expected `Ok` or not present, found: {e}")
             }
         }
@@ -320,8 +289,8 @@ impl<T> AccessErrorExt<T> for AccessResult<T> {
     fn unwrap_opt_ref(&self) -> Option<&T> {
         match self {
             Ok(t) => Some(t),
-            Err(AccessError::NotPresent) => None,
-            Err(e @ AccessError::NonUniqueIndexKey(_)) => {
+            Err(Error::NotPresent) => None,
+            Err(e) => {
                 panic!("Expected `Ok` or not present, found: {e}")
             }
         }
@@ -332,6 +301,6 @@ impl<T> AccessErrorExt<T> for AccessResult<T> {
     }
 
     fn is_none(&self) -> bool {
-        matches!(self, Err(AccessError::NotPresent))
+        matches!(self, Err(Error::NotPresent))
     }
 }
