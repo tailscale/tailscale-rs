@@ -240,11 +240,17 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         }
     }
 
-    fn get<Q>(self, key: &Q, _owner: Owner) -> Result<BaseValue<Self::IndexDesc>>
+    #[allow(clippy::type_complexity)]
+    fn get<Q>(
+        self,
+        key: &Q,
+        _owner: Owner,
+    ) -> Result<(BaseKey<Self::IndexDesc>, BaseValue<Self::IndexDesc>)>
     where
+        BaseKey<Self::IndexDesc>: Clone,
+        BaseValue<Self::IndexDesc>: Clone,
         IndexKey<Self::IndexDesc>: Borrow<Q>,
         IndexValue<Self::IndexDesc>: Hash + Eq,
-        BaseValue<Self::IndexDesc>: Clone,
         Q: ?Sized + Hash + Eq,
     {
         let storage = self.read_lock();
@@ -257,15 +263,17 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
             ));
         }
         let base_key = index.get(key, storage.txn_id()).ok_or(Error::NotPresent)?;
-        base.get(base_key, storage.txn_id())
+        let value = base
+            .get(base_key, storage.txn_id())
             .cloned()
-            .ok_or(Error::NotPresent)
+            .ok_or(Error::NotPresent)?;
+        Ok((base_key.clone(), value))
     }
 
     fn with<Q, T>(
         self,
         key: &Q,
-        f: impl FnOnce(&BaseValue<Self::IndexDesc>) -> T,
+        f: impl FnOnce(&BaseKey<Self::IndexDesc>, &BaseValue<Self::IndexDesc>) -> T,
         _owner: Owner,
     ) -> Result<T>
     where
@@ -287,15 +295,17 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
             .get(base_key, storage.txn_id())
             .ok_or(Error::NotPresent)?;
 
-        Ok(f(value))
+        Ok(f(base_key, value))
     }
 
+    #[allow(clippy::type_complexity)]
     fn iter<'guard>(
         self,
         _owner: Owner,
     ) -> impl Iterator<
         Item = (
             &'guard IndexKey<Self::IndexDesc>,
+            &'guard BaseKey<Self::IndexDesc>,
             &'guard BaseValue<Self::IndexDesc>,
         ),
     >
@@ -322,7 +332,12 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
     fn values<'guard>(
         self,
         _owner: Owner,
-    ) -> impl Iterator<Item = &'guard BaseValue<Self::IndexDesc>>
+    ) -> impl Iterator<
+        Item = (
+            &'guard BaseKey<Self::IndexDesc>,
+            &'guard BaseValue<Self::IndexDesc>,
+        ),
+    >
     where
         Self::ReadLock: 'guard,
         Self::IndexDesc: 'guard,
@@ -489,7 +504,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
     fn with_mut<Q, T>(
         self,
         key: &Q,
-        f: impl FnOnce(&mut BaseValue<Self::IndexDesc>) -> T,
+        f: impl FnOnce(&BaseKey<Self::IndexDesc>, &mut BaseValue<Self::IndexDesc>) -> T,
         owner: Owner,
     ) -> Result<T>
     where
@@ -514,7 +529,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         base.assert_owner(owner);
 
         let base_key = index.get(key, txn_id).ok_or(Error::NotPresent)?;
-        base.with_mut(base_key, f, txn_id, max_committed_id)
+        base.with_mut(base_key, |v| f(base_key, v), txn_id, max_committed_id)
             .ok_or(Error::NotPresent)
     }
 
@@ -543,7 +558,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
 
     fn for_each_mut(
         self,
-        mut f: impl FnMut(&IndexKey<Self::IndexDesc>, &mut BaseValue<Self::IndexDesc>),
+        mut f: impl FnMut(&BaseKey<Self::IndexDesc>, &mut BaseValue<Self::IndexDesc>),
         owner: Owner,
     ) where
         IndexValue<Self::IndexDesc>: Hash + Eq,
@@ -560,11 +575,11 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         );
         base.assert_owner(owner);
 
-        for (k, base_key) in index.iter(txn_id) {
+        for (_, base_key) in index.iter(txn_id) {
             base.with_mut(
                 base_key,
                 |value| {
-                    f(k, value);
+                    f(base_key, value);
                 },
                 txn_id,
                 max_committed_id,

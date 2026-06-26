@@ -684,12 +684,12 @@ mod test {
             .table_by::<index::Bar::a>("owner")
             .get("hello")
             .unwrap();
-        assert_eq!(value.a, "hello");
+        assert_eq!(value.1.a, "hello");
 
         store
             .table::<Foo>("owner")
             .insert("foo", "hello".to_owned());
         let value = store.table_by::<index::Foo::len>("owner").get(&5).unwrap();
-        assert_eq!(value, "hello");
+        assert_eq!(value, ("foo", "hello".to_owned()));
     }
 }

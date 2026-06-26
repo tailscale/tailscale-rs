@@ -144,14 +144,19 @@ impl<'guard, Guard: StorageGuard<D::Storage>, D: IndexDesc> Iterator
 where
     D::Value: Hash + Eq,
 {
-    type Item = (&'guard D::Key, &'guard <D::BaseTable as TableDesc>::Value);
+    type Item = (
+        &'guard D::Key,
+        &'guard <D::BaseTable as TableDesc>::Key,
+        &'guard <D::BaseTable as TableDesc>::Value,
+    );
 
     fn next(&mut self) -> Option<Self::Item> {
         // Iterate by delegating to the `HashMap` iterator.
         let (base, iter) = self.inner.as_mut().unwrap();
         let (k, bk) = iter.next()?;
+        let value = base.get(bk, self.guard.storage().txn_id())?;
 
-        Some((k, base.get(bk, self.guard.storage().txn_id())?))
+        Some((k, bk, value))
     }
 }
 
@@ -170,14 +175,18 @@ impl<'guard, Guard: StorageGuard<D::Storage>, D: IndexDesc> Iterator
 where
     D::Value: Hash + Eq,
 {
-    type Item = &'guard <D::BaseTable as TableDesc>::Value;
+    type Item = (
+        &'guard <D::BaseTable as TableDesc>::Key,
+        &'guard <D::BaseTable as TableDesc>::Value,
+    );
 
     fn next(&mut self) -> Option<Self::Item> {
         // Iterate by delegating to the `HashMap` iterator.
         let (base, iter) = self.inner.as_mut().unwrap();
         let (_, bk) = iter.next()?;
+        let value = base.get(bk, self.guard.storage().txn_id())?;
 
-        base.get(bk, self.guard.storage().txn_id())
+        Some((bk, value))
     }
 }
 
