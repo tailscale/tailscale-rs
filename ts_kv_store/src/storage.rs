@@ -714,7 +714,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             MaskStatus::Overwritten(v) => v,
         };
 
-        // TODO we could be more efficient and only update indexes if the foreign key changes
         self.indexes.on_remove(value, txn_id, max_committed_id);
         record_mutation(&mut self.modified, key, txn_id, max_committed_id);
         let result = f(value);
@@ -747,22 +746,25 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     ) where
         D::Value: Clone,
     {
-        // TODO could be more efficient by only updating if value is changed
         match &mut self.delete_mask {
-            DeleteMask::None => Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
-                self.indexes.on_remove(v, txn_id, max_committed_id);
-                record_mutation(&mut self.modified, k, txn_id, max_committed_id);
-                f(k, v);
-                self.indexes.on_insert(k, v, txn_id, max_committed_id);
-            }),
-            DeleteMask::All(_, pending) => pending.iter_mut().for_each(|(k, v)| {
-                if let Some(v) = v.get_mut(txn_id) {
-                    self.indexes.on_remove(v, txn_id, max_committed_id);
+            DeleteMask::None => {
+                self.indexes.clear(txn_id, max_committed_id);
+                Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
                     record_mutation(&mut self.modified, k, txn_id, max_committed_id);
                     f(k, v);
                     self.indexes.on_insert(k, v, txn_id, max_committed_id);
-                }
-            }),
+                })
+            }
+            DeleteMask::All(_, pending) => {
+                self.indexes.clear(txn_id, max_committed_id);
+                pending.iter_mut().for_each(|(k, v)| {
+                    if let Some(v) = v.get_mut(txn_id) {
+                        record_mutation(&mut self.modified, k, txn_id, max_committed_id);
+                        f(k, v);
+                        self.indexes.on_insert(k, v, txn_id, max_committed_id);
+                    }
+                })
+            }
             DeleteMask::Some(_, removed) => {
                 Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
                     if removed.contains(k) {
