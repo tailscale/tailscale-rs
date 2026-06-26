@@ -69,8 +69,9 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Get a row of the table from the store by cloning the value.
     ///
     /// Returns `Error::NotPresent` if there is no value for the specified key.
-    pub fn get<Q>(&self, key: &Q) -> Result<BaseValue<D>>
+    pub fn get<Q>(&self, key: &Q) -> Result<(BaseKey<D>, BaseValue<D>)>
     where
+        BaseKey<D>: Clone,
         BaseValue<D>: Clone,
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -82,7 +83,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Get immutable access to a row of the table in the store by reference.
     ///
     /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseValue<D>) -> T) -> Result<T>
+    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Result<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -119,7 +120,11 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Get mutable access to a row of the table in the store in the store.
     ///
     /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut BaseValue<D>) -> T) -> Result<T>
+    pub fn with_mut<Q, T>(
+        &self,
+        key: &Q,
+        f: impl FnOnce(&BaseKey<D>, &mut BaseValue<D>) -> T,
+    ) -> Result<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -149,7 +154,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     }
 
     /// Iterate all the keys in the index and value in the base table.
-    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseValue<D>)>
+    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
         D: 'store,
         Base<D>: 'store,
@@ -169,7 +174,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     }
 
     /// Iterate all the values in the base table.
-    pub fn values(&self) -> impl Iterator<Item = &BaseValue<D>>
+    pub fn values(&self) -> impl Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>
     where
         D: 'store,
         Base<D>: 'store,
@@ -179,7 +184,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     }
 
     /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&self, f: impl FnMut(&D::Key, &mut BaseValue<D>))
+    pub fn for_each_mut(&self, f: impl FnMut(&BaseKey<D>, &mut BaseValue<D>))
     where
         IndexValue<D>: Eq + Hash + Clone,
         BaseValue<D>: Clone,
@@ -261,8 +266,9 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Get a row of the table from the store by cloning the value.
     ///
     /// Returns `Error::NotPresent` if there is no value for the specified key.
-    pub fn get<Q>(&self, key: &Q) -> Result<BaseValue<D>>
+    pub fn get<Q>(&self, key: &Q) -> Result<(BaseKey<D>, BaseValue<D>)>
     where
+        BaseKey<D>: Clone,
         BaseValue<D>: Clone,
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -274,7 +280,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Get immutable access to a row of the table in the store by reference.
     ///
     /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseValue<D>) -> T) -> Result<T>
+    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Result<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -295,7 +301,11 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Get mutable access to a row of the table in the store in the store.
     ///
     /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<Q, T>(&mut self, key: &Q, f: impl FnOnce(&mut BaseValue<D>) -> T) -> Result<T>
+    pub fn with_mut<Q, T>(
+        &mut self,
+        key: &Q,
+        f: impl FnOnce(&BaseKey<D>, &mut BaseValue<D>) -> T,
+    ) -> Result<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -317,7 +327,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Iterate all the keys in the index and value in the base table.
-    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseValue<D>)>
+    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
         D: 'guard,
         Base<D>: 'guard,
@@ -336,7 +346,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Iterate all the values in the base table.
-    pub fn values(&self) -> impl Iterator<Item = &BaseValue<D>>
+    pub fn values(&self) -> impl Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>
     where
         D: 'guard,
         Base<D>: 'guard,
@@ -346,7 +356,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&mut self, f: impl FnMut(&D::Key, &mut BaseValue<D>))
+    pub fn for_each_mut(&mut self, f: impl FnMut(&BaseKey<D>, &mut BaseValue<D>))
     where
         IndexValue<D>: Eq + Hash + Clone,
         BaseValue<D>: Clone,
@@ -400,8 +410,9 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
     /// Get a row of the table from the store by cloning the value.
     ///
     /// Returns `Error::NotPresent` if there is no value for the specified key.
-    pub fn get<Q>(&self, key: &Q) -> Result<BaseValue<D>>
+    pub fn get<Q>(&self, key: &Q) -> Result<(BaseKey<D>, BaseValue<D>)>
     where
+        BaseKey<D>: Clone,
         BaseValue<D>: Clone,
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -413,7 +424,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
     /// Get immutable access to a row of the table in the store by reference.
     ///
     /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseValue<D>) -> T) -> Result<T>
+    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Result<T>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
@@ -423,7 +434,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Iterate all the keys in the index and value in the base table.
-    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseValue<D>)>
+    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
         D: 'guard,
         IndexValue<D>: Eq + Hash,
@@ -440,7 +451,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Iterate all the values in the base table.
-    pub fn values(&self) -> impl Iterator<Item = &BaseValue<D>>
+    pub fn values(&self) -> impl Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>
     where
         D: 'guard,
         IndexValue<D>: Eq + Hash,
@@ -516,7 +527,7 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         let table = store.table_by::<index::Users::name>(OWNER);
         let value = table.get("Alice").unwrap();
-        assert_eq!(value, row("Alice"));
+        assert_eq!(value, (1, row("Alice")));
     }
 
     #[test]
@@ -529,7 +540,7 @@ mod test {
         let table = store.table_by::<index::Users::name>(OWNER);
 
         let value = table.get("Alice").unwrap();
-        assert_eq!(value, row("Alice"));
+        assert_eq!(value, (1, row("Alice")));
     }
 
     #[test]
@@ -538,7 +549,7 @@ mod test {
         let mut called = false;
         let result = store
             .table_by::<index::Users::name>(OWNER)
-            .with("Alice", |_| {
+            .with("Alice", |_, _| {
                 called = true;
             });
         assert!(result.is_none());
@@ -551,7 +562,10 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         let len = store
             .table_by::<index::Users::name>(OWNER)
-            .with("Alice", |v| v.name.len());
+            .with("Alice", |k, v| {
+                assert_eq!(*k, 1);
+                v.name.len()
+            });
         assert_eq!(len.unwrap_opt(), Some(5));
     }
 
@@ -616,7 +630,7 @@ mod test {
         let store = KvStore::new();
         let result = store
             .table_by::<index::Users::name>(OWNER)
-            .with_mut("Alice", |v| v.name.len());
+            .with_mut("Alice", |_, v| v.name.len());
         assert!(result.is_none());
     }
 
@@ -626,7 +640,10 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table_by::<index::Users::name>(OWNER)
-            .with_mut("Alice", |v| v.name.push_str(" Smith"))
+            .with_mut("Alice", |k, v| {
+                assert_eq!(*k, 1);
+                v.name.push_str(" Smith")
+            })
             .unwrap();
         let value = store.table::<Users>(OWNER).get(&1).unwrap();
         assert_eq!(value.name, "Alice Smith");
@@ -638,7 +655,7 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table_by::<index::Users::name>(OWNER)
-            .with_mut("Alice", |v| {
+            .with_mut("Alice", |_, v| {
                 v.name = "Charlie".to_owned();
             })
             .unwrap();
@@ -652,7 +669,7 @@ mod test {
             .table_by::<index::Users::name>(OWNER)
             .get("Charlie")
             .unwrap();
-        assert_eq!(value.name, "Charlie");
+        assert_eq!(value, (1, row("Charlie")));
     }
 
     #[test]
@@ -702,9 +719,9 @@ mod test {
         let items: Vec<_> = store
             .table_by::<index::Users::name>(OWNER)
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, bk, v)| (k.clone(), *bk, v.clone()))
             .collect();
-        assert_eq!(items, vec![("Alice".to_owned(), row("Alice"))]);
+        assert_eq!(items, vec![("Alice".to_owned(), 1, row("Alice"))]);
     }
 
     #[test]
@@ -715,14 +732,14 @@ mod test {
         let mut items: Vec<_> = store
             .table_by::<index::Users::name>(OWNER)
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, bk, v)| (k.clone(), *bk, v.clone()))
             .collect();
-        items.sort_by_key(|(k, _)| k.clone());
+        items.sort_by_key(|(k, ..)| k.clone());
         assert_eq!(
             items,
             vec![
-                ("Alice".to_owned(), row("Alice")),
-                ("Bob".to_owned(), row("Bob")),
+                ("Alice".to_owned(), 1, row("Alice")),
+                ("Bob".to_owned(), 2, row("Bob")),
             ]
         );
     }
@@ -763,8 +780,8 @@ mod test {
         store.table::<Users>(OWNER).insert(2, row("Bob"));
         let table = store.table_by::<index::Users::name>(OWNER);
         let mut values: Vec<_> = table.values().collect();
-        values.sort_by_key(|r| r.name.clone());
-        assert_eq!(values, vec![&row("Alice"), &row("Bob")]);
+        values.sort_by_key(|(_, r)| r.name.clone());
+        assert_eq!(values, vec![(&1, &row("Alice")), (&2, &row("Bob"))]);
     }
 
     #[test]
@@ -784,8 +801,8 @@ mod test {
         let mut items: Vec<_> = Vec::new();
         index
             .iter()
-            .for_each(|(k, v)| items.push((k.clone(), v.clone())));
-        assert_eq!(items, vec![("Alice".to_owned(), row("Alice"))]);
+            .for_each(|(k, bk, v)| items.push((k.clone(), *bk, v.clone())));
+        assert_eq!(items, vec![("Alice".to_owned(), 1, row("Alice"))]);
     }
 
     #[test]
@@ -797,13 +814,13 @@ mod test {
         let mut items: Vec<_> = Vec::new();
         index
             .iter()
-            .for_each(|(k, v)| items.push((k.clone(), v.clone())));
-        items.sort_by_key(|(k, _)| k.clone());
+            .for_each(|(k, bk, v)| items.push((k.clone(), *bk, v.clone())));
+        items.sort_by_key(|(k, ..)| k.clone());
         assert_eq!(
             items,
             vec![
-                ("Alice".to_owned(), row("Alice")),
-                ("Bob".to_owned(), row("Bob")),
+                ("Alice".to_owned(), 1, row("Alice")),
+                ("Bob".to_owned(), 2, row("Bob")),
             ]
         );
     }
@@ -844,7 +861,7 @@ mod test {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Charlie")
                 .unwrap(),
-            row("Charlie"),
+            (1, row("Charlie")),
         );
     }
 
@@ -866,7 +883,7 @@ mod test {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Charlie")
                 .unwrap(),
-            row("Charlie")
+            (1, row("Charlie"))
         );
     }
 
@@ -941,14 +958,14 @@ mod test_two_indexes {
                 .table_by::<index::People::email>(OWNER)
                 .get("a@example.com")
                 .unwrap(),
-            person("a@example.com", b"alice")
+            (1, person("a@example.com", b"alice"))
         );
         assert_eq!(
             store
                 .table_by::<index::People::username>(OWNER)
                 .get(b"alice".as_slice())
                 .unwrap(),
-            person("a@example.com", b"alice")
+            (1, person("a@example.com", b"alice"))
         );
     }
 
@@ -963,14 +980,14 @@ mod test_two_indexes {
                 .table_by::<index::People::email>(OWNER)
                 .get("a@example.com")
                 .unwrap(),
-            person("a@example.com", b"alice")
+            (1, person("a@example.com", b"alice"))
         );
         assert_eq!(
             store
                 .table_by::<index::People::username>(OWNER)
                 .get(b"alice".as_slice())
                 .unwrap(),
-            person("a@example.com", b"alice")
+            (1, person("a@example.com", b"alice"))
         );
     }
 
@@ -989,14 +1006,14 @@ mod test_two_indexes {
                 .table_by::<index::People::email>(OWNER)
                 .get("a@example.com")
                 .unwrap(),
-            person("a@example.com", b"alice")
+            (1, person("a@example.com", b"alice"))
         );
         assert_eq!(
             store
                 .table_by::<index::People::username>(OWNER)
                 .get(b"bob".as_slice())
                 .unwrap(),
-            person("b@example.com", b"bob")
+            (2, person("b@example.com", b"bob"))
         );
     }
 
@@ -1233,7 +1250,7 @@ mod test_transactional_index {
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Alice").unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
         txn.commit().unwrap();
         assert_eq!(
@@ -1241,7 +1258,7 @@ mod test_transactional_index {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Alice")
                 .unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
 
         let mut txn = store.begin_transaction(OWNER);
@@ -1270,7 +1287,10 @@ mod test_transactional_index {
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         assert_eq!(
             txn.table_by::<index::Users::name>()
-                .with("Alice", |v| v.name.len())
+                .with("Alice", |k, v| {
+                    assert_eq!(*k, 1);
+                    v.name.len()
+                })
                 .unwrap(),
             5
         );
@@ -1282,15 +1302,18 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>()
-            .with_mut("Alice", |v| v.name = "Bob".to_owned())
+            .with_mut("Alice", |_, v| v.name = "Bob".to_owned())
             .unwrap();
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Bob").unwrap(),
-            Row {
-                name: "Bob".to_owned(),
-                age: 0
-            }
+            (
+                1,
+                Row {
+                    name: "Bob".to_owned(),
+                    age: 0
+                }
+            )
         );
     }
 
@@ -1300,14 +1323,17 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>()
-            .with_mut("Alice", |v| v.age = 42)
+            .with_mut("Alice", |_, v| v.age = 42)
             .unwrap();
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Alice").unwrap(),
-            Row {
-                name: "Alice".to_owned(),
-                age: 42
-            }
+            (
+                1,
+                Row {
+                    name: "Alice".to_owned(),
+                    age: 42
+                }
+            )
         );
     }
 
@@ -1352,10 +1378,13 @@ mod test_transactional_index {
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Charlie").unwrap(),
-            Row {
-                name: "Charlie".to_owned(),
-                age: 0
-            }
+            (
+                1,
+                Row {
+                    name: "Charlie".to_owned(),
+                    age: 0
+                }
+            )
         );
     }
 
@@ -1366,7 +1395,7 @@ mod test_transactional_index {
         txn.table::<Users>().insert(1, row("Alice"));
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Alice").unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
     }
 
@@ -1380,10 +1409,13 @@ mod test_transactional_index {
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Bob").unwrap(),
-            Row {
-                name: "Bob".to_owned(),
-                age: 0
-            }
+            (
+                1,
+                Row {
+                    name: "Bob".to_owned(),
+                    age: 0
+                }
+            )
         );
     }
 
@@ -1417,10 +1449,13 @@ mod test_transactional_index {
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Charlie").unwrap(),
-            Row {
-                name: "Charlie".to_owned(),
-                age: 0
-            }
+            (
+                1,
+                Row {
+                    name: "Charlie".to_owned(),
+                    age: 0
+                }
+            )
         );
     }
 
@@ -1438,7 +1473,7 @@ mod test_transactional_index {
         let txn = store.begin_ro_transaction(OWNER);
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Alice").unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
     }
 
@@ -1449,7 +1484,10 @@ mod test_transactional_index {
         let txn = store.begin_ro_transaction(OWNER);
         assert_eq!(
             txn.table_by::<index::Users::name>()
-                .with("Alice", |v| v.name.len())
+                .with("Alice", |k, v| {
+                    assert_eq!(*k, 1);
+                    v.name.len()
+                })
                 .unwrap(),
             5
         );
@@ -1468,8 +1506,8 @@ mod test_transactional_index {
         assert_eq!(
             rows,
             vec![
-                (&"Alice".to_owned(), &row("Alice")),
-                (&"Bob".to_owned(), &row("Bob"))
+                (&"Alice".to_owned(), &1, &row("Alice")),
+                (&"Bob".to_owned(), &2, &row("Bob"))
             ]
         );
     }
@@ -1483,7 +1521,7 @@ mod test_transactional_index {
         let mut names: Vec<String> = Vec::new();
         txn.table_by::<index::Users::name>()
             .iter()
-            .for_each(|(k, _)| names.push(k.clone()));
+            .for_each(|(k, ..)| names.push(k.clone()));
         names.sort();
         assert_eq!(names, vec!["Alice".to_owned(), "Bob".to_owned()]);
     }
@@ -1538,7 +1576,7 @@ mod test_transactional_index {
         {
             let mut txn = store.begin_transaction(OWNER);
             txn.table_by::<index::Users::name>()
-                .with_mut("Alice", |v| v.name = "Bob".to_owned())
+                .with_mut("Alice", |_, v| v.name = "Bob".to_owned())
                 .unwrap();
         }
         assert_eq!(
@@ -1546,7 +1584,7 @@ mod test_transactional_index {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Alice")
                 .unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
         assert!(
             store
@@ -1570,7 +1608,7 @@ mod test_transactional_index {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Alice")
                 .unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
         assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice")));
     }
@@ -1589,14 +1627,14 @@ mod test_transactional_index {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Alice")
                 .unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
         assert_eq!(
             store
                 .table_by::<index::Users::name>(OWNER)
                 .get("Bob")
                 .unwrap(),
-            row("Bob")
+            (2, row("Bob"))
         );
     }
 
@@ -1614,14 +1652,14 @@ mod test_transactional_index {
                 .table_by::<index::Users::name>(OWNER)
                 .get("Alice")
                 .unwrap(),
-            row("Alice")
+            (1, row("Alice"))
         );
         assert_eq!(
             store
                 .table_by::<index::Users::name>(OWNER)
                 .get("Bob")
                 .unwrap(),
-            row("Bob")
+            (2, row("Bob"))
         );
         assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice")));
         assert_eq!(store.table::<Users>(OWNER).get(&2), Some(row("Bob")));
@@ -1669,10 +1707,10 @@ mod test_poison {
         assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
 
         // The `panic`s ensure that the closure is not called.
-        let result = index_name.with("Alice", |_| panic!());
+        let result = index_name.with("Alice", |_, _| panic!());
         assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
 
-        let result = index_name.with_mut("Alice", |_| panic!());
+        let result = index_name.with_mut("Alice", |_, _| panic!());
         assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
     }
 
@@ -1743,11 +1781,11 @@ mod test_poison {
         assert!(email_index.check_consistent().is_ok());
         assert_eq!(
             email_index.get("alice1@x.com").unwrap(),
-            row("Alice", "alice1@x.com")
+            (1, row("Alice", "alice1@x.com"))
         );
         assert_eq!(
             email_index.get("alice2@x.com").unwrap(),
-            row("Alice", "alice2@x.com")
+            (2, row("Alice", "alice2@x.com"))
         );
     }
 
@@ -1855,8 +1893,11 @@ mod test_poison {
             index.check_consistent().is_ok(),
             "index should not be poisoned after the colliding txn was rolled back"
         );
-        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
-        assert_eq!(index.get("Bob").unwrap(), row("Bob", "bob@x.com"));
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
+        assert_eq!(index.get("Bob").unwrap(), (3, row("Bob", "bob@x.com")));
     }
 
     #[test]
@@ -1873,7 +1914,7 @@ mod test_poison {
                 .table_by::<index::AssertingUsers::name>(OWNER)
                 .get("Alice")
                 .unwrap(),
-            row("Alice", "alice1@x.com")
+            (1, row("Alice", "alice1@x.com"))
         );
     }
 
@@ -1907,7 +1948,10 @@ mod test_poison {
         // The failed insert rolled back: the index is consistent and only the original row remains.
         let index = store.table_by::<index::Users::name>(OWNER);
         assert!(index.check_consistent().is_ok());
-        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
         assert_eq!(
             store.table::<Users>(OWNER).get(&1),
             Some(row("Alice", "alice1@x.com"))
@@ -1929,10 +1973,13 @@ mod test_poison {
         }));
         assert!(result.is_err(), "duplicate raw insert should panic");
 
-        // The panicked mini-transaction rolled back, leaving the store consistent.
+        // The panicked insert has been rolled back, leaving the store consistent.
         let index = store.table_by::<index::Users::name>(OWNER);
         assert!(index.check_consistent().is_ok());
-        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
         assert_eq!(store.table::<Users>(OWNER).get(&2), None);
     }
 
@@ -1943,7 +1990,6 @@ mod test_poison {
             .table_by::<index::Users::name>(OWNER)
             .insert(1, row("Alice", "alice1@x.com"));
 
-        // The raw index path is now atomic too: a duplicate is an error, not a silent poison.
         assert!(matches!(
             store
                 .table_by::<index::Users::name>(OWNER)
@@ -1953,7 +1999,10 @@ mod test_poison {
 
         let index = store.table_by::<index::Users::name>(OWNER);
         assert!(index.check_consistent().is_ok());
-        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
     }
 
     #[test]
@@ -1981,8 +2030,11 @@ mod test_poison {
         );
         let index = store.table_by::<index::Users::name>(OWNER);
         assert!(index.check_consistent().is_ok());
-        assert_eq!(index.get("Bob").unwrap(), row("Bob", "bob@x.com"));
-        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob", "bob@x.com")));
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
     }
 
     #[test]
@@ -2007,7 +2059,10 @@ mod test_poison {
         );
         let index = store.table_by::<index::Users::name>(OWNER);
         assert!(index.check_consistent().is_ok());
-        assert_eq!(index.get("Alice").unwrap(), row("Alice", "alice1@x.com"));
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
         assert!(index.get("Zelda").is_none());
     }
 }
