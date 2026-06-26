@@ -1,5 +1,5 @@
 use core::{
-    fmt::{Debug, Formatter},
+    fmt::{Debug, Display, Formatter},
     net::SocketAddr,
 };
 
@@ -58,6 +58,12 @@ impl Debug for TcpStream {
             .field("local_endpoint", &self.local)
             .field("remote_endpoint", &self.remote)
             .finish()
+    }
+}
+
+impl Display for TcpStream {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "tcp({}<->{})", self.remote, self.local)
     }
 }
 
