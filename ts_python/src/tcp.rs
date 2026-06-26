@@ -11,6 +11,11 @@ pub struct TcpListener {
     pub(crate) listener: Arc<ts::netstack::TcpListener>,
 }
 
+#[pyclass(frozen, module = "_internal")]
+pub struct TcpProxy {
+    pub(crate) _server: Arc<ts::proxy::tcp::TcpProxy>,
+}
+
 /// An established TCP stream.
 #[pyclass(frozen, module = "_internal")]
 pub struct TcpStream {
@@ -47,6 +52,19 @@ impl TcpListener {
         format!("tailscale.TcpListener({})", self.listener.local_addr(),)
     }
 }
+
+// #[pymethods]
+// impl TcpProxy {
+//     #[pyo3(signature = () -> "Awaitable[None]")]
+//     pub fn accept<'p>(&self, py: Python<'p>) -> PyFut<'p> {
+//         let server = Arc::clone(&self.server);
+//         future_into_py(py, async move {
+//             server.accept().await.map_err(py_value_err)?;
+//
+//             Ok(())
+//         })
+//     }
+// }
 
 #[pymethods]
 impl TcpStream {
