@@ -17,6 +17,12 @@ pub enum Error {
     #[error("connection reset")]
     ConnectionReset,
 
+    /// A connection was refused.
+    ///
+    /// This error can often be handled by retrying.
+    #[error("connection refused")]
+    ConnectionRefused,
+
     /// An error reading or parsing the key file.
     #[error("an error reading or parsing the key file")]
     KeyFileRead,

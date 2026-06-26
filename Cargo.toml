@@ -256,6 +256,9 @@ required-features = ["axum"]
 name = "peer_ping"
 
 [[example]]
+name = "reverse_proxy"
+
+[[example]]
 name = "tcp_echo"
 
 [[example]]

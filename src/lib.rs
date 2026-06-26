@@ -139,10 +139,14 @@ pub use ts_control::Node as NodeInfo;
 use ts_netstack_smoltcp::{CreateSocket, netcore::Channel};
 use ts_runtime::Spawn;
 
+mod addr;
+pub use addr::TailnetAddr;
 #[cfg(feature = "axum")]
 pub mod axum;
 pub mod config;
 mod error;
+mod proxy;
+pub use proxy::{TargetStream, TcpProxy};
 #[cfg(feature = "ssh")]
 pub mod ssh;
 
@@ -246,6 +250,59 @@ impl Device {
             .tcp_connect((ip, ephemeral_port).into(), remote)
             .await
             .map_err(Into::into)
+    }
+
+    /// Proxies a remote TCP stream with a tailnet peer to a target TCP stream.
+    ///
+    /// # Warning
+    /// `target_addr` may contain any valid IPv4/IPv6 address. If `target_addr` references anything
+    /// other than a tailnet peer, data sent between the proxy and the target will no longer be
+    /// encrypted, and will be sent in plaintext. This includes `target_addr`s such as localhost
+    /// (127.0.0.0/8, etc.), a private IP address (10.0.0.0/8, fd00::/8, etc.), or a public IP
+    /// address (1.2.3.4, etc.). Consider the risks of proxying a tailnet peer with a target remote
+    /// before using this method.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use tailscale::*;
+    /// let dev = Device::new(
+    ///     &Config::default_with_key_file("tsrs_keys.json").await?,
+    ///     Some("MY_AUTH_KEY".to_string()),
+    /// ).await?;
+    /// let listen_addr = (dev.ipv4_addr().await?, 1234).into();
+    /// let target_addr = ([127, 0, 0, 1], 4567).into();
+    /// dev.tcp_proxy(listen_addr, target_addr, None, None).await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Details
+    /// Listens on the given `listen_addr` for an incoming TCP connection from a remote tailnet
+    /// peer. Once the remote stream is established, connects to the given `target_addr` to
+    /// establish the target stream, then proxies bytes between the two streams until one stream
+    /// closes, or the task is canceled. `target_addr` may be any valid TCP4/TCP6 address, such as
+    /// a port on a tailnet peer, localhost, or a public/private IP address.
+    ///
+    /// Does not retry if the first connection attempt to the `target_addr` fails; retry loops
+    /// must be built on top of this method.
+    ///
+    /// Each direction of the proxy (remote-to-target and target-to-remote) uses a buffer to hold
+    /// bytes being proxied. The size of each of these buffers can be tuned with `remote_buf_len`
+    /// and `target_buf_len`, respectively. By default, these buffers are 8KiB in size.
+    pub async fn tcp_proxy(
+        &self,
+        listen_addr: SocketAddr,
+        remote_buf_len: Option<usize>,
+        target_buf_len: Option<usize>,
+    ) -> Result<TcpProxy, Error> {
+        let listener = self.tcp_listen(listen_addr).await?;
+        Ok(TcpProxy::new(
+            self.channel.clone(),
+            listener,
+            remote_buf_len,
+            target_buf_len,
+        ))
     }
 
     /// Get our node info.

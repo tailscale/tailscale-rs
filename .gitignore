@@ -16,3 +16,4 @@ ts_python/python/tailscale/*.so
 *.dll
 *.lib
 tailscale.h
+__pycache__/

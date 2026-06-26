@@ -5,7 +5,10 @@ use std::{
     sync::{Arc, Once},
 };
 
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyConnectionRefusedError, PyConnectionResetError, PyTimeoutError, PyValueError},
+    prelude::*,
+};
 use pyo3_async_runtimes::tokio::future_into_py;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -23,6 +26,7 @@ mod udp;
 
 use key_state::Keystate;
 use node_info::NodeInfo;
+use ts::Error;
 
 /// Tailscale API.
 #[pymodule]
@@ -164,6 +168,62 @@ impl Device {
             Ok(tcp::TcpStream {
                 sock: Arc::new(sock),
             })
+        })
+    }
+
+    // TODO (dylan): update doc comment
+    /// Proxies a remote TCP stream to a target TCP stream.
+    ///
+    /// # Warning
+    /// `target_addr` may contain any valid IPv4/IPv6 address. If `target_addr` references anything
+    /// other than a tailnet peer, data sent between the proxy and the target will no longer be
+    /// encrypted, and will be sent in plaintext. This includes `target_addr`s such as localhost
+    /// (127.0.0.0/8, etc.), a private IP address (10.0.0.0/8, fd00::/8, etc.), or a public IP
+    /// address (1.2.3.4, etc.). Consider the risks of proxying a tailnet peer with a target remote
+    /// before using this method.
+    ///
+    /// # Details
+    /// Listens on the given `listen_addr` for an incoming TCP connection from a remote tailnet
+    /// peer. Once the remote stream is established, connects to the given `target_addr` to
+    /// establish the target stream, then proxies bytes between the two streams until one stream
+    /// closes, or the task is canceled.
+    ///
+    /// Each direction of the proxy (remote-to-target and target-to-remote) uses a buffer to hold
+    /// bytes being proxied. The size of each of these buffers can be tuned with `remote_buf_len`
+    /// and `target_buf_len`, respectively. By default, these buffers are 8KiB in size.
+    #[pyo3(signature = (listen_addr: "tuple[IPv4Address | IPv6Address | str, int]", target_addr: "tuple[IPv4Address | IPv6Address | str, int]", remote_buf_len: "int | None" = None, target_buf_len: "int | None" = None) -> "Awaitable[TcpProxyServer]")]
+    pub fn tcp_proxy<'p>(
+        &self,
+        py: Python<'p>,
+        listen_addr: (IpRepr, u16),
+        target_addr: (IpRepr, u16),
+        remote_buf_len: Option<usize>,
+        target_buf_len: Option<usize>,
+    ) -> PyFut<'p> {
+        let dev = self.dev.clone();
+        let listen_addr = (IpAddr::try_from(listen_addr.0)?, listen_addr.1).into();
+        let proxy_addr = (IpAddr::try_from(target_addr.0)?, target_addr.1).into();
+
+        future_into_py(py, async move {
+            match dev
+                .tcp_proxy(listen_addr, proxy_addr, remote_buf_len, target_buf_len)
+                .await
+            {
+                Ok(server) => Ok(tcp::TcpProxy {
+                    server: Arc::new(server),
+                }),
+                Err(err) => {
+                    let pyerr = match err {
+                        Error::Timeout => PyTimeoutError::new_err(err.to_string()),
+                        Error::ConnectionReset => PyConnectionResetError::new_err(err.to_string()),
+                        Error::ConnectionRefused => {
+                            PyConnectionRefusedError::new_err(err.to_string())
+                        }
+                        _ => PyValueError::new_err(err.to_string()),
+                    };
+                    Err(pyerr)
+                }
+            }
         })
     }
 
