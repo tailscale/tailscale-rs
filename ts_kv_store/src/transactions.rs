@@ -114,8 +114,6 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         // presumably don't want to wait and we'd only need to retry if someone else grabbed the
         // the lock before we could.
     }
-
-    // TODO single-table transactions?
 }
 
 /// A read/write transaction over a [`KvStore`].
