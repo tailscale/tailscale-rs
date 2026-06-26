@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    KvStore, Owner, Result,
+    KvStore, Owner, Result, StoreWithOwner,
     index::{KvTableRoTransactionalIndex, KvTableTransactionalIndex},
     operations::{Ops, OpsMut, SingletonOps, SingletonOpsMut, TabularOps, TabularOpsMut},
     schema::{self, TableDesc},
@@ -113,6 +113,38 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         // We only try once, rather than loop because if the user is calling `try_begin_...`, they
         // presumably don't want to wait and we'd only need to retry if someone else grabbed the
         // the lock before we could.
+    }
+}
+
+impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage> {
+    /// Start a transaction.
+    ///
+    /// Blocks until the store's global lock is available for write access.
+    pub fn begin_transaction(&self) -> Transaction<'_, TableStorage> {
+        self.store.begin_transaction(self.owner)
+    }
+
+    /// Start a transaction.
+    ///
+    /// Returns `None` if the store's global lock is unavailable for write access.
+    pub fn try_begin_transaction(&self) -> Option<Transaction<'_, TableStorage>> {
+        self.store.try_begin_transaction(self.owner)
+    }
+
+    /// Start a read-only transaction (i.e., only supports non-mutating access to the store, but
+    /// all reads are guaranteed to be atomic).
+    ///
+    /// Blocks until the store's global lock is available for read access.
+    pub fn begin_ro_transaction(&self) -> RoTransaction<'_, TableStorage> {
+        self.store.begin_ro_transaction(self.owner)
+    }
+
+    /// Start a read-only transaction (i.e., only supports non-mutating access to the store, but
+    /// all reads are guaranteed to be atomic).
+    ///
+    /// Returns `None` if the store's global lock is unavailable for read access.
+    pub fn try_begin_ro_transaction(&self) -> Option<RoTransaction<'_, TableStorage>> {
+        self.store.try_begin_ro_transaction(self.owner)
     }
 }
 

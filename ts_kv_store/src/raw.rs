@@ -3,7 +3,7 @@
 use std::{borrow::Borrow, hash::Hash, sync::Arc};
 
 use crate::{
-    Error, KvStore, KvTableTransactional, Owner, Result,
+    Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner,
     index::KvTableIndex,
     operations::{Ops, SingletonOps, SingletonOpsMut, TabularOps, TabularOpsMut},
     schema,
@@ -108,6 +108,73 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         SingletonOpsMut::remove::<D>(&mut txn, owner);
         // Should never panic since transaction should only fail on index inserts.
         txn.commit().unwrap();
+    }
+}
+
+impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage> {
+    /// Operate on tables of key/values in the store.
+    ///
+    /// # Example:
+    ///
+    /// ```rust,ignore
+    /// let value = store.table::<Foo>().get(key).unwrap();
+    /// ```
+    pub fn table<D: schema::TableDesc<Storage = TableStorage>>(&self) -> KvTable<'_, D> {
+        KvTable {
+            store: self.store,
+            owner: self.owner,
+        }
+    }
+
+    /// Access a table via an index.
+    ///
+    /// # Example:
+    ///
+    /// ```rust,ignore
+    /// let value = store.table_by::<index::Foo::bar>().get(key).unwrap();
+    /// ```
+    ///
+    /// Here `Foo` describes a tables and `bar` describes an index over `Foo` using the `bar` field
+    /// as foreign key.
+    pub fn table_by<D: schema::IndexDesc<Storage = TableStorage>>(&self) -> KvTableIndex<'_, D> {
+        KvTableIndex {
+            store: self.store,
+            owner: self.owner,
+        }
+    }
+
+    /// Get a single value from the store by cloning the value.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn get<D: schema::Singleton>(&self) -> Option<D::Value>
+    where
+        D::Value: Clone,
+    {
+        self.store.get::<D>(self.owner)
+    }
+
+    /// Get a single value from the store by cloning an `Arc`.
+    ///
+    /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
+    pub fn get_arc<D: schema::ArcSingleton>(&self) -> Option<Arc<D::Value>> {
+        self.store.get_arc::<D>(self.owner)
+    }
+
+    /// Get immutable access to a value in the store by reference.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    pub fn with<D: schema::Singleton, T>(&self, f: impl FnOnce(&D::Value) -> T) -> Option<T> {
+        self.store.with::<D, T>(self.owner, f)
+    }
+
+    /// Insert a single value into the store.
+    pub fn insert<D: schema::Singleton>(&self, value: D::ArgValue) {
+        self.store.insert::<D>(self.owner, value)
+    }
+
+    /// Remove a single value from the store.
+    pub fn remove<D: schema::Singleton>(&self) {
+        self.store.remove::<D>(self.owner)
     }
 }
 
