@@ -183,6 +183,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         KvStore { storage }
     }
 
+    /// A convenience for operating on a KV store with a specified owner.
+    pub fn with_owner(&self, owner: Owner) -> StoreWithOwner<'_, TableStorage> {
+        StoreWithOwner { store: self, owner }
+    }
+
     /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
     fn get_read_lock(&self) -> RwLockReadGuard<'_, storage::Storage<TableStorage>> {
         self.clear_lock_poison();
@@ -220,6 +225,15 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             lock.clear_transaction();
         }
     }
+}
+
+/// A reference to a store for a specified owner.
+///
+/// A convenience wrapper to avoid specifying an owner on every operation.
+#[derive(Clone)]
+pub struct StoreWithOwner<'a, TableStorage: schema::GeneratedStorage> {
+    store: &'a KvStore<TableStorage>,
+    owner: Owner,
 }
 
 /// A token indicating ownership of a KV singleton or table. See crate docs for what ownership means
