@@ -602,9 +602,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
     /// Check if this table's transaction state is consistent for commit.
     ///
-    /// Must be called before calling `commit_txn`. In theory, because of the global lock, this
-    /// should never happen. But if we were to allow transactions to be timed-out (or multiple
+    /// Must be called before calling `commit_txn`. In theory, because of the global lock, the transaction
+    /// should not conflict. But if we were to allow transactions to be timed-out (or multiple
     /// mutating transaction), or in the presence of unsafe code, then inconsistency could happen.
+    ///
+    /// This will error too if an index has been poisoned during the transaction.
     pub fn check_txn_consistency(&self, txn_id: TxnId) -> Result<()> {
         if let Some(modified) = &self.modified
             && modified.txn_id != txn_id
@@ -799,11 +801,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        if txn_id == max_committed_id {
-            if let Some(value) = self.data.remove(key).and_then(|mut v| v.take(txn_id)) {
-                self.indexes.on_remove(&value, txn_id, max_committed_id);
-            }
-        } else if txn_id > max_committed_id {
+        if txn_id > max_committed_id {
             let dm_result = self.delete_mask.remove(key, txn_id, &self.data);
             if let Some(value) = dm_result
                 .as_ref()
@@ -813,19 +811,17 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             }
         } else {
             unreachable!(
-                "current transaction id less than committed id: {txn_id:?} < {max_committed_id:?}"
+                "current transaction id less than committed id: {txn_id:?} <= {max_committed_id:?}"
             );
         }
     }
 
     pub fn clear(&mut self, txn_id: TxnId, max_committed_id: TxnId) {
-        if txn_id == max_committed_id {
-            self.data.clear();
-        } else if txn_id > max_committed_id {
+        if txn_id > max_committed_id {
             self.delete_mask.clear(txn_id);
         } else {
             unreachable!(
-                "current transaction id less than committed id: {txn_id:?} < {max_committed_id:?}"
+                "current transaction id less than committed id: {txn_id:?} <= {max_committed_id:?}"
             );
         }
 

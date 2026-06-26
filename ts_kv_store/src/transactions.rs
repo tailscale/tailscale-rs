@@ -249,7 +249,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
 
 /// Abstracts a table of key/values pairs in the store accessed as part of a transaction.
 pub struct KvTableTransactional<'guard, 'txn, D: TableDesc> {
-    txn: &'txn mut Transaction<'guard, D::Storage>,
+    pub(crate) txn: &'txn mut Transaction<'guard, D::Storage>,
 }
 
 impl<'guard, 'txn, 'table, D: TableDesc> Ops<D::Storage>
