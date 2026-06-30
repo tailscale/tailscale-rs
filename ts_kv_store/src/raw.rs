@@ -311,15 +311,21 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
 
 #[cfg(test)]
 mod test {
-    use std::{any::Any, sync::Arc};
+    use std::sync::Arc;
 
-    use crate::{KvErrorExt, singleton, tables};
+    use crate::{KvErrorExt, store};
 
-    singleton!(Count(u64; OWNER));
-    singleton!(Shared(String as Arc; OWNER));
-    singleton!(Label(u64 as Ref; OWNER));
-
-    tables!(Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER));
+    store!(
+        kvs: {
+            Count(u64; OWNER),
+            Shared(String as Arc; OWNER),
+            Label(u64 as Ref; OWNER),
+        }
+        tables: {
+            Items(&'static str => String; OWNER),
+            Counters(u32 => u64; OWNER),
+        }
+    );
 
     const OWNER: &str = "owner";
     const OTHER: &str = "other";

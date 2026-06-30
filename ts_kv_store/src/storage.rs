@@ -1124,10 +1124,9 @@ mod txn_test {
 
     use std::any::TypeId;
 
-    use crate::{Error, singleton, storage::Storage, tables};
+    use crate::{Error, storage::Storage, store};
 
-    singleton!(Count(u64; "owner"));
-    tables!();
+    store!(kvs: { Count(u64; "owner") });
 
     #[test]
     fn commit_with_mismatched_id_fails() {

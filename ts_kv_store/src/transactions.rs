@@ -574,14 +574,14 @@ impl<'guard, D: TableDesc> KvTableRoTransactional<'guard, '_, D> {
 
 #[cfg(test)]
 mod test {
-    use std::{any::Any, sync::Arc};
+    use std::sync::Arc;
 
-    use crate::{singleton, tables};
+    use crate::{singleton, store};
 
     singleton!(Count(u64; OWNER));
     singleton!(Shared(String as Arc; OWNER));
 
-    tables!(Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER));
+    store!(tables: { Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER) });
 
     const OWNER: &str = "owner";
     #[cfg(debug_assertions)]
