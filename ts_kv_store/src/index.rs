@@ -462,7 +462,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
 
 #[cfg(test)]
 mod test {
-    use crate::{KvErrorExt, tables};
+    use crate::{KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -475,7 +475,7 @@ mod test {
         }
     }
 
-    tables!(Users(u32 => Row; OWNER; index(name: String)));
+    store!(tables: { Users(u32 => Row; OWNER; index(name: String)) });
 
     const OWNER: &str = "owner";
     const OTHER: &str = "other";
@@ -908,7 +908,7 @@ mod test {
 
 #[cfg(test)]
 mod test_two_indexes {
-    use crate::{KvErrorExt, tables};
+    use crate::{KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Person {
@@ -923,7 +923,7 @@ mod test_two_indexes {
         }
     }
 
-    tables!(People(u32 => Person; OWNER; index(email: String); index(username: Vec<u8>)));
+    store!(tables: { People(u32 => Person; OWNER; index(email: String); index(username: Vec<u8>)) });
 
     const OWNER: &str = "owner";
 
@@ -1215,7 +1215,7 @@ mod test_two_indexes {
 
 #[cfg(test)]
 mod test_transactional_index {
-    use crate::{KvErrorExt, tables};
+    use crate::{KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -1230,7 +1230,7 @@ mod test_transactional_index {
         }
     }
 
-    tables!(Users(u32 => Row; OWNER; index(name: String)));
+    store!(tables: { Users(u32 => Row; OWNER; index(name: String)) });
 
     const OWNER: &str = "owner";
     #[cfg(debug_assertions)]
@@ -1668,7 +1668,7 @@ mod test_transactional_index {
 
 #[cfg(test)]
 mod test_poison {
-    use crate::{Error, KvErrorExt, tables};
+    use crate::{Error, KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -1683,9 +1683,11 @@ mod test_poison {
         }
     }
 
-    tables!(
-        Users(u32 => Row; OWNER; index(name: String); index(email: String)),
-        AssertingUsers(u32 => Row; OWNER; index(name: String; assert_unique))
+    store!(
+        tables: {
+            Users(u32 => Row; OWNER; index(name: String); index(email: String)),
+            AssertingUsers(u32 => Row; OWNER; index(name: String; assert_unique)),
+        }
     );
 
     const OWNER: &str = "owner";

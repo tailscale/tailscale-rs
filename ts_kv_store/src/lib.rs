@@ -5,10 +5,12 @@
 //! # Example:
 //!
 //! ```rust
-//! # use ts_kv_store::{Owner, singleton, tables};
+//! # use ts_kv_store::{Owner, store};
 //! # const OWNER: Owner = "owner";
-//! singleton!(foo(u64; OWNER));
-//! tables!(Nodes(u32 => String; OWNER));
+//! store!(
+//!     kvs: { foo(u64; OWNER) }
+//!     tables: { Nodes(u32 => String; OWNER) }
+//! );
 //!
 //! pub fn main() {
 //!     let store = KvStore::new();

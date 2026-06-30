@@ -191,185 +191,40 @@ pub trait GeneratedStorage: Default {
     fn gc_txn(&mut self, txn_id: TxnId);
 }
 
-/// Macro to declare a singleton key/value in the store.
+/// Declare the schema of a key/value store. Generates the store itself with the specified tables and
+/// singletons.
 ///
-/// Does not need to be used within or near the store declaration, but also is not linked to a specific
-/// store. Using a generated accessor on a store different to the store the key/value was stored in
-/// will have unpredictable results (panics, memory safety, etc.).
+/// The syntax is `store!((Name(KeyType => ValueType; owner; indexes?) | Name(ValueKind; owner)),*)`,
+///  where `Name` is an identifier to name the table or singleton (in which case it is also the key),
+/// `KeyType` and `ValueType` are types, `ValueKind` is `u64 | ValueType as (Box | Arc | Ref)`.
+/// `owner` is an expression which evaluates to an `Owner`. `Name` is used as a type argument to
+/// KvStore methods to identify the table or singletone.
 ///
-/// # Syntax:
+/// The storage kinds for singleton values are:
 ///
-/// - `singleton!(u64; owner)` to declare a value with type `u64` and inline storage.
-/// - `singleton!(ValueType as Box; owner)` to declare a value with type `Box<ValueType>`.
-/// - `singleton!(ValueType as Arc; owner)` to declare a value with type `Arc<ValueType>`.
-/// - `singleton!(ValueType as Ref; owner)` to declare a value with type `&'static ValueType`.
-///
-/// The storage class is separate to the value type since they have different representations in the
-/// store and slightly different APIs (e.g., whether mutable access is supported or access by cloning
-/// or copying a shared reference).
-///
-/// `owner` is an expression which evaluates to an `Owner` to specify the owner of the data.
-#[macro_export]
-macro_rules! singleton {
-    ($name:ident(u64; $owner:expr)) => {
-        $crate::singleton_types!($name(u64, u64, U64), $owner);
-
-        impl $crate::schema::MutSingleton for $name {
-            fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
-                match value {
-                    $crate::match_helper_lhs!(U64, v) => $crate::match_helper_rhs_mut!(U64, v),
-                    _ => unreachable!(),
-                }
-            }
-        }
-    };
-    ($name:ident($value_ty:ty as Box; $owner:expr)) => {
-        $crate::singleton_types!($name($value_ty, $value_ty, Box), $owner);
-
-        impl $crate::schema::MutSingleton for $name {
-            fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
-                match value {
-                    $crate::match_helper_lhs!(Box, v) => $crate::match_helper_rhs_mut!(Box, v),
-                    _ => unreachable!(),
-                }
-            }
-        }
-    };
-    ($name:ident($value_ty:ty as Arc; $owner:expr)) => {
-        $crate::singleton_types!($name($value_ty, std::sync::Arc<$value_ty>, Arc), $owner);
-
-        impl $crate::schema::ArcSingleton for $name {}
-    };
-    ($name:ident($value_ty:ty as Ref; $owner:expr)) => {
-        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref), $owner);
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! singleton_types {
-    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident), $owner:expr) => {
-        /// Describes a singleton in the KV store.
-        #[allow(non_camel_case_types)]
-        pub struct $name;
-
-        impl $crate::schema::Singleton for $name {
-            const OWNER: $crate::Owner = $owner;
-            type Value = $value_ty;
-            type ArgValue = $arg_value_ty;
-
-            fn from_value(value: $crate::storage::SinValue) -> Self::ArgValue {
-                match value {
-                    $crate::match_helper_lhs!($variant, v) => {
-                        $crate::match_helper_rhs!($variant, v)
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            fn from_value_ref(value: &$crate::storage::SinValue) -> &Self::Value {
-                match value {
-                    $crate::match_helper_lhs!($variant, v) => {
-                        $crate::match_helper_rhs_ref!($variant, v)
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            fn to_value(value: Self::ArgValue) -> $crate::storage::SinValue {
-                $crate::init_helper!($variant, value)
-            }
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! init_helper {
-    (U64, $value:ident) => {
-        $crate::storage::SinValue::U64($value)
-    };
-    (Box, $value:ident) => {
-        $crate::storage::SinValue::Box(std::boxed::Box::new($value) as Box<dyn Any + Send + Sync>)
-    };
-    (Arc, $value:ident) => {
-        $crate::storage::SinValue::Arc($value.clone() as std::sync::Arc<dyn Any + Send + Sync>)
-    };
-    (Ref, $value:ident) => {
-        $crate::storage::SinValue::Ref($value as &'static (dyn std::any::Any + Send + Sync))
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_lhs {
-    (U64, $value:ident) => {
-        $crate::storage::SinValue::U64($value)
-    };
-    ($variant:ident, $value:ident) => {
-        $crate::storage::SinValue::$variant($value)
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_rhs {
-    (U64, $value:ident) => {
-        $value
-    };
-    (Box, $value:ident) => {
-        *$value.downcast().unwrap()
-    };
-    (Arc, $value:ident) => {
-        $value.downcast().unwrap()
-    };
-    (Ref, $value:ident) => {
-        $value.downcast_ref().unwrap()
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_rhs_ref {
-    (U64, $value:ident) => {
-        $value
-    };
-    ($variant:ident, $value:ident) => {
-        $value.downcast_ref().unwrap()
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_rhs_mut {
-    (U64, $value:ident) => {
-        $value
-    };
-    ($variant:ident, $value:ident) => {
-        $value.downcast_mut().unwrap()
-    };
-}
-
-/// Declare the tables in a key/value store. Generates the store itself with the specified tables.
-///
-/// The syntax is `tables!(Name(KeyType => ValueType; owner; indexes?),*)`, where `Name` is an
-/// identifier to name the table, `KeyType` and `ValueType` are types, and `owner` is an expression
-/// which evaluates to an `Owner`. `Name` is used as a type argument to KvStore methods to identify
-/// the table.
-///
-/// Use with an empty list of tables to generate a store for use only with singleton key/value pairs.
+/// - `u64` a `u64` stored inline.
+/// - `Box` a value with type `Box<ValueType>`.
+/// - `Arc` a value with type `Arc<ValueType>`.
+/// - `Ref` a value with type `&'static ValueType`.
 ///
 /// # Example:
 ///
 /// ```rust
-/// # use ts_kv_store::tables;
-/// # const NODES_OWNER: ts_kv_store::Owner = "foo";
-/// # const EDGES_OWNER: ts_kv_store::Owner = "bar";
+/// # use ts_kv_store::store;
+/// # const GRAPH_OWNER: ts_kv_store::Owner = "foo";
+/// # const NODES_OWNER: ts_kv_store::Owner = "bar";
+/// # const EDGES_OWNER: ts_kv_store::Owner = "baz";
 /// # pub struct Node;
+/// # pub struct Gid;
 /// # pub trait Edge {}
-/// tables!(
-///   Nodes(&'static str => Node; NODES_OWNER),
-///   Edges(u32 => Box<dyn Edge + Send + Sync>; EDGES_OWNER)
+/// store!(
+///   kvs: {
+///     GraphId(Gid as Arc; GRAPH_OWNER),
+///   }
+///   tables: {
+///     Nodes(&'static str => Node; NODES_OWNER),
+///     Edges(u32 => Box<dyn Edge + Send + Sync>; EDGES_OWNER),
+///   }
 /// );
 /// ```
 ///
@@ -380,17 +235,19 @@ macro_rules! match_helper_rhs_mut {
 /// specify multiple indexes for each table, separated with a semicolon. E.g.,
 ///
 /// ```rust
-/// # use ts_kv_store::tables;
+/// # use ts_kv_store::store;
 /// # const NODES_OWNER: ts_kv_store::Owner = "foo";
 /// # pub struct Node { a: u32, b: String };
-/// tables!(
-///   Nodes(
-///     &'static str => Node;
-///     NODES_OWNER;
-///     index(a: u32);
-///     index(b: String; assert_unique);
-///     index(c: String = |node: &Node| [format!("{}-{}", node.a, node.b)]);
-///   )
+/// store!(
+///   tables: {
+///     Nodes(
+///       &'static str => Node;
+///       NODES_OWNER;
+///       index(a: u32);
+///       index(b: String; assert_unique);
+///       index(c: String = |node: &Node| [format!("{}-{}", node.a, node.b)]);
+///     )
+///   }
 /// );
 /// ```
 ///
@@ -405,9 +262,19 @@ macro_rules! match_helper_rhs_mut {
 /// By adding `assert_unique` to an index declaration (after the index field, separated with a semicolon),
 /// attempting to store multiple rows with the same index key will cause a panic.
 #[macro_export]
-macro_rules! tables {
-    ($($name: ident ($key_ty: ty => $value_ty: ty; $owner: expr $(; index($field: ident: $field_ty: ty $(= $get_idx: expr)? $(; $unique:ident)?))* $(;)?)),*) => {
-        $(
+macro_rules! store {
+    (
+        $(kvs: { $($sname: ident $sbody: tt),* $(,)? })?
+        $(tables: { $(
+            $name: ident (
+                $key_ty: ty => $value_ty: ty;
+                $owner: expr
+                $(; index($field: ident: $field_ty: ty $(= $get_idx: expr)? $(; $unique:ident)?))* $(;)?
+            )
+        ),* $(,)? })?
+    ) => {
+        $($($crate::singleton!($sname $sbody );)*)?
+        $($(
             /// Describes a table in the KV store.
             #[derive(Default)]
             pub struct $name;
@@ -449,39 +316,43 @@ macro_rules! tables {
                     type BaseTable = $name;
                 }
             )*
-        )*
+        )*)?
 
         /// Macro-generated storage for all tabular data.
         #[derive(Default)]
         #[allow(non_snake_case)]
         pub struct TableStorage {
-            $($name: $crate::storage::Table<$name, index::$name::Indexes>),*
+            $($($name: $crate::storage::Table<$name, index::$name::Indexes>),*)?
         }
 
         impl $crate::schema::GeneratedStorage for TableStorage {
             fn commit_txn(&mut self, _txn_id: $crate::transactions::TxnId) -> $crate::Result<()> {
                 $(
-                    self.$name.check_txn_consistency(_txn_id)?;
-                    $(self.$name.indexes.$field.check_txn_consistency(_txn_id)?;)*
-                )*
-                $(
-                    self.$name.commit_txn(_txn_id);
-                    $(self.$name.indexes.$field.commit_txn(_txn_id);)*
-                )*
+                    $(
+                        self.$name.check_txn_consistency(_txn_id)?;
+                        $(self.$name.indexes.$field.check_txn_consistency(_txn_id)?;)*
+                    )*
+                    $(
+                        self.$name.commit_txn(_txn_id);
+                        $(self.$name.indexes.$field.commit_txn(_txn_id);)*
+                    )*
+                )?
 
                 Ok(())
             }
 
             fn gc_txn(&mut self, _txn_id: $crate::transactions::TxnId) {
                 $(
-                    self.$name.gc_txn(_txn_id);
-                    $(self.$name.indexes.$field.gc_txn(_txn_id);)*
-                )*
+                    $(
+                        self.$name.gc_txn(_txn_id);
+                        $(self.$name.indexes.$field.gc_txn(_txn_id);)*
+                    )*
+                )?
             }
         }
 
         pub mod index {
-            $(
+            $($(
                 #[allow(non_snake_case)]
                 pub mod $name {
                     $(
@@ -496,10 +367,10 @@ macro_rules! tables {
                         )*
                     }
                 }
-            )*
+            )*)?
         }
 
-        $(
+        $($(
             impl index::$name::Indexes {
                 $(
                     fn $field(val: &$value_ty) -> impl IntoIterator<Item = $field_ty> {
@@ -525,7 +396,7 @@ macro_rules! tables {
                     })*
                 }
             }
-        )*
+        )*)?
 
         /// A key-value store.
         ///
@@ -617,6 +488,152 @@ macro_rules! on_insert_each {
     };
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! singleton {
+    ($name:ident(u64; $owner:expr)) => {
+        $crate::singleton_types!($name(u64, u64, U64), $owner);
+
+        impl $crate::schema::MutSingleton for $name {
+            fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
+                match value {
+                    $crate::match_helper_lhs!(U64, v) => $crate::match_helper_rhs_mut!(U64, v),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    };
+    ($name:ident($value_ty:ty as Box; $owner:expr)) => {
+        $crate::singleton_types!($name($value_ty, $value_ty, Box), $owner);
+
+        impl $crate::schema::MutSingleton for $name {
+            fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
+                match value {
+                    $crate::match_helper_lhs!(Box, v) => $crate::match_helper_rhs_mut!(Box, v),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    };
+    ($name:ident($value_ty:ty as Arc; $owner:expr)) => {
+        $crate::singleton_types!($name($value_ty, std::sync::Arc<$value_ty>, Arc), $owner);
+
+        impl $crate::schema::ArcSingleton for $name {}
+    };
+    ($name:ident($value_ty:ty as Ref; $owner:expr)) => {
+        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref), $owner);
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! singleton_types {
+    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident), $owner:expr) => {
+        /// Describes a singleton in the KV store.
+        #[allow(non_camel_case_types)]
+        pub struct $name;
+
+        impl $crate::schema::Singleton for $name {
+            const OWNER: $crate::Owner = $owner;
+            type Value = $value_ty;
+            type ArgValue = $arg_value_ty;
+
+            fn from_value(value: $crate::storage::SinValue) -> Self::ArgValue {
+                match value {
+                    $crate::match_helper_lhs!($variant, v) => {
+                        $crate::match_helper_rhs!($variant, v)
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            fn from_value_ref(value: &$crate::storage::SinValue) -> &Self::Value {
+                match value {
+                    $crate::match_helper_lhs!($variant, v) => {
+                        $crate::match_helper_rhs_ref!($variant, v)
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            fn to_value(value: Self::ArgValue) -> $crate::storage::SinValue {
+                $crate::init_helper!($variant, value)
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! init_helper {
+    (U64, $value:ident) => {
+        $crate::storage::SinValue::U64($value)
+    };
+    (Box, $value:ident) => {
+        $crate::storage::SinValue::Box(
+            std::boxed::Box::new($value) as Box<dyn std::any::Any + Send + Sync>
+        )
+    };
+    (Arc, $value:ident) => {
+        $crate::storage::SinValue::Arc(
+            $value.clone() as std::sync::Arc<dyn std::any::Any + Send + Sync>
+        )
+    };
+    (Ref, $value:ident) => {
+        $crate::storage::SinValue::Ref($value as &'static (dyn std::any::Any + Send + Sync))
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! match_helper_lhs {
+    (U64, $value:ident) => {
+        $crate::storage::SinValue::U64($value)
+    };
+    ($variant:ident, $value:ident) => {
+        $crate::storage::SinValue::$variant($value)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! match_helper_rhs {
+    (U64, $value:ident) => {
+        $value
+    };
+    (Box, $value:ident) => {
+        *$value.downcast().unwrap()
+    };
+    (Arc, $value:ident) => {
+        $value.downcast().unwrap()
+    };
+    (Ref, $value:ident) => {
+        $value.downcast_ref().unwrap()
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! match_helper_rhs_ref {
+    (U64, $value:ident) => {
+        $value
+    };
+    ($variant:ident, $value:ident) => {
+        $value.downcast_ref().unwrap()
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! match_helper_rhs_mut {
+    (U64, $value:ident) => {
+        $value
+    };
+    ($variant:ident, $value:ident) => {
+        $value.downcast_mut().unwrap()
+    };
+}
+
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
@@ -625,17 +642,19 @@ mod test {
 
     #[test]
     fn single() {
-        singleton!(Foo(u64 as Box; "owner"));
-        singleton!(Bar(u64 as Arc; "owner"));
-        singleton!(Baz(u64 as Ref; "owner"));
-        singleton!(Qux(u64; "owner"));
+        store!(
+            kvs: {
+                Foo(u64 as Box; "owner"),
+                Bar(u64 as Arc; "owner"),
+                Baz(u64 as Ref; "owner"),
+                Qux(u64; "owner"),
+            }
+        );
 
         assert_eq!(&42, Foo::from_value_ref(&Foo::to_value(42)));
         assert_eq!(&42, Bar::from_value_ref(&Bar::to_value(Arc::new(42))));
         assert_eq!(&42, Baz::from_value_ref(&Baz::to_value(&42)));
         assert_eq!(&42, Qux::from_value_ref(&Qux::to_value(42)));
-
-        tables!();
 
         let store = KvStore::new();
         store.insert::<Foo>("owner", 42);
@@ -644,7 +663,7 @@ mod test {
 
     #[test]
     fn table() {
-        tables!(Foo(&'static str => String; "owner"), Bar(u32 => Vec<String>; "owner"));
+        store!(tables: { Foo(&'static str => String; "owner"), Bar(u32 => Vec<String>; "owner")});
 
         let store = KvStore::new();
 
@@ -668,9 +687,11 @@ mod test {
         pub struct BarT {
             a: String,
         }
-        tables!(
-            Foo(&'static str => String; "owner"; index(len: usize = |v: &String| [v.len()])),
-            Bar(u32 => BarT; "owner"; index(a: String; assert_unique))
+        store!(
+            tables: {
+                Foo(&'static str => String; "owner"; index(len: usize = |v: &String| [v.len()])),
+                Bar(u32 => BarT; "owner"; index(a: String; assert_unique)),
+            }
         );
 
         let store = KvStore::new();
