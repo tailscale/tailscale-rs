@@ -24,6 +24,7 @@ impl kameo::Actor for PacketfilterUpdater {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+        env.register(None, &slf).await?;
 
         Ok(Self {
             env,

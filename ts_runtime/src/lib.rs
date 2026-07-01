@@ -28,12 +28,14 @@ mod netmon;
 mod netstack_actor;
 mod packetfilter;
 pub mod peer_tracker;
+mod registry;
 mod route_updater;
 mod src_filter;
 mod stunner;
 
 pub(crate) use env::Env;
 pub use error::{Error, ErrorKind};
+pub use registry::Registry;
 
 use crate::peer_tracker::PeerTracker;
 
@@ -120,10 +122,9 @@ impl Runtime {
         let (netstack_id, netstack_up, netstack_down) =
             dataplane.ask(dataplane::NewOverlayTransport).await?;
 
-        let multiderp = Multiderp::spawn((env.clone(), dataplane.clone()));
+        Multiderp::spawn((env.clone(), dataplane.clone()));
 
-        let rt_upd =
-            route_updater::RouteUpdater::spawn((multiderp.clone(), env.clone(), netstack_id));
+        let rt_upd = route_updater::RouteUpdater::spawn((env.clone(), netstack_id));
         let pf_upd = packetfilter::PacketfilterUpdater::spawn(env.clone());
         let src_upd = src_filter::SourceFilterUpdater::spawn(env.clone());
         let stunner = stunner::Stunner::spawn(env.clone());

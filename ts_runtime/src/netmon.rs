@@ -11,6 +11,7 @@ use kameo::{
     actor::ActorRef,
     message::{Context, Message, StreamMessage},
 };
+use smol_str::ToSmolStr;
 use ts_netmon::{Event, Family, InterfaceId, Netmon};
 
 use crate::env::Env;
@@ -134,6 +135,10 @@ impl Actor for NetmonActor {
             (),
             (),
         );
+
+        env.register(Some(mon.ty().as_ref().to_smolstr()), &slf)
+            .await
+            .unwrap();
 
         Ok(Self {
             env,

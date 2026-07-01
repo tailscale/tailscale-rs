@@ -23,6 +23,7 @@ impl kameo::Actor for DerpLatencyMeasurer {
 
     async fn on_start(env: Env, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+        env.register(None, &slf).await?;
 
         tracing::trace!("derp latency measurer running");
 

@@ -73,6 +73,8 @@ impl kameo::Actor for NetstackActor {
             tracing::warn!("netstack uplink shut down!");
         });
 
+        env.register(None, &slf).await?;
+
         Ok(Self {
             _joinset: joinset,
             channel,
