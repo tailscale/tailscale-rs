@@ -888,8 +888,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn index_insert_wrong_owner_panics() {
         let store = KvStore::new();
         store
@@ -898,8 +897,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn index_clear_wrong_owner_panics() {
         let store = KvStore::new();
         store.table_by::<index::Users::name>(OTHER).clear();
@@ -1233,7 +1231,6 @@ mod test_transactional_index {
     store!(tables: { Users(u32 => Row; OWNER; index(name: String)) });
 
     const OWNER: &str = "owner";
-    #[cfg(debug_assertions)]
     const OTHER: &str = "other";
 
     #[test]
@@ -1527,8 +1524,7 @@ mod test_transactional_index {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_index_insert_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
@@ -1536,8 +1532,7 @@ mod test_transactional_index {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_index_clear_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
@@ -1545,8 +1540,7 @@ mod test_transactional_index {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_index_for_each_mut_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
