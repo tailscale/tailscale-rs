@@ -424,8 +424,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn singleton_insert_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
@@ -433,8 +432,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn singleton_remove_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
@@ -698,8 +696,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
         store
@@ -709,23 +706,19 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn table_remove_wrong_owner_panics() {
         let store = KvStore::new();
         store.table::<Items>(OTHER).remove(&"k");
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn table_clear_wrong_owner_panics() {
         let store = KvStore::new();
         store.table::<Items>(OTHER).clear();
     }
 
-    // `remove` no longer returns the removed value: it is used in statement position and its only
-    // observable effect is that the row becomes absent.
     #[test]
     fn table_remove_used_in_statement_position() {
         let store = KvStore::new();
