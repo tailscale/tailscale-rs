@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kameo::{
-    actor::ActorRef,
+    actor::{ActorRef, Spawn},
     message::{Context, Message},
 };
 use tokio::sync::mpsc;
@@ -9,7 +9,7 @@ use ts_packet::PacketMut;
 use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
 
 use crate::{
-    Error,
+    Error, Task,
     env::Env,
     packetfilter::PacketFilterState,
     peer_tracker::PeerState,
@@ -31,13 +31,6 @@ pub type UnderlayFromDataplane = mpsc::UnboundedReceiver<(PeerId, Vec<PacketMut>
 
 pub struct DataplaneActor {
     dataplane: Arc<ts_dataplane::async_tokio::DataPlane>,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for DataplaneActor {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
 }
 
 #[kameo::messages]
@@ -78,13 +71,14 @@ impl kameo::Actor for DataplaneActor {
 
         let task_dataplane = dataplane.clone();
 
-        let task = tokio::task::spawn(async move {
+        Task::spawn_link(&slf, async move {
             task_dataplane.run().await;
-        });
+        })
+        .await;
 
         tracing::trace!("dataplane running");
 
-        Ok(Self { dataplane, task })
+        Ok(Self { dataplane })
     }
 }
 

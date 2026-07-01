@@ -10,7 +10,7 @@ use kameo::{
     mailbox::Signal,
 };
 use netstack::netcore::Channel;
-use tokio::sync::watch;
+use tokio::sync::{Mutex, watch};
 
 use crate::{
     control_runner::ControlRunner, dataplane::DataplaneActor, multiderp::Multiderp,
@@ -31,9 +31,11 @@ pub mod peer_tracker;
 mod route_updater;
 mod src_filter;
 mod stunner;
+mod task;
 
 pub(crate) use env::Env;
 pub use error::{Error, ErrorKind};
+pub use task::{ErasedTask, Task};
 
 use crate::peer_tracker::PeerTracker;
 
@@ -133,8 +135,12 @@ impl Runtime {
 
         let peer_tracker = PeerTracker::spawn(env.clone());
 
-        let netstack =
-            NetstackActor::spawn((env.clone(), Default::default(), netstack_up, netstack_down));
+        let netstack = NetstackActor::spawn((
+            env.clone(),
+            Default::default(),
+            netstack_up,
+            Arc::new(Mutex::new(netstack_down)),
+        ));
 
         let control = ControlRunner::spawn(control_runner::Params {
             config,

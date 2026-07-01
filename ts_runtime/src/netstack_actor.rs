@@ -1,24 +1,24 @@
 use std::sync::Arc;
 
 use kameo::{
-    actor::ActorRef,
+    actor::{ActorRef, Spawn},
     message::{Context, Message},
 };
 use netstack::{
     HasChannel,
     netcore::{Channel, NetstackControl},
 };
-use tokio::task::JoinSet;
+use tokio::sync::Mutex;
 use ts_packet::PacketMut;
 
 use crate::{
     Error,
     dataplane::{OverlayFromDataplane, OverlayToDataplane},
     env::Env,
+    task::Task,
 };
 
 pub struct NetstackActor {
-    _joinset: JoinSet<()>,
     channel: Channel,
 }
 
@@ -27,12 +27,12 @@ impl kameo::Actor for NetstackActor {
         Env,
         netstack::netcore::Config,
         OverlayToDataplane,
-        OverlayFromDataplane,
+        Arc<Mutex<OverlayFromDataplane>>,
     );
     type Error = Error;
 
     async fn on_start(
-        (env, config, netstack_up, mut netstack_down): Self::Args,
+        (env, config, netstack_up, netstack_down): Self::Args,
         slf: ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
@@ -46,13 +46,12 @@ impl kameo::Actor for NetstackActor {
         ) = netstack::piped(config);
         let channel = netstack.command_channel();
 
-        let mut joinset = JoinSet::new();
-
-        joinset.spawn(async move {
+        Task::spawn_link(&slf, async move {
             netstack.run_tokio().await;
-        });
+        })
+        .await;
 
-        joinset.spawn(async move {
+        Task::spawn_link(&slf, async move {
             while let Some(buf) = netstack_down_rx.recv_async().await {
                 if netstack_up.send(vec![buf.to_vec().into()]).is_err() {
                     break;
@@ -60,9 +59,15 @@ impl kameo::Actor for NetstackActor {
             }
 
             tracing::warn!("netstack downlink shut down!");
-        });
+        })
+        .await;
 
-        joinset.spawn(async move {
+        Task::spawn_link(&slf, async move {
+            // NetstackActor is supervised, so the same netstack down channel may be handed to
+            // another actor instance if this one panics. We hold this mutex open indefinitely,
+            // relying on the Drop of this future to clean it up when the owning joinset drops.
+            let mut netstack_down = netstack_down.lock().await;
+
             while let Some(bufs) = netstack_down.recv().await {
                 for buf in bufs {
                     let buf: PacketMut = buf;
@@ -71,12 +76,10 @@ impl kameo::Actor for NetstackActor {
             }
 
             tracing::warn!("netstack uplink shut down!");
-        });
-
-        Ok(Self {
-            _joinset: joinset,
-            channel,
         })
+        .await;
+
+        Ok(Self { channel })
     }
 }
 
