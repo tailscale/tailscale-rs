@@ -8,10 +8,9 @@ use futures::StreamExt;
 use kameo::{
     actor::{ActorRef, Spawn},
     message::{Context, StreamMessage},
-    prelude::Message,
+    prelude::{Message, ReplySender},
     reply::DelegatedReply,
 };
-use tokio::sync::watch;
 use ts_control::{AsyncControlClient, Error as ControlError, Node, StateUpdate};
 
 use crate::derp_latency::{DerpLatencyMeasurement, DerpLatencyMeasurer};
@@ -23,10 +22,12 @@ pub struct ControlRunner {
     client: AsyncControlClient,
     params: Params,
 
-    self_node: watch::Sender<Option<Node>>,
+    self_node: Option<Node>,
+    pending: Vec<PendingRequest>,
 }
 
 /// Control runner args.
+#[derive(Clone)]
 pub struct Params {
     /// Control config.
     pub(crate) config: ts_control::Config,
@@ -87,29 +88,9 @@ impl kameo::Actor for ControlRunner {
         Ok(Self {
             client,
             params,
-            self_node: Default::default(),
+            self_node: None,
+            pending: Default::default(),
         })
-    }
-}
-
-impl ControlRunner {
-    fn with_self_node<F, R>(&self, f: F) -> impl Future<Output = Option<R>> + use<F, R>
-    where
-        F: FnOnce(&Node) -> R,
-    {
-        let mut sub = self.self_node.subscribe();
-        let mut shutdown = self.params.env.shutdown.clone();
-
-        async move {
-            tokio::select! {
-                _ = shutdown.wait_for(|x| *x) => {
-                    None
-                },
-                node = sub.wait_for(Option::is_some) => {
-                    Some(f(node.ok()?.as_ref()?))
-                },
-            }
-        }
     }
 }
 
@@ -118,18 +99,16 @@ impl ControlRunner {
     /// Fetch the IPv4 address for this tailscale device.
     #[message(ctx)]
     pub fn ipv4(
-        &self,
+        &mut self,
         ctx: &mut Context<Self, DelegatedReply<Option<Ipv4Addr>>>,
     ) -> DelegatedReply<Option<Ipv4Addr>> {
+        if let Some(node) = &self.self_node {
+            return ctx.reply(Some(node.tailnet_address.ipv4.addr()));
+        }
+
         let (deleg, replier) = ctx.reply_sender();
-
         if let Some(replier) = replier {
-            let fut = self.with_self_node(|node| node.tailnet_address.ipv4.addr());
-
-            tokio::spawn(async move {
-                let ip = fut.await;
-                replier.send(ip);
-            });
+            self.pending.push(PendingRequest::Ipv4(replier));
         }
 
         deleg
@@ -138,18 +117,16 @@ impl ControlRunner {
     /// Fetch the IPv6 address for this tailscale device.
     #[message(ctx)]
     pub fn ipv6(
-        &self,
+        &mut self,
         ctx: &mut Context<Self, DelegatedReply<Option<Ipv6Addr>>>,
     ) -> DelegatedReply<Option<Ipv6Addr>> {
+        if let Some(node) = &self.self_node {
+            return ctx.reply(Some(node.tailnet_address.ipv6.addr()));
+        }
+
         let (deleg, replier) = ctx.reply_sender();
-
         if let Some(replier) = replier {
-            let fut = self.with_self_node(|node| node.tailnet_address.ipv6.addr());
-
-            tokio::spawn(async move {
-                let ip = fut.await;
-                replier.send(ip);
-            });
+            self.pending.push(PendingRequest::Ipv6(replier));
         }
 
         deleg
@@ -158,22 +135,26 @@ impl ControlRunner {
     /// Fetch the self node for this tailscale device.
     #[message(ctx)]
     pub fn self_node(
-        &self,
+        &mut self,
         ctx: &mut Context<Self, DelegatedReply<Option<Node>>>,
     ) -> DelegatedReply<Option<Node>> {
+        if let Some(node) = &self.self_node {
+            return ctx.reply(Some(node.clone()));
+        }
+
         let (deleg, replier) = ctx.reply_sender();
-
         if let Some(replier) = replier {
-            let node = self.with_self_node(|node| node.clone());
-
-            tokio::spawn(async move {
-                let node = node.await;
-                replier.send(node)
-            });
+            self.pending.push(PendingRequest::SelfNode(replier));
         }
 
         deleg
     }
+}
+
+enum PendingRequest {
+    Ipv4(ReplySender<Option<Ipv4Addr>>),
+    Ipv6(ReplySender<Option<Ipv6Addr>>),
+    SelfNode(ReplySender<Option<Node>>),
 }
 
 impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
@@ -191,7 +172,7 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
 
             StreamMessage::Next(msg) => {
                 if let Some(node) = msg.node.as_ref() {
-                    self.self_node.send_replace(Some(node.clone()));
+                    self.self_node = Some(node.clone());
                 }
 
                 if let Err(e) = self.params.env.publish(msg).await {
@@ -201,6 +182,24 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
 
             StreamMessage::Finished(_) => {
                 tracing::error!("state update stream terminated")
+            }
+        }
+
+        if let Some(node) = &self.self_node
+            && !self.pending.is_empty()
+        {
+            for req in self.pending.drain(..) {
+                match req {
+                    PendingRequest::Ipv4(sender) => {
+                        sender.send(Some(node.tailnet_address.ipv4.addr()));
+                    }
+                    PendingRequest::Ipv6(sender) => {
+                        sender.send(Some(node.tailnet_address.ipv6.addr()));
+                    }
+                    PendingRequest::SelfNode(sender) => {
+                        sender.send(Some(node.clone()));
+                    }
+                }
             }
         }
     }
