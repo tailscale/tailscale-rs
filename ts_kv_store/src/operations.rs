@@ -9,7 +9,6 @@
 #![allow(clippy::wrong_self_convention)]
 
 use std::{
-    any::TypeId,
     borrow::Borrow,
     hash::Hash,
     sync::{Arc, RwLockReadGuard, RwLockWriteGuard},
@@ -78,35 +77,35 @@ impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuardMut<TableSt
 pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
     Ops<TableStorage>
 {
-    fn get<D: schema::Singleton>(self, _owner: Owner) -> Option<D::Value>
+    fn get<D: schema::Singleton<Storage = TableStorage>>(self, _owner: Owner) -> Option<D::Value>
     where
         D::Value: Clone,
     {
         let storage = self.read_lock();
         let storage = storage.storage();
-        let key = TypeId::of::<D>();
         let txn_id = storage.txn_id();
-        storage.get_singleton_value::<D>(key, txn_id).cloned()
+        storage.get_singleton_value::<D>(txn_id).cloned()
     }
 
-    fn get_arc<D: schema::ArcSingleton>(self, _owner: Owner) -> Option<Arc<D::Value>> {
+    fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
+        self,
+        _owner: Owner,
+    ) -> Option<Arc<D::Value>> {
         let storage = self.read_lock();
         let storage = storage.storage();
-        let key = TypeId::of::<D>();
         let txn_id = storage.txn_id();
-        storage.get_singleton_arc::<D>(key, txn_id)
+        storage.get_singleton_arc::<D>(txn_id)
     }
 
-    fn with<D: schema::Singleton, T>(
+    fn with<D: schema::Singleton<Storage = TableStorage>, T>(
         self,
         f: impl FnOnce(&D::Value) -> T,
         _owner: Owner,
     ) -> Option<T> {
         let storage = self.read_lock();
         let storage = storage.storage();
-        let key = TypeId::of::<D>();
         let txn_id = storage.txn_id();
-        let value = storage.get_singleton_value::<D>(key, txn_id)?;
+        let value = storage.get_singleton_value::<D>(txn_id)?;
         Some(f(value))
     }
 }
@@ -359,24 +358,26 @@ pub(crate) trait OpsMut<TableStorage: schema::GeneratedStorage>: Sized {
 pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
     OpsMut<TableStorage>
 {
-    fn insert<D: schema::Singleton>(self, value: D::ArgValue, owner: Owner) {
+    fn insert<D: schema::Singleton<Storage = TableStorage>>(
+        self,
+        value: D::ArgValue,
+        owner: Owner,
+    ) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
         assert_owner::<D>(owner);
-        let key = TypeId::of::<D>();
 
         let txn_id = storage.txn_id();
-        storage.insert_singleton::<D>(key, value, txn_id);
+        storage.insert_singleton::<D>(value, txn_id);
     }
 
-    fn remove<D: schema::Singleton>(self, owner: Owner) {
+    fn remove<D: schema::Singleton<Storage = TableStorage>>(self, owner: Owner) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
-        let key = TypeId::of::<D>();
         assert_owner::<D>(owner);
 
         let txn_id = storage.txn_id();
-        storage.remove_singleton(key, txn_id);
+        storage.remove_singleton::<D>(txn_id);
     }
 }
 

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     Owner,
-    storage::{SinValue, Table},
+    storage::{SinValue, Table, VersionedValue},
     transactions::TxnId,
 };
 
@@ -25,6 +25,8 @@ pub trait Singleton: 'static {
     /// `Arc<Self::Value>`, for values stored by reference, this should be `&'static Self::Value`, and
     /// for other types, it should be the same as `Self::Value`.
     type ArgValue;
+    /// The storage for this singleton KV.
+    type Storage: GeneratedStorage;
 
     /// Unwrap a `SinValue` into a typed value.
     ///
@@ -36,6 +38,10 @@ pub trait Singleton: 'static {
     fn from_value_ref(value: &SinValue) -> &Self::Value;
     /// Wrap a typed value into a `SinValue`.
     fn to_value(value: Self::ArgValue) -> SinValue;
+    /// Get a reference to the field storing this singleton in `storage`.
+    fn field_ref(storage: &Self::Storage) -> &VersionedValue<SinValue>;
+    /// Get a mutable reference to the field storing this singleton in `storage`.
+    fn field_ref_mut(storage: &mut Self::Storage) -> &mut VersionedValue<SinValue>;
 }
 
 /// A singleton key/value which is store as an `Arc`.
@@ -194,8 +200,8 @@ pub trait GeneratedStorage: Default {
 /// Declare the schema of a key/value store. Generates the store itself with the specified tables and
 /// singletons.
 ///
-/// The syntax is `store!((Name(KeyType => ValueType; owner; indexes?) | Name(ValueKind; owner)),*)`,
-///  where `Name` is an identifier to name the table or singleton (in which case it is also the key),
+/// The syntax is `store!(kvs: { Name(ValueKind; owner),* } tables: { Name(KeyType => ValueType; owner; indexes?),* })`,
+/// where `Name` is an identifier to name the table or singleton (in which case it is also the key),
 /// `KeyType` and `ValueType` are types, `ValueKind` is `u64 | ValueType as (Box | Arc | Ref)`.
 /// `owner` is an expression which evaluates to an `Owner`. `Name` is used as a type argument to
 /// KvStore methods to identify the table or singletone.
@@ -273,7 +279,7 @@ macro_rules! store {
             )
         ),* $(,)? })?
     ) => {
-        $($($crate::singleton!($sname $sbody );)*)?
+        $($($crate::singleton!($sname $sbody, TableStorage);)*)?
         $($(
             /// Describes a table in the KV store.
             #[derive(Default)]
@@ -322,7 +328,8 @@ macro_rules! store {
         #[derive(Default)]
         #[allow(non_snake_case)]
         pub struct TableStorage {
-            $($($name: $crate::storage::Table<$name, index::$name::Indexes>),*)?
+            $($($name: $crate::storage::Table<$name, index::$name::Indexes>,)*)?
+            $($($sname: $crate::storage::VersionedValue<$crate::storage::SinValue>,)*)?
         }
 
         impl $crate::schema::GeneratedStorage for TableStorage {
@@ -346,6 +353,11 @@ macro_rules! store {
                     $(
                         self.$name.gc_txn(_txn_id);
                         $(self.$name.indexes.$field.gc_txn(_txn_id);)*
+                    )*
+                )?
+                $(
+                    $(
+                        self.$sname.gc_txn(_txn_id);
                     )*
                 )?
             }
@@ -491,8 +503,8 @@ macro_rules! on_insert_each {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! singleton {
-    ($name:ident(u64; $owner:expr)) => {
-        $crate::singleton_types!($name(u64, u64, U64), $owner);
+    ($name:ident(u64; $owner:expr), $storage:ident) => {
+        $crate::singleton_types!($name(u64, u64, U64), $owner, $storage);
 
         impl $crate::schema::MutSingleton for $name {
             fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
@@ -503,8 +515,8 @@ macro_rules! singleton {
             }
         }
     };
-    ($name:ident($value_ty:ty as Box; $owner:expr)) => {
-        $crate::singleton_types!($name($value_ty, $value_ty, Box), $owner);
+    ($name:ident($value_ty:ty as Box; $owner:expr), $storage:ident) => {
+        $crate::singleton_types!($name($value_ty, $value_ty, Box), $owner, $storage);
 
         impl $crate::schema::MutSingleton for $name {
             fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
@@ -515,20 +527,24 @@ macro_rules! singleton {
             }
         }
     };
-    ($name:ident($value_ty:ty as Arc; $owner:expr)) => {
-        $crate::singleton_types!($name($value_ty, std::sync::Arc<$value_ty>, Arc), $owner);
+    ($name:ident($value_ty:ty as Arc; $owner:expr), $storage:ident) => {
+        $crate::singleton_types!(
+            $name($value_ty, std::sync::Arc<$value_ty>, Arc),
+            $owner,
+            $storage
+        );
 
         impl $crate::schema::ArcSingleton for $name {}
     };
-    ($name:ident($value_ty:ty as Ref; $owner:expr)) => {
-        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref), $owner);
+    ($name:ident($value_ty:ty as Ref; $owner:expr), $storage:ident) => {
+        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref), $owner, $storage);
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! singleton_types {
-    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident), $owner:expr) => {
+    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident), $owner:expr, $storage:ident) => {
         /// Describes a singleton in the KV store.
         #[allow(non_camel_case_types)]
         pub struct $name;
@@ -537,6 +553,7 @@ macro_rules! singleton_types {
             const OWNER: $crate::Owner = $owner;
             type Value = $value_ty;
             type ArgValue = $arg_value_ty;
+            type Storage = $storage;
 
             fn from_value(value: $crate::storage::SinValue) -> Self::ArgValue {
                 match value {
@@ -558,6 +575,18 @@ macro_rules! singleton_types {
 
             fn to_value(value: Self::ArgValue) -> $crate::storage::SinValue {
                 $crate::init_helper!($variant, value)
+            }
+
+            fn field_ref(
+                storage: &Self::Storage,
+            ) -> &$crate::storage::VersionedValue<$crate::storage::SinValue> {
+                &storage.$name
+            }
+
+            fn field_ref_mut(
+                storage: &mut Self::Storage,
+            ) -> &mut $crate::storage::VersionedValue<$crate::storage::SinValue> {
+                &mut storage.$name
             }
         }
     };
