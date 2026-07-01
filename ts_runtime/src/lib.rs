@@ -28,6 +28,7 @@ mod netmon;
 mod netstack_actor;
 mod packetfilter;
 pub mod peer_tracker;
+mod retained_bus;
 mod route_updater;
 mod src_filter;
 mod stunner;
