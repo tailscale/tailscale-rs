@@ -107,10 +107,10 @@
 //! for documentation.
 //!
 //! The implementation of storage for tabular data is one HashMap per table, and otherwise
-//! straightforward. For singleton data, we use a single HashMap which maps `TypeId` to `(Owner, SinValue)`.
-//! Where the `TypeId` id the id of the type used to describe the singleton. Values can be
-//! stored in different ways (inline, via an `Arc`, etc.) each of which is a variant of `SinValue`.
-//! The store transparently converts keys and values to their declared types.
+//! straightforward. For singleton data, we store values (as a `SinValue`) in fields with the name
+//! of the singleton. Values can be stored in different ways (inline, via an `Arc`, etc.) each of
+//! which is a variant of `SinValue`. The store transparently converts keys and values to their
+//! declared types.
 //!
 //! The implementation of the storage operations (`get`, `insert`, etc.) is somewhat shared between
 //! the various types which support them (`KvStore`, the table types, the transaction types, index

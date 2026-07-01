@@ -245,7 +245,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton>(&self) -> Option<D::Value>
+    pub fn get<D: schema::Singleton<Storage = TableStorage>>(&self) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -255,24 +255,29 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     /// Get a single value from the store by cloning an `Arc`.
     ///
     /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton>(&self) -> Option<Arc<D::Value>> {
+    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
+        &self,
+    ) -> Option<Arc<D::Value>> {
         <&Self as SingletonOps<_>>::get_arc::<D>(self, self.owner)
     }
 
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton, T>(&self, f: impl FnOnce(&D::Value) -> T) -> Option<T> {
+    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+        &self,
+        f: impl FnOnce(&D::Value) -> T,
+    ) -> Option<T> {
         <&Self as SingletonOps<_>>::with::<D, T>(self, f, self.owner)
     }
 
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton>(&mut self, value: D::ArgValue) {
+    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&mut self, value: D::ArgValue) {
         <&mut Self as SingletonOpsMut<_>>::insert::<D>(self, value, self.owner)
     }
 
     /// Remove a single value from the store.
-    pub fn remove<D: schema::Singleton>(&mut self) {
+    pub fn remove<D: schema::Singleton<Storage = TableStorage>>(&mut self) {
         <&mut Self as SingletonOpsMut<_>>::remove::<D>(self, self.owner)
     }
 }
@@ -486,7 +491,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> RoTransaction<'guard, Table
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton>(&self) -> Option<D::Value>
+    pub fn get<D: schema::Singleton<Storage = TableStorage>>(&self) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -496,14 +501,19 @@ impl<'guard, TableStorage: schema::GeneratedStorage> RoTransaction<'guard, Table
     /// Get a single value from the store by cloning an `Arc`.
     ///
     /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton>(&self) -> Option<Arc<D::Value>> {
+    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
+        &self,
+    ) -> Option<Arc<D::Value>> {
         <&Self as SingletonOps<_>>::get_arc::<D>(self, self.owner)
     }
 
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton, T>(&self, f: impl FnOnce(&D::Value) -> T) -> Option<T> {
+    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+        &self,
+        f: impl FnOnce(&D::Value) -> T,
+    ) -> Option<T> {
         <&Self as SingletonOps<_>>::with::<D, T>(self, f, self.owner)
     }
 }
@@ -576,12 +586,12 @@ impl<'guard, D: TableDesc> KvTableRoTransactional<'guard, '_, D> {
 mod test {
     use std::sync::Arc;
 
-    use crate::{singleton, store};
+    use crate::store;
 
-    singleton!(Count(u64; OWNER));
-    singleton!(Shared(String as Arc; OWNER));
-
-    store!(tables: { Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER) });
+    store!(
+        kvs: { Count(u64; OWNER), Shared(String as Arc; OWNER) }
+        tables: { Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER) }
+    );
 
     const OWNER: &str = "owner";
     #[cfg(debug_assertions)]

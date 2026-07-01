@@ -69,7 +69,10 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton>(&self, owner: Owner) -> Option<D::Value>
+    pub fn get<D: schema::Singleton<Storage = TableStorage>>(
+        &self,
+        owner: Owner,
+    ) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -79,14 +82,17 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Get a single value from the store by cloning an `Arc`.
     ///
     /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton>(&self, owner: Owner) -> Option<Arc<D::Value>> {
+    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
+        &self,
+        owner: Owner,
+    ) -> Option<Arc<D::Value>> {
         <&Self as SingletonOps<_>>::get_arc::<D>(self, owner)
     }
 
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton, T>(
+    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
         &self,
         owner: Owner,
         f: impl FnOnce(&D::Value) -> T,
@@ -95,7 +101,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton>(&self, owner: Owner, value: D::ArgValue) {
+    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(
+        &self,
+        owner: Owner,
+        value: D::ArgValue,
+    ) {
         let mut txn = self.begin_transaction(owner);
         SingletonOpsMut::insert::<D>(&mut txn, value, owner);
         // Should never panic since transaction should only fail on index inserts.
@@ -103,7 +113,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Remove a single value from the store.
-    pub fn remove<D: schema::Singleton>(&self, owner: Owner) {
+    pub fn remove<D: schema::Singleton<Storage = TableStorage>>(&self, owner: Owner) {
         let mut txn = self.begin_transaction(owner);
         SingletonOpsMut::remove::<D>(&mut txn, owner);
         // Should never panic since transaction should only fail on index inserts.
@@ -146,7 +156,7 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton>(&self) -> Option<D::Value>
+    pub fn get<D: schema::Singleton<Storage = TableStorage>>(&self) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -156,24 +166,29 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
     /// Get a single value from the store by cloning an `Arc`.
     ///
     /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton>(&self) -> Option<Arc<D::Value>> {
+    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
+        &self,
+    ) -> Option<Arc<D::Value>> {
         self.store.get_arc::<D>(self.owner)
     }
 
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton, T>(&self, f: impl FnOnce(&D::Value) -> T) -> Option<T> {
+    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+        &self,
+        f: impl FnOnce(&D::Value) -> T,
+    ) -> Option<T> {
         self.store.with::<D, T>(self.owner, f)
     }
 
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton>(&self, value: D::ArgValue) {
+    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&self, value: D::ArgValue) {
         self.store.insert::<D>(self.owner, value)
     }
 
     /// Remove a single value from the store.
-    pub fn remove<D: schema::Singleton>(&self) {
+    pub fn remove<D: schema::Singleton<Storage = TableStorage>>(&self) {
         self.store.remove::<D>(self.owner)
     }
 }
