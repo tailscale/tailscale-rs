@@ -1,5 +1,5 @@
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     borrow::Borrow,
     collections::{HashMap, HashSet},
     hash::Hash,
@@ -15,9 +15,6 @@ use crate::{
 /// Where we store the data.
 #[doc(hidden)]
 pub struct Storage<TableStorage: schema::GeneratedStorage> {
-    /// The key is the TypeId of the generated marker type for the KV data. See [`SinValue`] for
-    /// how values are represented in the store.
-    pub(crate) singletons: HashMap<TypeId, (Owner, VersionedValue<SinValue>)>,
     /// Storage for tabular data. The concrete type will be macro-generated, see the [`crate::schema`]
     /// module.
     pub(crate) tables: TableStorage,
@@ -25,13 +22,11 @@ pub struct Storage<TableStorage: schema::GeneratedStorage> {
     /// The id of the most-recently committed transaction.
     pub(crate) committed: TxnId,
     /// `None` if there is no transaction in progress. `Some` if there is a transaction in progress
-    /// or a transaction has been aborted without proper rollback. The `Vec` tracks the keys of
-    /// singleton key-values modified during this transaction. It may be an over-approximation, but
-    /// not an under-approximation. `pending_txn` must not be cleared until a transaction has been
-    /// fully committed or fully rolled-back.
+    /// or a transaction has been aborted without proper rollback. `pending_txn` must not be cleared
+    /// until a transaction has been fully committed or fully rolled-back.
     ///
     /// `self.tables` may only contain un-committed state if `pending_txn.is_some()`.
-    pending_txn: Option<(TxnId, Vec<TypeId>)>,
+    pending_txn: Option<TxnId>,
     /// Counter for creating new transaction ids.
     next_txn: TxnId,
 }
@@ -41,7 +36,6 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Storage {
-            singletons: HashMap::new(),
             tables: TableStorage::default(),
             committed: TxnId::FIRST,
             pending_txn: None,
@@ -59,81 +53,48 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     }
 
     pub(crate) fn current_txn(&self) -> Option<TxnId> {
-        self.pending_txn.as_ref().map(|(id, _)| *id)
+        self.pending_txn
     }
 
     pub(crate) fn max_committed_id(&self) -> TxnId {
         self.committed
     }
 
-    fn record_mutation(&mut self, key: TypeId, txn_id: TxnId) {
-        if self.committed != txn_id
-            && let Some((id, modified)) = &mut self.pending_txn
-        {
-            assert_eq!(*id, txn_id);
-            modified.push(key);
-        }
-    }
-
-    pub(crate) fn insert_singleton<D: schema::Singleton>(
+    pub(crate) fn insert_singleton<D: schema::Singleton<Storage = TableStorage>>(
         &mut self,
-        key: TypeId,
-        owner: Owner,
         value: D::ArgValue,
         txn_id: TxnId,
     ) {
-        self.record_mutation(key, txn_id);
-        match self.singletons.get_mut(&key) {
-            Some((_, v)) => {
-                v.set(D::to_value(value), txn_id);
-            }
-            None => {
-                self.singletons.insert(
-                    key,
-                    (owner, VersionedValue::new(D::to_value(value), txn_id)),
-                );
-            }
-        }
+        D::field_ref_mut(&mut self.tables).set(D::to_value(value), txn_id);
     }
 
-    pub(crate) fn remove_singleton(&mut self, key: TypeId, txn_id: TxnId) {
-        self.record_mutation(key, txn_id);
-        if let Some((_, value)) = self.singletons.get_mut(&key) {
-            // TODO ownership is wrong, but we're getting rid of dynamic ownership
-            value.set(SinValue::None, txn_id);
-        }
+    pub(crate) fn remove_singleton<D: schema::Singleton<Storage = TableStorage>>(
+        &mut self,
+        txn_id: TxnId,
+    ) {
+        D::field_ref_mut(&mut self.tables).set(SinValue::None, txn_id);
     }
 
     /// Retrieve a singleton value from the store using the given type-key.
-    pub(crate) fn get_singleton_value<D: schema::Singleton>(
+    pub(crate) fn get_singleton_value<D: schema::Singleton<Storage = TableStorage>>(
         &self,
-        key: TypeId,
         txn_id: TxnId,
     ) -> Option<&D::Value> {
-        let value = self.singletons.get(&key).map(|(_, v)| v);
-        map_singleton_value(value, txn_id, |v| D::from_value_ref(v))
+        map_singleton_value(D::field_ref(&self.tables), txn_id, |v| D::from_value_ref(v))
     }
 
     /// Retrieve a singleton value from the store using the given type-key.
-    pub(crate) fn get_singleton_arc<D: schema::ArcSingleton>(
+    pub(crate) fn get_singleton_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
         &self,
-        key: TypeId,
         txn_id: TxnId,
     ) -> Option<Arc<D::Value>> {
-        let value = self.singletons.get(&key).map(|(_, v)| v);
-        map_singleton_value(value, txn_id, |v| D::from_value_arc(v))
-    }
-
-    /// Retrieve the owner of a singleton KV pair using the given type-key.
-    #[cfg(debug_assertions)]
-    pub(crate) fn get_singleton_owner(&self, key: TypeId) -> Option<Owner> {
-        self.singletons.get(&key).map(|(o, _)| *o)
+        map_singleton_value(D::field_ref(&self.tables), txn_id, |v| D::from_value_arc(v))
     }
 
     /// Begin a new transaction. Returns the transactions unique id.
     pub(crate) fn begin_transaction(&mut self) -> TxnId {
         let new_txn_id = self.next_txn;
-        self.pending_txn = Some((new_txn_id, Vec::new()));
+        self.pending_txn = Some(new_txn_id);
         self.next_txn = new_txn_id.next();
         new_txn_id
     }
@@ -142,7 +103,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// current transaction does not match the `txn_id` (which should be impossible with only safe
     /// code).
     pub(crate) fn commit_transaction(&mut self, txn_id: TxnId) -> Result<()> {
-        let Some((pending_txn, _)) = self.pending_txn else {
+        let Some(pending_txn) = self.pending_txn else {
             return Err(Error::TransactionFailed);
         };
         if pending_txn != txn_id {
@@ -159,7 +120,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// transaction, then nothing happens (the `txn_id` transaction must already have been committed
     /// or rolled back).
     pub(crate) fn rollback_transaction(&mut self, txn_id: TxnId) {
-        let Some((pending_txn, _)) = self.pending_txn else {
+        let Some(pending_txn) = self.pending_txn else {
             return;
         };
         if pending_txn != txn_id {
@@ -172,17 +133,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// Garbage-collects the remnants of any in-progress transaction, leaving the store ready to begin
     /// another transaction or perform raw operations.
     pub(crate) fn clear_transaction(&mut self) {
-        if let Some((id, modified)) = &self.pending_txn {
-            for k in modified {
-                let Some((_, v)) = self.singletons.get_mut(k) else {
-                    continue;
-                };
-                v.gc_txn(*id);
-
-                if v.is_empty() {
-                    self.singletons.remove(k);
-                }
-            }
+        if let Some(id) = &self.pending_txn {
             self.tables.gc_txn(*id);
             // Must do this last so it is only cleared if we've successfully GCed the store.
             self.pending_txn = None;
@@ -209,11 +160,11 @@ pub enum SinValue {
 }
 
 fn map_singleton_value<'a, T>(
-    value: Option<&'a VersionedValue<SinValue>>,
+    value: &'a VersionedValue<SinValue>,
     id: TxnId,
     f: impl FnOnce(&'a SinValue) -> T,
 ) -> Option<T> {
-    match value?.get(id)? {
+    match &value.get(id)? {
         SinValue::None => None,
         v => Some(f(v)),
     }
@@ -244,7 +195,7 @@ impl<T> VersionedValue<T> {
         }
     }
 
-    fn gc_txn(&mut self, txn_id: TxnId) {
+    pub fn gc_txn(&mut self, txn_id: TxnId) {
         if let Some((id, _)) = self.slot_a
             && id == txn_id
         {
@@ -546,8 +497,6 @@ enum MaskInsertResult<K, V> {
 /// implementing `TableStorage` in [`Storage`].
 #[doc(hidden)]
 pub struct Table<D: schema::TableDesc, I> {
-    /// Owner of the table.
-    pub(crate) owner: Option<Owner>,
     /// KV data.
     data: HashMap<D::Key, VersionedValue<D::Value>>,
     /// A mask of deleted rows in the table. Should be checked before reading from `data`.
@@ -567,7 +516,6 @@ pub struct Table<D: schema::TableDesc, I> {
 impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
     fn default() -> Self {
         Self {
-            owner: None,
             data: HashMap::new(),
             delete_mask: DeleteMask::None,
             modified: None,
@@ -578,16 +526,6 @@ impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
 }
 
 impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
-    pub(crate) fn try_set_owner(&mut self, owner: Owner) -> Result<()> {
-        match &self.owner {
-            Some(owner) => Err(Error::AlreadyInit(owner)),
-            None => {
-                self.owner = Some(owner);
-                Ok(())
-            }
-        }
-    }
-
     pub fn set_poisoned(&mut self, txn_id: TxnId) {
         self.poisoned.set(true, txn_id);
     }
@@ -625,9 +563,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
     /// Check if this table's transaction state is consistent for commit.
     ///
-    /// Must be called before calling `commit_txn`. In theory, because of the global lock, this
-    /// should never happen. But if we were to allow transactions to be timed-out (or multiple
+    /// Must be called before calling `commit_txn`. In theory, because of the global lock, the transaction
+    /// should not conflict. But if we were to allow transactions to be timed-out (or multiple
     /// mutating transaction), or in the presence of unsafe code, then inconsistency could happen.
+    ///
+    /// This will error too if an index has been poisoned during the transaction.
     pub fn check_txn_consistency(&self, txn_id: TxnId) -> Result<()> {
         if let Some(modified) = &self.modified
             && modified.txn_id != txn_id
@@ -735,7 +675,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             MaskStatus::Overwritten(v) => v,
         };
 
-        // TODO we could be more efficient and only update indexes if the foreign key changes
         self.indexes.on_remove(value, txn_id, max_committed_id);
         record_mutation(&mut self.modified, key, txn_id, max_committed_id);
         let result = f(value);
@@ -768,22 +707,25 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     ) where
         D::Value: Clone,
     {
-        // TODO could be more efficient by only updating if value is changed
         match &mut self.delete_mask {
-            DeleteMask::None => Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
-                self.indexes.on_remove(v, txn_id, max_committed_id);
-                record_mutation(&mut self.modified, k, txn_id, max_committed_id);
-                f(k, v);
-                self.indexes.on_insert(k, v, txn_id, max_committed_id);
-            }),
-            DeleteMask::All(_, pending) => pending.iter_mut().for_each(|(k, v)| {
-                if let Some(v) = v.get_mut(txn_id) {
-                    self.indexes.on_remove(v, txn_id, max_committed_id);
+            DeleteMask::None => {
+                self.indexes.clear(txn_id, max_committed_id);
+                Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
                     record_mutation(&mut self.modified, k, txn_id, max_committed_id);
                     f(k, v);
                     self.indexes.on_insert(k, v, txn_id, max_committed_id);
-                }
-            }),
+                })
+            }
+            DeleteMask::All(_, pending) => {
+                self.indexes.clear(txn_id, max_committed_id);
+                pending.iter_mut().for_each(|(k, v)| {
+                    if let Some(v) = v.get_mut(txn_id) {
+                        record_mutation(&mut self.modified, k, txn_id, max_committed_id);
+                        f(k, v);
+                        self.indexes.on_insert(k, v, txn_id, max_committed_id);
+                    }
+                })
+            }
             DeleteMask::Some(_, removed) => {
                 Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
                     if removed.contains(k) {
@@ -822,11 +764,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        if txn_id == max_committed_id {
-            if let Some(value) = self.data.remove(key).and_then(|mut v| v.take(txn_id)) {
-                self.indexes.on_remove(&value, txn_id, max_committed_id);
-            }
-        } else if txn_id > max_committed_id {
+        if txn_id > max_committed_id {
             let dm_result = self.delete_mask.remove(key, txn_id, &self.data);
             if let Some(value) = dm_result
                 .as_ref()
@@ -836,19 +774,17 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             }
         } else {
             unreachable!(
-                "current transaction id less than committed id: {txn_id:?} < {max_committed_id:?}"
+                "current transaction id less than committed id: {txn_id:?} <= {max_committed_id:?}"
             );
         }
     }
 
     pub fn clear(&mut self, txn_id: TxnId, max_committed_id: TxnId) {
-        if txn_id == max_committed_id {
-            self.data.clear();
-        } else if txn_id > max_committed_id {
+        if txn_id > max_committed_id {
             self.delete_mask.clear(txn_id);
         } else {
             unreachable!(
-                "current transaction id less than committed id: {txn_id:?} < {max_committed_id:?}"
+                "current transaction id less than committed id: {txn_id:?} <= {max_committed_id:?}"
             );
         }
 
@@ -857,25 +793,13 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         self.indexes.clear(txn_id, max_committed_id);
     }
 
-    pub(crate) fn assert_or_set_owner(&mut self, owner: Owner) {
-        match &self.owner {
-            Some(prev_owner) => debug_assert_eq!(
-                *prev_owner, owner,
-                "Ownership violation: expected {prev_owner}, found {owner}"
-            ),
-            None => {
-                self.owner = Some(owner);
-            }
-        }
-    }
-
     pub(crate) fn assert_owner(&mut self, owner: Owner) {
-        if let Some(prev_owner) = &self.owner {
-            debug_assert_eq!(
-                *prev_owner, owner,
-                "Ownership violation: expected {prev_owner}, found {owner}"
-            );
-        }
+        debug_assert_eq!(
+            D::OWNER,
+            owner,
+            "Ownership violation: expected {}, found {owner}",
+            D::OWNER,
+        );
     }
 }
 
@@ -1159,12 +1083,9 @@ mod txn_test {
     // (operating on `Storage` directly) do not use.
     #![allow(dead_code)]
 
-    use std::any::TypeId;
+    use crate::{Error, storage::Storage, store};
 
-    use crate::{Error, singleton, storage::Storage, tables};
-
-    singleton!(Count(u64));
-    tables!();
+    store!(kvs: { Count(u64; "owner") });
 
     #[test]
     fn commit_with_mismatched_id_fails() {
@@ -1193,18 +1114,15 @@ mod txn_test {
     fn clear_transaction_rolls_back_and_frees_singleton_entry() {
         let mut storage = Storage::<TableStorage>::new();
         let id = storage.begin_transaction();
-        let key = TypeId::of::<Count>();
-        storage.insert_singleton::<Count>(key, "owner", 42, id);
+        storage.insert_singleton::<Count>(42, id);
         // Visible to the in-progress transaction.
-        assert_eq!(storage.get_singleton_value::<Count>(key, id), Some(&42));
+        assert_eq!(storage.get_singleton_value::<Count>(id), Some(&42));
 
         // Simulate cleanup of an abandoned transaction.
         storage.clear_transaction();
 
         assert!(storage.current_txn().is_none());
         let now = storage.txn_id();
-        assert!(storage.get_singleton_value::<Count>(key, now).is_none());
-        // The emptied entry was freed, not left as a dead `VersionedValue`.
-        assert!(!storage.singletons.contains_key(&key));
+        assert!(storage.get_singleton_value::<Count>(now).is_none());
     }
 }
