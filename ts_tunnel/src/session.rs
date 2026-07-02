@@ -97,6 +97,30 @@ impl AsRef<chacha20poly1305::Nonce> for Nonce {
     }
 }
 
+/// How long a session lasts before becoming eligible for key rotation.
+///
+/// Endpoints start a new handshake to rotate onto fresh session keys once a session
+/// has been alive for this long, if it's still exchanging traffic. The session can
+/// continue to be used while the rotation handshake proceeds, up to [`SESSION_LIFETIME`].
+pub const SESSION_FRESH_LIFETIME: Duration = Duration::from_secs(120);
+
+/// How long a session can be used before being discarded.
+///
+/// Endpoints must not continue using a session older than this. If there is still traffic
+/// being exchanged, a key rotation handshake should have started at the halfway point
+/// (defined by [`SESSION_FRESH_LIFETIME`]) to switch to a new session. If that handshake
+/// fails to establish a new session in time, or traffic is no longer being exchanged,
+/// the previously established session is forcibly discarded after this much time to preserve
+/// forward secrecy.
+pub const SESSION_LIFETIME: Duration = Duration::from_secs(240);
+
+/// Grace time for cleaning up a session that has exceeded [`SESSION_LIFETIME`].
+///
+/// Once a session has expired, we need to delete its key material to ensure forward secrecy
+/// of the data exchanged in that session. To allow for wakeup coalescing, we allow an expired
+/// session's state to persist for short additional time before requiring that it be deleted.
+pub const SESSION_CLEANUP_GRACE: Duration = Duration::from_secs(5);
+
 /// Established session that can only send.
 pub struct TransmitSession {
     cipher: ChaCha20Poly1305,
@@ -141,11 +165,11 @@ impl TransmitSession {
     }
 
     pub fn stale(&self, now: Instant) -> bool {
-        now.duration_since(self.created) > Duration::from_secs(120) // TODO: constants
+        now.duration_since(self.created) > SESSION_FRESH_LIFETIME
     }
 
     pub fn expired(&self, now: Instant) -> bool {
-        now.duration_since(self.created) > Duration::from_secs(240) // TODO: constants
+        now.duration_since(self.created) > SESSION_LIFETIME
     }
 }
 
@@ -239,7 +263,7 @@ impl ReceiveSession {
     }
 
     pub fn expired(&self, now: Instant) -> bool {
-        now.duration_since(self.created) > Duration::from_secs(240) // TODO: constants
+        now.duration_since(self.created) > SESSION_LIFETIME
     }
 }
 
@@ -289,20 +313,21 @@ mod tests {
         let now = Instant::now();
         let send = TransmitSession::new(k.into(), session, now);
         let recv = ReceiveSession::new(k.into(), session, now);
+        let epsilon = Duration::from_secs(1);
 
         assert!(!send.stale(now));
-        assert!(!send.stale(now + Duration::from_secs(100)));
-        assert!(send.stale(now + Duration::from_secs(130)));
-        assert!(send.stale(now + Duration::from_secs(250)));
+        assert!(!send.stale(now + SESSION_FRESH_LIFETIME - epsilon));
+        assert!(send.stale(now + SESSION_FRESH_LIFETIME + epsilon));
+        assert!(send.stale(now + SESSION_LIFETIME + epsilon));
 
         assert!(!send.expired(now));
-        assert!(!send.expired(now + Duration::from_secs(100)));
-        assert!(!send.expired(now + Duration::from_secs(130)));
-        assert!(send.expired(now + Duration::from_secs(250)));
+        assert!(!send.expired(now + SESSION_FRESH_LIFETIME - epsilon));
+        assert!(!send.expired(now + SESSION_FRESH_LIFETIME + epsilon));
+        assert!(send.expired(now + SESSION_LIFETIME + epsilon));
 
         assert!(!recv.expired(now));
-        assert!(!recv.expired(now + Duration::from_secs(100)));
-        assert!(!recv.expired(now + Duration::from_secs(130)));
-        assert!(recv.expired(now + Duration::from_secs(250)));
+        assert!(!recv.expired(now + SESSION_FRESH_LIFETIME - epsilon));
+        assert!(!recv.expired(now + SESSION_FRESH_LIFETIME + epsilon));
+        assert!(recv.expired(now + SESSION_LIFETIME + epsilon));
     }
 }
