@@ -212,6 +212,13 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
         // drop `self` to release the lock.
     }
 
+    /// Explicitly rollback this transaction.
+    ///
+    /// A transaction can also be rolled-back by dropping it without first calling `commit`.
+    pub fn rollback(self) {
+        // Dropping `self` causes the rollback.
+    }
+
     /// Operate on tables of key/values in the store.
     ///
     /// Example:
@@ -355,10 +362,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
     }
 
     /// Insert a value into the table.
-    pub fn insert(&mut self, key: D::Key, value: D::Value)
-    where
-        D::Key: Clone,
-    {
+    pub fn insert(&mut self, key: D::Key, value: D::Value) {
         <&mut Self as TabularOpsMut<_>>::insert(self, key, value, self.txn.owner)
     }
 
@@ -398,12 +402,22 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
         <&Self as TabularOps<_>>::values(self, self.txn.owner)
     }
 
-    /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&mut self, f: impl FnMut(&D::Key, &mut D::Value))
+    /// Iterate all the key/value pairs in a table.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&D::Key, &mut D::Value)>
     where
         D::Value: Clone,
     {
-        <&mut Self as TabularOpsMut<_>>::for_each_mut(self, f, self.txn.owner)
+        let owner = self.txn.owner;
+        TabularOpsMut::iter_mut(self, owner)
+    }
+
+    /// Iterate all the values in a table.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut D::Value>
+    where
+        D::Value: Clone,
+    {
+        let owner = self.txn.owner;
+        TabularOpsMut::values_mut(self, owner)
     }
 }
 
@@ -456,6 +470,13 @@ impl<'guard, TableStorage: schema::GeneratedStorage> RoTransaction<'guard, Table
     pub fn commit(self) -> Result<()> {
         // drop `self` to release the lock.
         Ok(())
+    }
+
+    /// Explicitly rollback this transaction.
+    ///
+    /// Like `commit`, this only drops this transaction's lock.
+    pub fn rollback(self) {
+        // drop `self` to release the lock.
     }
 
     /// Operate on tables of key/values in the store.
@@ -937,23 +958,112 @@ mod test {
     }
 
     #[test]
-    fn txn_table_for_each_mut_empty_calls_closure_zero_times() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        let mut table = txn.table::<Items>();
-        let mut count = 0;
-        table.for_each_mut(|_, _| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn txn_table_for_each_mut_modifies_values() {
+    fn txn_table_iter_mut_modifies_values() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         let mut table = txn.table::<Items>();
         table.insert("k", "hello".to_owned());
-        table.for_each_mut(|_, v| v.push('!'));
+        table.iter_mut().next().unwrap().1.push('!');
         assert_eq!(table.get("k"), Some("hello!".to_owned()));
+    }
+
+    #[test]
+    fn txn_table_iter_mut_empty_yields_none() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        let mut table = txn.table::<Items>();
+        assert!(table.iter_mut().next().is_none());
+        assert_eq!(table.iter_mut().count(), 0);
+    }
+
+    #[test]
+    fn txn_table_iter_mut_visits_all_rows() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        let mut table = txn.table::<Items>();
+        table.insert("a", "x".to_owned());
+        table.insert("b", "y".to_owned());
+        table.insert("c", "z".to_owned());
+        for (_, v) in table.iter_mut() {
+            v.push('!');
+        }
+        assert_eq!(table.get("a"), Some("x!".to_owned()));
+        assert_eq!(table.get("b"), Some("y!".to_owned()));
+        assert_eq!(table.get("c"), Some("z!".to_owned()));
+    }
+
+    // `iter_mut` must respect a `DeleteMask::Some` produced by removing a key earlier in the
+    // same transaction: the removed key should not be visited.
+    #[test]
+    fn txn_table_iter_mut_skips_removed_key() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        let mut table = txn.table::<Items>();
+        table.insert("a", "x".to_owned());
+        table.insert("b", "y".to_owned());
+        table.insert("c", "z".to_owned());
+        table.remove(&"b");
+
+        let mut keys: Vec<_> = table.iter_mut().map(|(k, _)| *k).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["a", "c"]);
+
+        // Mutations through the iterator still land, and the removed key stays gone.
+        for (_, v) in table.iter_mut() {
+            v.push('!');
+        }
+        assert_eq!(table.get("a"), Some("x!".to_owned()));
+        assert!(table.get("b").is_none());
+        assert_eq!(table.get("c"), Some("z!".to_owned()));
+    }
+
+    // `iter_mut` must respect a `DeleteMask::All` produced by clearing the table earlier in the
+    // same transaction: only rows inserted after the clear should be visited.
+    #[test]
+    fn txn_table_iter_mut_after_clear_visits_only_new_rows() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("a", "x".to_owned());
+        store.table::<Items>(OWNER).insert("b", "y".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        let mut table = txn.table::<Items>();
+        table.clear();
+        table.insert("c", "z".to_owned());
+
+        let mut visited: Vec<_> = table.iter_mut().map(|(k, _)| *k).collect();
+        visited.sort();
+        assert_eq!(visited, vec!["c"]);
+
+        table.iter_mut().next().unwrap().1.push('!');
+        assert_eq!(table.get("c"), Some("z!".to_owned()));
+    }
+
+    // Rolling back a transaction that mutated values via `iter_mut` must leave the committed
+    // state untouched. This exercises the "all keys modified" (`keys == None`) GC path.
+    #[test]
+    fn txn_iter_mut_rollback_discards_changes() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("a", "x".to_owned());
+        store.table::<Items>(OWNER).insert("b", "y".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        for (_, v) in txn.table::<Items>().iter_mut() {
+            v.push('!');
+        }
+        txn.rollback();
+
+        assert_eq!(store.table::<Items>(OWNER).get("a"), Some("x".to_owned()));
+        assert_eq!(store.table::<Items>(OWNER).get("b"), Some("y".to_owned()));
+
+        // The store is still usable and a fresh transaction sees the original values.
+        let mut txn = store.begin_transaction(OWNER);
+        let mut visited: Vec<_> = txn
+            .table::<Items>()
+            .iter_mut()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        visited.sort();
+        assert_eq!(visited, vec![("a", "x".to_owned()), ("b", "y".to_owned())]);
     }
 
     #[test]
@@ -1785,17 +1895,22 @@ mod test {
     }
 
     #[test]
-    fn txn_for_each_mut_committed_values_commit_persists() {
+    fn txn_iter_mut_committed_values_commit_persists() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).insert("a", "x".to_owned());
         store.table::<Items>(OWNER).insert("b", "y".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Items>().for_each_mut(|_, v| v.push('!'));
+        for (_, v) in txn.table::<Items>().iter_mut() {
+            v.push('!');
+        }
+        for v in txn.table::<Items>().values_mut() {
+            v.push('!');
+        }
         txn.commit().unwrap();
 
-        assert_eq!(store.table::<Items>(OWNER).get("a"), Some("x!".to_owned()));
-        assert_eq!(store.table::<Items>(OWNER).get("b"), Some("y!".to_owned()));
+        assert_eq!(store.table::<Items>(OWNER).get("a"), Some("x!!".to_owned()));
+        assert_eq!(store.table::<Items>(OWNER).get("b"), Some("y!!".to_owned()));
     }
 
     #[test]

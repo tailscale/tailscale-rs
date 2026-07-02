@@ -181,7 +181,7 @@ impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
     }
 }
 
-/// Marker trait to indicate a storage implementation.
+/// A storage implementation.
 ///
 /// This should be considered a sealed trait and not implemented except by the macros in this module.
 /// Unfortunately it has to be public because of macro visibility hygiene.

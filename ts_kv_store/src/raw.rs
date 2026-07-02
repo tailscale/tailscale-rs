@@ -248,20 +248,14 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// Insert a `value` into the table.
     ///
     /// Panics if the value is already indexed with the same index key.
-    pub fn insert(&self, key: D::Key, value: D::Value)
-    where
-        D::Key: Clone,
-    {
+    pub fn insert(&self, key: D::Key, value: D::Value) {
         self.try_insert(key, value).unwrap();
     }
 
     /// Insert a `value` into the table.
     ///
     /// Returns an error if `insert` would panic.
-    pub fn try_insert(&self, key: D::Key, value: D::Value) -> Result<()>
-    where
-        D::Key: Clone,
-    {
+    pub fn try_insert(&self, key: D::Key, value: D::Value) -> Result<()> {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
         TabularOpsMut::insert(&mut txn_table, key, value, self.owner);
@@ -312,15 +306,22 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
         <&Self as TabularOps<_>>::values(self, self.owner)
     }
 
-    /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&self, f: impl FnMut(&D::Key, &mut D::Value))
+    /// Iterate all the key/value pairs in a table.
+    ///
+    /// If you need a mutable iterator without access scoped by a closure, use `iter_mut` within a
+    /// transaction.
+    pub fn with_iter_mut<F, T>(&self, mut f: F) -> T
     where
+        F: for<'a> FnMut(Box<dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)> + 'a>) -> T,
         D::Value: Clone,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
-        TabularOpsMut::for_each_mut(&mut txn_table, f, self.owner);
+        let iter = TabularOpsMut::iter_mut(&mut txn_table, self.owner);
+        let result = f(Box::new(iter));
+        // Should never panic since transaction should only fail on index inserts.
         txn.commit().unwrap();
+        result
     }
 }
 
@@ -632,21 +633,37 @@ mod test {
     }
 
     #[test]
-    fn table_for_each_mut_empty_calls_closure_zero_times() {
+    fn table_with_iter_mut_modifies_values() {
         let store = KvStore::new();
         let table = store.table::<Items>(OWNER);
-        let mut count = 0;
-        table.for_each_mut(|_, _| count += 1);
+        table.insert("k", "hello".to_owned());
+        table.with_iter_mut(|mut i| i.next().unwrap().1.push('!'));
+        assert_eq!(table.get("k"), Some("hello!".to_owned()));
+    }
+
+    #[test]
+    fn table_with_iter_mut_empty_yields_none() {
+        let store = KvStore::new();
+        let table = store.table::<Items>(OWNER);
+        let count = table.with_iter_mut(|i| i.count());
         assert_eq!(count, 0);
     }
 
     #[test]
-    fn table_for_each_mut_modifies_values() {
+    fn table_with_iter_mut_visits_all_rows() {
         let store = KvStore::new();
         let table = store.table::<Items>(OWNER);
-        table.insert("k", "hello".to_owned());
-        table.for_each_mut(|_, v| v.push('!'));
-        assert_eq!(table.get("k"), Some("hello!".to_owned()));
+        table.insert("a", "x".to_owned());
+        table.insert("b", "y".to_owned());
+        table.insert("c", "z".to_owned());
+        table.with_iter_mut(|i| {
+            for (_, v) in i {
+                v.push('!');
+            }
+        });
+        assert_eq!(table.get("a"), Some("x!".to_owned()));
+        assert_eq!(table.get("b"), Some("y!".to_owned()));
+        assert_eq!(table.get("c"), Some("z!".to_owned()));
     }
 
     #[test]

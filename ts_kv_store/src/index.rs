@@ -7,7 +7,7 @@ use std::{
 use crate::{
     KvStore, Owner, Result, RoTransaction, Transaction,
     operations::{Base, BaseKey, BaseValue, IndexValue, IndexedOps, IndexedOpsMut, Ops, OpsMut},
-    schema::{IndexDesc, TableDesc},
+    schema::IndexDesc,
     storage::Storage,
 };
 
@@ -97,7 +97,6 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Panics if the value is already indexed with the same index key.
     pub fn insert(&self, key: BaseKey<D>, value: BaseValue<D>)
     where
-        <<D as IndexDesc>::BaseTable as TableDesc>::Key: Clone,
         IndexValue<D>: Eq + Hash,
     {
         self.try_insert(key, value).unwrap();
@@ -108,7 +107,6 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     /// Returns an error if `insert` would panic.
     pub fn try_insert(&self, key: BaseKey<D>, value: BaseValue<D>) -> Result<()>
     where
-        <<D as IndexDesc>::BaseTable as TableDesc>::Key: Clone,
         IndexValue<D>: Eq + Hash,
     {
         let mut txn = self.store.begin_transaction(self.owner);
@@ -183,17 +181,25 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         <&Self as IndexedOps<_>>::values(self, self.owner)
     }
 
-    /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&self, f: impl FnMut(&BaseKey<D>, &mut BaseValue<D>))
+    /// Iterate all the key/value pairs in a table.
+    ///
+    /// If you need a mutable iterator without access scoped by a closure, use `iter_mut` within a
+    /// transaction.
+    pub fn with_iter_mut<F, T>(&self, mut f: F) -> T
     where
+        F: for<'a> FnMut(
+            Box<dyn Iterator<Item = (&D::Key, &'a BaseKey<D>, &'a mut BaseValue<D>)> + 'a>,
+        ) -> T,
         IndexValue<D>: Eq + Hash + Clone,
         BaseValue<D>: Clone,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactionalIndex::<D> { txn: &mut txn };
-        IndexedOpsMut::for_each_mut(&mut txn_table, f, self.owner);
+        let iter = IndexedOpsMut::iter_mut(&mut txn_table, self.owner);
+        let result = f(Box::new(iter));
         // Should never panic since transaction should only fail on index inserts.
         txn.commit().unwrap();
+        result
     }
 }
 
@@ -355,13 +361,24 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         <&Self as IndexedOps<_>>::values(self, self.txn.owner)
     }
 
-    /// Iterate all the key/value pairs in a table. Values are mutable.
-    pub fn for_each_mut(&mut self, f: impl FnMut(&BaseKey<D>, &mut BaseValue<D>))
+    /// Iterate all the key/value pairs in a table.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &mut BaseValue<D>)>
     where
         IndexValue<D>: Eq + Hash + Clone,
         BaseValue<D>: Clone,
     {
-        <&mut Self as IndexedOpsMut<_>>::for_each_mut(self, f, self.txn.owner)
+        let owner = self.txn.owner;
+        IndexedOpsMut::iter_mut(self, owner)
+    }
+
+    /// Iterate all the values in a table.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = (&BaseKey<D>, &mut BaseValue<D>)>
+    where
+        IndexValue<D>: Eq + Hash + Clone,
+        BaseValue<D>: Clone,
+    {
+        let owner = self.txn.owner;
+        IndexedOpsMut::values_mut(self, owner)
     }
 }
 
@@ -826,30 +843,21 @@ mod test {
     }
 
     #[test]
-    fn index_for_each_mut_empty_calls_closure_zero_times() {
-        let store = KvStore::new();
-        let index = store.table_by::<index::Users::name>(OWNER);
-        let mut count = 0;
-        index.for_each_mut(|_, _| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn index_for_each_mut_modifies_base_values() {
+    fn index_with_iter_mut_modifies_base_values() {
         let store = KvStore::new();
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         let index = store.table_by::<index::Users::name>(OWNER);
-        index.for_each_mut(|_, v| v.name.push('!'));
+        index.with_iter_mut(|mut i| i.next().unwrap().2.name.push('!'));
         assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice!")));
     }
 
     #[test]
-    fn table_for_each_mut_updates_index() {
+    fn table_with_iter_mut_updates_index() {
         let store = KvStore::new();
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table::<Users>(OWNER)
-            .for_each_mut(|_, v| v.name = "Charlie".to_owned());
+            .with_iter_mut(|mut i| i.next().unwrap().1.name = "Charlie".to_owned());
         assert!(
             store
                 .table_by::<index::Users::name>(OWNER)
@@ -866,12 +874,12 @@ mod test {
     }
 
     #[test]
-    fn index_for_each_mut_updates_index() {
+    fn index_with_iter_mut_updates_index() {
         let store = KvStore::new();
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table_by::<index::Users::name>(OWNER)
-            .for_each_mut(|_, v| v.name = "Charlie".to_owned());
+            .with_iter_mut(|mut i| i.next().unwrap().2.name = "Charlie".to_owned());
         assert!(
             store
                 .table_by::<index::Users::name>(OWNER)
@@ -885,6 +893,59 @@ mod test {
                 .unwrap(),
             (1, row("Charlie"))
         );
+    }
+
+    #[test]
+    fn index_with_iter_mut_empty_yields_none() {
+        let store = KvStore::new();
+        let index = store.table_by::<index::Users::name>(OWNER);
+        let count = index.with_iter_mut(|i| i.count());
+        assert_eq!(count, 0);
+    }
+
+    // Mutating every row through a multi-row index iterator must rebuild the index for all of
+    // them (the single-row tests can't catch aliasing or partial-rebuild bugs).
+    #[test]
+    fn index_with_iter_mut_updates_all_rows() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        store
+            .table_by::<index::Users::name>(OWNER)
+            .with_iter_mut(|i| {
+                for (_, _, v) in i {
+                    v.name.push('!');
+                }
+            });
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert!(index.get("Alice").is_none());
+        assert!(index.get("Bob").is_none());
+        assert_eq!(index.get("Alice!").unwrap(), (1, row("Alice!")));
+        assert_eq!(index.get("Bob!").unwrap(), (2, row("Bob!")));
+    }
+
+    // Visiting a row without mutating it still tears down and rebuilds its index entry (via
+    // `get_mut` -> `on_remove` then `rebuild_indexes_for_key` on drop), so a row left unchanged
+    // must remain correctly indexed alongside one that was changed.
+    #[test]
+    fn index_with_iter_mut_visited_unmodified_row_stays_indexed() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        store
+            .table_by::<index::Users::name>(OWNER)
+            .with_iter_mut(|i| {
+                for (_, base_key, v) in i {
+                    if *base_key == 1 {
+                        v.name = "Zara".to_owned();
+                    }
+                }
+            });
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert!(index.get("Alice").is_none());
+        assert_eq!(index.get("Zara").unwrap(), (1, row("Zara")));
+        // Bob was visited but not modified; its index entry must be intact.
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
     }
 
     #[test]
@@ -1137,12 +1198,13 @@ mod test_two_indexes {
     }
 
     #[test]
-    fn table_for_each_mut_updates_both_indexes() {
+    fn table_with_iter_mut_updates_both_indexes() {
         let store = KvStore::new();
         store
             .table::<People>(OWNER)
             .insert(1, person("a@example.com", b"alice"));
-        store.table::<People>(OWNER).for_each_mut(|_, v| {
+        store.table::<People>(OWNER).with_iter_mut(|mut i| {
+            let v = &mut i.next().unwrap().1;
             v.email = "b@example.com".to_owned();
             v.username = b"bob".to_vec();
         });
@@ -1173,16 +1235,18 @@ mod test_two_indexes {
     }
 
     #[test]
-    fn email_index_for_each_mut_updates_both_indexes() {
+    fn email_index_with_iter_mut_updates_both_indexes() {
         let store = KvStore::new();
         store
             .table::<People>(OWNER)
             .insert(1, person("a@example.com", b"alice"));
         store
             .table_by::<index::People::email>(OWNER)
-            .for_each_mut(|_, v| {
-                v.email = "b@example.com".to_owned();
-                v.username = b"bob".to_vec();
+            .with_iter_mut(|iter| {
+                iter.for_each(|(_, _, v)| {
+                    v.email = "b@example.com".to_owned();
+                    v.username = b"bob".to_vec();
+                });
             });
         assert!(
             store
@@ -1366,12 +1430,13 @@ mod test_transactional_index {
     }
 
     #[test]
-    fn txn_index_for_each_mut_updates_index_on_field_change() {
+    fn txn_index_iter_mut_updates_index_on_field_change() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>()
-            .for_each_mut(|_, v| v.name = "Charlie".to_owned());
+            .iter_mut()
+            .for_each(|(_, _, v)| v.name = "Charlie".to_owned());
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Charlie").unwrap(),
@@ -1382,6 +1447,76 @@ mod test_transactional_index {
                     age: 0
                 }
             )
+        );
+    }
+
+    #[test]
+    fn txn_index_values_mut_updates_index_on_field_change() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table_by::<index::Users::name>().insert(1, row("Alice"));
+        txn.table_by::<index::Users::name>()
+            .values_mut()
+            .for_each(|(_, v)| v.name = "Charlie".to_owned());
+        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Charlie").unwrap(),
+            (
+                1,
+                Row {
+                    name: "Charlie".to_owned(),
+                    age: 0
+                }
+            )
+        );
+    }
+
+    // Multi-row transactional index mutation: every row must be re-indexed under its new key.
+    #[test]
+    fn txn_index_iter_mut_updates_multiple_rows() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table_by::<index::Users::name>().insert(1, row("Alice"));
+        txn.table_by::<index::Users::name>().insert(2, row("Bob"));
+        txn.table_by::<index::Users::name>()
+            .iter_mut()
+            .for_each(|(_, _, v)| v.name.push('!'));
+
+        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        assert!(txn.table_by::<index::Users::name>().get("Bob").is_none());
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Alice!").unwrap(),
+            (1, row("Alice!"))
+        );
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Bob!").unwrap(),
+            (2, row("Bob!"))
+        );
+    }
+
+    // A row visited by the index iterator but left unmodified must remain correctly indexed.
+    #[test]
+    fn txn_index_iter_mut_visited_unmodified_row_stays_indexed() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table_by::<index::Users::name>().insert(1, row("Alice"));
+        txn.table_by::<index::Users::name>().insert(2, row("Bob"));
+        txn.table_by::<index::Users::name>()
+            .iter_mut()
+            .for_each(|(_, base_key, v)| {
+                if *base_key == 1 {
+                    v.name = "Zara".to_owned();
+                }
+            });
+
+        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Zara").unwrap(),
+            (1, row("Zara"))
+        );
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Bob").unwrap(),
+            (2, row("Bob"))
         );
     }
 
@@ -1437,12 +1572,11 @@ mod test_transactional_index {
     }
 
     #[test]
-    fn txn_base_for_each_mut_updates_index_on_field_change() {
+    fn txn_base_iter_mut_updates_index_on_field_change() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>()
-            .for_each_mut(|_, v| v.name = "Charlie".to_owned());
+        txn.table::<Users>().iter_mut().next().unwrap().1.name = "Charlie".to_owned();
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
             txn.table_by::<index::Users::name>().get("Charlie").unwrap(),
@@ -1454,6 +1588,61 @@ mod test_transactional_index {
                 }
             )
         );
+    }
+
+    // Rows inserted after a `clear()` in the same transaction live in the delete
+    // mask's pending map, not in `data`. Iterating the base table mutably must still leave those
+    // rows correctly indexed.
+    #[test]
+    fn txn_base_iter_mut_after_clear_keeps_new_rows_indexed() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Users>().insert(1, row("Alice"));
+        txn.table::<Users>().clear();
+        txn.table::<Users>().insert(2, row("Bob"));
+        for (_, v) in txn.table::<Users>().iter_mut() {
+            v.name.push('!');
+        }
+        txn.commit().unwrap();
+
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert!(index.get("Alice").is_none());
+        assert!(index.get("Bob").is_none());
+        assert_eq!(index.get("Bob!").unwrap(), (2, row("Bob!")));
+    }
+
+    #[test]
+    fn txn_base_iter_mut_after_clear_unmodified_stays_indexed() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Users>().clear();
+        txn.table::<Users>().insert(2, row("Bob"));
+        for (_, _v) in txn.table::<Users>().iter_mut() {}
+        txn.commit().unwrap();
+
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    // Removing a key then iterating mutably: the removed row must not be re-indexed, and a surviving
+    // row mutated through the iterator must be re-indexed under its new key.
+    #[test]
+    fn txn_base_iter_mut_after_remove_keeps_index_consistent() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Users>().insert(1, row("Alice"));
+        txn.table::<Users>().insert(2, row("Bob"));
+        txn.table::<Users>().remove(&1);
+        for (_, v) in txn.table::<Users>().iter_mut() {
+            v.name.push('!');
+        }
+        txn.commit().unwrap();
+
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert!(index.get("Alice").is_none());
+        assert!(index.get("Alice!").is_none());
+        assert!(index.get("Bob").is_none());
+        assert_eq!(index.get("Bob!").unwrap(), (2, row("Bob!")));
     }
 
     #[test]
@@ -1541,10 +1730,11 @@ mod test_transactional_index {
 
     #[test]
     #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
-    fn txn_index_for_each_mut_wrong_owner_panics() {
+    fn txn_index_iter_mut_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
-        txn.table_by::<index::Users::name>().for_each_mut(|_, _| {});
+        let mut table = txn.table_by::<index::Users::name>();
+        let _iter = table.iter_mut();
     }
 
     #[test]

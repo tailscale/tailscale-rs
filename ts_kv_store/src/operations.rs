@@ -15,7 +15,8 @@ use std::{
 };
 
 use crate::{
-    Error, IndexIterator, Owner, Result, TableIterator, iter,
+    Error, IndexIterator, Owner, Result, TableIterator,
+    iter::{self, IndexIteratorMut, TableIteratorMut},
     schema::{self, IndexDesc, TableDesc},
     storage::Storage,
 };
@@ -450,21 +451,39 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         table.remove(key, txn_id, max_committed_id);
     }
 
-    fn for_each_mut(
+    fn iter_mut<'guard>(
         self,
-        f: impl FnMut(&<Self::TableDesc as TableDesc>::Key, &mut <Self::TableDesc as TableDesc>::Value),
         owner: Owner,
-    ) where
-        <Self::TableDesc as TableDesc>::Value: Clone,
+    ) -> impl Iterator<
+        Item = (
+            &'guard <Self::TableDesc as TableDesc>::Key,
+            &'guard mut <Self::TableDesc as TableDesc>::Value,
+        ),
+    >
+    where
+        Self::WriteLock: 'guard,
+        Self::TableDesc: 'guard,
+        <<Self as TabularOpsMut<TableStorage>>::TableDesc as TableDesc>::Value: Clone,
     {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-        let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_owner(owner);
+        let guard = self.write_lock();
+        TableIteratorMut::<'guard, Self::WriteLock, Self::TableDesc, iter::KeysAndValues>::new(
+            guard, owner,
+        )
+    }
 
-        table.for_each_mut(f, txn_id, max_committed_id);
+    fn values_mut<'guard>(
+        self,
+        owner: Owner,
+    ) -> impl Iterator<Item = &'guard mut <Self::TableDesc as TableDesc>::Value>
+    where
+        Self::WriteLock: 'guard,
+        Self::TableDesc: 'guard,
+        <<Self as TabularOpsMut<TableStorage>>::TableDesc as TableDesc>::Value: Clone,
+    {
+        let guard = self.write_lock();
+        TableIteratorMut::<'guard, Self::WriteLock, Self::TableDesc, iter::Values>::new(
+            guard, owner,
+        )
     }
 }
 
@@ -489,7 +508,6 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
 
     fn insert(self, key: BaseKey<Self::IndexDesc>, value: BaseValue<Self::IndexDesc>, owner: Owner)
     where
-        BaseKey<Self::IndexDesc>: Clone,
         IndexValue<Self::IndexDesc>: Hash + Eq,
     {
         let mut storage = self.write_lock();
@@ -557,35 +575,50 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         index.remove(key, txn_id, max_committed_id);
     }
 
-    fn for_each_mut(
+    #[allow(clippy::type_complexity)]
+    fn iter_mut<'guard>(
         self,
-        mut f: impl FnMut(&BaseKey<Self::IndexDesc>, &mut BaseValue<Self::IndexDesc>),
         owner: Owner,
-    ) where
+    ) -> impl Iterator<
+        Item = (
+            &'guard IndexKey<Self::IndexDesc>,
+            &'guard BaseKey<Self::IndexDesc>,
+            &'guard mut BaseValue<Self::IndexDesc>,
+        ),
+    >
+    where
+        Self::WriteLock: 'guard,
+        Self::IndexDesc: 'guard,
         IndexValue<Self::IndexDesc>: Hash + Eq,
         BaseKey<Self::IndexDesc>: Clone,
         BaseValue<Self::IndexDesc>: Clone,
     {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
+        let guard = self.write_lock();
+        IndexIteratorMut::<'guard, Self::WriteLock, Self::IndexDesc, iter::KeysAndValues>::new(
+            guard, owner,
+        )
+    }
 
-        let (base, index) = schema::get_two_tables_mut::<_, Base<Self::IndexDesc>, Self::IndexDesc>(
-            &mut storage.tables,
-        );
-        base.assert_owner(owner);
-
-        for (_, base_key) in index.iter(txn_id) {
-            base.with_mut(
-                base_key,
-                |value| {
-                    f(base_key, value);
-                },
-                txn_id,
-                max_committed_id,
-            );
-        }
+    fn values_mut<'guard>(
+        self,
+        owner: Owner,
+    ) -> impl Iterator<
+        Item = (
+            &'guard BaseKey<Self::IndexDesc>,
+            &'guard mut BaseValue<Self::IndexDesc>,
+        ),
+    >
+    where
+        Self::WriteLock: 'guard,
+        Self::IndexDesc: 'guard,
+        IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseKey<Self::IndexDesc>: Clone,
+        BaseValue<Self::IndexDesc>: Clone,
+    {
+        let guard = self.write_lock();
+        IndexIteratorMut::<'guard, Self::WriteLock, Self::IndexDesc, iter::Values>::new(
+            guard, owner,
+        )
     }
 }
 

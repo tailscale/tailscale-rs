@@ -534,6 +534,19 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         *self.poisoned.get(txn_id).unwrap_or(&false)
     }
 
+    /// Rebuild all indexes for a specific key in this table.
+    pub(crate) fn rebuild_indexes_for_key(
+        &mut self,
+        key: &D::Key,
+        txn_id: TxnId,
+        max_committed_id: TxnId,
+    ) {
+        if let Some(v) = get_from_table::<D, D::Key>(&self.delete_mask, &self.data, key, txn_id) {
+            self.indexes.on_insert(key, v, txn_id, max_committed_id);
+        }
+    }
+
+    /// Cleanup a rolled-back transaction.
     pub fn gc_txn(&mut self, txn_id: TxnId) {
         self.delete_mask = DeleteMask::None;
         self.poisoned.gc_txn(txn_id);
@@ -547,14 +560,20 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             "Found mismatched modified set to GC"
         );
 
-        for k in &modified.keys {
-            if let Some(value) = self.data.get_mut(k) {
-                value.gc_txn(txn_id);
+        if let Some(keys) = &modified.keys {
+            for k in keys {
+                if let Some(value) = self.data.get_mut(k) {
+                    value.gc_txn(txn_id);
 
-                // We don't need to do this, but I think we may as well free up the space.
-                if value.is_empty() {
-                    self.data.remove(k);
+                    // We don't need to do this, but I think we may as well free up the space.
+                    if value.is_empty() {
+                        self.data.remove(k);
+                    }
                 }
+            }
+        } else {
+            for datum in self.data.values_mut() {
+                datum.gc_txn(txn_id);
             }
         }
 
@@ -646,6 +665,30 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         }
     }
 
+    /// Get a mutable iterator over the table. Does not keep indexes up to date; the caller must
+    /// call `rebuild_indexes_for_key` for any mutated key.
+    pub(crate) fn iter_mut<'a>(
+        &'a mut self,
+        txn_id: TxnId,
+        max_committed_id: TxnId,
+    ) -> TableIteratorMut<'a, D, I> {
+        debug_assert!(self.delete_mask.check_txn_id(txn_id));
+        record_mutation(&mut self.modified, None, txn_id, max_committed_id);
+
+        let (data, removed) = match &mut self.delete_mask {
+            DeleteMask::None => (self.data.iter_mut(), None),
+            DeleteMask::Some(_, removed) => (self.data.iter_mut(), Some(&*removed)),
+            DeleteMask::All(_, pending) => (pending.iter_mut(), None),
+        };
+        TableIteratorMut {
+            data,
+            removed,
+            indexes: &mut self.indexes,
+            txn_id,
+            max_committed_id,
+        }
+    }
+
     pub fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
     where
         D::Key: Borrow<Q>,
@@ -655,6 +698,29 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             return None;
         }
         get_from_table::<D, Q>(&self.delete_mask, &self.data, key, txn_id)
+    }
+
+    /// Get a mutable reference to a value.
+    ///
+    /// Unlike most methods, `get_mut` will not update indexes after mutation. It is the caller's
+    /// responsibility to call `rebuild_indexes_for_key` whether the value is mutated or not (because
+    /// this method does clear the index for the returned key/value).
+    pub(crate) fn get_mut<Q>(
+        &mut self,
+        key: &Q,
+        txn_id: TxnId,
+        max_committed_id: TxnId,
+    ) -> Option<&mut D::Value>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+        D::Value: Clone,
+    {
+        let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
+        record_mutation(&mut self.modified, Some(key), txn_id, max_committed_id);
+        self.indexes.on_remove(value, txn_id, max_committed_id);
+
+        Some(value)
     }
 
     pub(crate) fn with_mut<Q, T>(
@@ -669,14 +735,9 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
         D::Value: Clone,
     {
-        let value = match self.delete_mask.get_mut(key, txn_id) {
-            MaskStatus::Unknown => self.data.get_mut(key)?.internal_clone(txn_id)?,
-            MaskStatus::Removed => return None,
-            MaskStatus::Overwritten(v) => v,
-        };
-
+        let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
+        record_mutation(&mut self.modified, Some(key), txn_id, max_committed_id);
         self.indexes.on_remove(value, txn_id, max_committed_id);
-        record_mutation(&mut self.modified, key, txn_id, max_committed_id);
         let result = f(value);
         self.indexes.on_insert(key, value, txn_id, max_committed_id);
         Some(result)
@@ -686,58 +747,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         self.data
             .iter()
             .filter_map(move |(k, v)| Some((k, v.get(txn_id)?)))
-    }
-
-    fn iter_data_mut(
-        data: &mut HashMap<D::Key, VersionedValue<D::Value>>,
-        txn_id: TxnId,
-    ) -> impl Iterator<Item = (&D::Key, &mut D::Value)>
-    where
-        D::Value: Clone,
-    {
-        data.iter_mut()
-            .filter_map(move |(k, v)| Some((k, v.internal_clone(txn_id)?)))
-    }
-
-    pub(crate) fn for_each_mut(
-        &mut self,
-        mut f: impl FnMut(&D::Key, &mut D::Value),
-        txn_id: TxnId,
-        max_committed_id: TxnId,
-    ) where
-        D::Value: Clone,
-    {
-        match &mut self.delete_mask {
-            DeleteMask::None => {
-                self.indexes.clear(txn_id, max_committed_id);
-                Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
-                    record_mutation(&mut self.modified, k, txn_id, max_committed_id);
-                    f(k, v);
-                    self.indexes.on_insert(k, v, txn_id, max_committed_id);
-                })
-            }
-            DeleteMask::All(_, pending) => {
-                self.indexes.clear(txn_id, max_committed_id);
-                pending.iter_mut().for_each(|(k, v)| {
-                    if let Some(v) = v.get_mut(txn_id) {
-                        record_mutation(&mut self.modified, k, txn_id, max_committed_id);
-                        f(k, v);
-                        self.indexes.on_insert(k, v, txn_id, max_committed_id);
-                    }
-                })
-            }
-            DeleteMask::Some(_, removed) => {
-                Self::iter_data_mut(&mut self.data, txn_id).for_each(|(k, v)| {
-                    if removed.contains(k) {
-                        return;
-                    }
-                    self.indexes.on_remove(v, txn_id, max_committed_id);
-                    record_mutation(&mut self.modified, k, txn_id, max_committed_id);
-                    f(k, v);
-                    self.indexes.on_insert(k, v, txn_id, max_committed_id);
-                })
-            }
-        }
     }
 
     pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId, max_committed_id: TxnId) {
@@ -751,7 +760,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
         match self.delete_mask.insert(key, value, txn_id) {
             MaskInsertResult::NotWritten(key, value) => {
-                record_mutation(&mut self.modified, &key, txn_id, max_committed_id);
+                record_mutation(&mut self.modified, Some(&key), txn_id, max_committed_id);
                 let entry = self.data.entry(key).or_default();
                 entry.set(value, txn_id);
             }
@@ -803,7 +812,9 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     }
 }
 
-// Helper function for `get`, since calling `self.get` can cause lifetime issues.
+/// Helper function for getting a reference from a table taking into account the delete mask.
+///
+/// Making this a method could cause lifetime issues.
 fn get_from_table<'a, D: schema::TableDesc, Q>(
     delete_mask: &'a DeleteMask<D::Key, D::Value>,
     data: &'a HashMap<D::Key, VersionedValue<D::Value>>,
@@ -821,14 +832,36 @@ where
     })
 }
 
+/// Helper function for getting a mutable reference from a table taking into account the delete mask.
+///
+/// Making this a method could cause lifetime issues.
+fn get_from_table_mut<'a, D: schema::TableDesc, Q>(
+    delete_mask: &'a mut DeleteMask<D::Key, D::Value>,
+    data: &'a mut HashMap<D::Key, VersionedValue<D::Value>>,
+    key: &Q,
+    txn_id: TxnId,
+) -> Option<&'a mut D::Value>
+where
+    D::Key: Borrow<Q>,
+    D::Value: Clone,
+    Q: ?Sized + Hash + Eq,
+{
+    match delete_mask.get_mut(key, txn_id) {
+        MaskStatus::Unknown => data.get_mut(key)?.internal_clone(txn_id),
+        MaskStatus::Removed => None,
+        MaskStatus::Overwritten(v) => Some(v),
+    }
+}
+
 struct TxnMutations<K> {
     txn_id: TxnId,
-    keys: Vec<K>,
+    // `None` means all keys.
+    keys: Option<Vec<K>>,
 }
 
 fn record_mutation<K, Q>(
     modified: &mut Option<TxnMutations<K>>,
-    key: &Q,
+    key: Option<&Q>,
     txn_id: TxnId,
     max_committed_id: TxnId,
 ) where
@@ -836,16 +869,30 @@ fn record_mutation<K, Q>(
     Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
 {
     if txn_id != max_committed_id {
+        let Some(key) = key else {
+            match modified {
+                Some(modified) => {
+                    assert_eq!(modified.txn_id, txn_id);
+                    modified.keys = None;
+                }
+                None => {
+                    *modified = Some(TxnMutations { txn_id, keys: None });
+                }
+            };
+            return;
+        };
         let key = key.to_owned();
         match modified {
             Some(modified) => {
                 assert_eq!(modified.txn_id, txn_id);
-                modified.keys.push(key);
+                if let Some(keys) = &mut modified.keys {
+                    keys.push(key);
+                }
             }
             None => {
                 *modified = Some(TxnMutations {
                     txn_id,
-                    keys: vec![key],
+                    keys: Some(vec![key]),
                 });
             }
         }
@@ -855,7 +902,7 @@ fn record_mutation<K, Q>(
 /// Iterate the key-value pairs in a table.
 ///
 /// Takes into account the state of the table as visible to the transaction with id `self.txn_id`.
-pub struct TableIterator<'a, D: schema::TableDesc> {
+pub(crate) struct TableIterator<'a, D: schema::TableDesc> {
     data: std::collections::hash_map::Iter<'a, D::Key, VersionedValue<D::Value>>,
     delete_mask: &'a DeleteMask<D::Key, D::Value>,
     txn_id: TxnId,
@@ -885,6 +932,50 @@ impl<'a, D: schema::TableDesc> Iterator for TableIterator<'a, D> {
                 None
             }
         }
+    }
+}
+
+/// Iterate the key-value pairs in a table with mutable access.
+///
+/// Doesn't include the delete mask because of lifetime issues, so some pre-processing into `data`
+/// and `removed` is required, see `Table::iter_mut`.
+///
+/// Indexes for yielded key/value pairs are cleared, the caller is responsible for rebuilding the
+/// indexes.
+pub(crate) struct TableIteratorMut<'a, D: schema::TableDesc, I> {
+    data: std::collections::hash_map::IterMut<'a, D::Key, VersionedValue<D::Value>>,
+    removed: Option<&'a HashSet<D::Key>>,
+    indexes: &'a mut I,
+    txn_id: TxnId,
+    max_committed_id: TxnId,
+}
+
+impl<'a, D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Iterator
+    for TableIteratorMut<'a, D, I>
+where
+    D::Value: Clone,
+{
+    type Item = (&'a D::Key, &'a mut D::Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for (k, v) in &mut self.data {
+            if let Some(removed) = &self.removed
+                && removed.contains(k)
+            {
+                continue;
+            }
+            match v.internal_clone(self.txn_id) {
+                Some(v) => {
+                    // Remove this row's current index entries; they must be rebuilt from the (possibly
+                    // mutated) value after iteration finishes.
+                    self.indexes
+                        .on_remove(v, self.txn_id, self.max_committed_id);
+                    return Some((k, v));
+                }
+                None => continue,
+            }
+        }
+        None
     }
 }
 
