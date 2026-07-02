@@ -16,7 +16,7 @@ use crate::{
     handshake::{Handshake, ReceivedHandshake, SessionPair, initiate_handshake},
     macs::{MACReceiver, MACSender},
     messages::{CookieReply, HandshakeResponse, Message, MessageMut, SessionId},
-    session::{ReceiveSession, TransmitSession},
+    session::{ReceiveSession, SESSION_CLEANUP_GRACE, SESSION_LIFETIME, TransmitSession},
     time::{TAI64N, TAI64NClock},
 };
 
@@ -206,6 +206,27 @@ impl SessionState {
             SessionState::Active { send, .. } => send.stale(Instant::now()),
         }
     }
+
+    fn expire_sessions(&mut self, endpoint: &mut EndpointState) {
+        match self {
+            SessionState::None(_) => (),
+            SessionState::Active {
+                recv, recv_prev, ..
+            } => {
+                if recv.expired(Instant::now()) {
+                    // If the latest recv session is expired, send is also expired and any
+                    // recv_prev will be as well.
+                    self.deactivate(endpoint)
+                } else if let Some(prev) = recv_prev
+                    && prev.expired(Instant::now())
+                {
+                    recv_prev
+                        .take()
+                        .inspect(|recv_prev| endpoint.ids.remove_session(recv_prev.id()));
+                }
+            }
+        }
+    }
 }
 
 /// Tracks and allocates session IDs for peer sessions.
@@ -282,6 +303,7 @@ struct Peer {
     last_seen_timestamp: Option<TAI64N>,
     cookie_sender: MACSender,
     keepalive: Option<Handle<Event>>,
+    session_cleanup: Option<Handle<Event>>,
     send_another_keepalive: bool,
 }
 
@@ -296,6 +318,7 @@ impl Peer {
             last_seen_timestamp: None,
             cookie_sender: macs,
             keepalive: None,
+            session_cleanup: None,
             send_another_keepalive: false,
         }
     }
@@ -412,6 +435,14 @@ impl Peer {
             packets = self.session.encrypt_or_queue(packets).unwrap();
         }
         out.queue_to_peer(self.id).append(&mut packets);
+        if let Some(handle) = self.session_cleanup.take() {
+            handle.cancel();
+        };
+        let expiry = Instant::now() + SESSION_LIFETIME;
+        self.session_cleanup = Some(endpoint.scheduler.add(
+            TimeRange::new(expiry, expiry + SESSION_CLEANUP_GRACE),
+            Event::ExpireSession(self.id),
+        ));
     }
 
     fn recv_transport_data(
@@ -442,6 +473,14 @@ impl Peer {
         if !packets_for_peer.is_empty() {
             out.queue_to_peer(self.id).append(&mut packets_for_peer);
         }
+        if let Some(handle) = self.session_cleanup.take() {
+            handle.cancel();
+        }
+        let expiry = Instant::now() + SESSION_LIFETIME;
+        self.session_cleanup = Some(endpoint.scheduler.add(
+            TimeRange::new(expiry, expiry + SESSION_CLEANUP_GRACE),
+            Event::ExpireSession(self.id),
+        ));
     }
 
     fn respond_to_handshake(
@@ -500,6 +539,10 @@ impl Peer {
             self.schedule_keepalive(scheduler);
             self.send_another_keepalive = false;
         }
+    }
+
+    fn expire_sessions(&mut self, endpoint: &mut EndpointState) {
+        self.session.expire_sessions(endpoint);
     }
 
     fn shutdown(&mut self, endpoint: &mut EndpointState) {
@@ -723,6 +766,12 @@ impl Endpoint {
                     };
                     peer.send_keepalive(&mut self.state.scheduler, &mut out);
                 }
+                Event::ExpireSession(peer_id) => {
+                    let Some(peer) = self.peers.get_mut(&peer_id) else {
+                        continue;
+                    };
+                    peer.expire_sessions(&mut self.state);
+                }
             }
         }
         out
@@ -809,6 +858,8 @@ pub enum Event {
     HandshakeTimeout(PeerId),
     /// Send a keepalive packet, if there was no recent outgoing traffic.
     MaybeSendKeepalive(PeerId),
+    /// Clean up expired session state.
+    ExpireSession(PeerId),
 }
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
