@@ -42,10 +42,11 @@ impl IdMap {
     pub fn allocate_session(&mut self, peer: PeerId) -> SessionId {
         loop {
             let ret = SessionId::random();
-            if let std::collections::hash_map::Entry::Vacant(e) = self.sessions.entry(ret) {
-                e.insert(peer);
-                return ret;
+            if self.sessions.contains_key(&ret) {
+                continue;
             }
+            self.sessions.insert(ret, peer);
+            return ret;
         }
     }
 

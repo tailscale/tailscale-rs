@@ -11,7 +11,7 @@ use crate::{
     endpoint::Event,
     macs::{MACReceiver, MACSender, Mac},
     messages::*,
-    session::{ReceiveSession, TransmitSession},
+    session::{BidiSession, BidiSessionKeys},
     time::TAI64N,
 };
 
@@ -53,7 +53,7 @@ impl ReceivedHandshake {
         psk: &Psk,
         macs: &MACSender,
         now: Instant,
-    ) -> (SessionPair, PacketMut) {
+    ) -> (BidiSession, PacketMut) {
         let mut response = HandshakeResponse {
             sender_id: session_id,
             receiver_id: self.send_id,
@@ -62,13 +62,20 @@ impl ReceivedHandshake {
 
         let session_keys = self.noise.finish(psk, response.noise.as_mut_bytes());
 
-        let send = TransmitSession::new(session_keys.send, self.send_id, now);
-        let recv = ReceiveSession::new(session_keys.recv, session_id, now);
+        let session = BidiSession::new(
+            BidiSessionKeys {
+                send_key: session_keys.send,
+                send_id: self.send_id,
+                recv_key: session_keys.recv,
+                recv_id: session_id,
+            },
+            now,
+        );
         let mut pkt = PacketMut::new(size_of::<HandshakeResponse>());
         // Packet is allocated above with the correct size.
         response.write_to(pkt.as_mut()).unwrap();
         macs.write_macs(pkt.as_mut());
-        (SessionPair { send, recv }, pkt)
+        (session, pkt)
     }
 
     pub fn peer_static(&self) -> NodePublicKey {
@@ -110,11 +117,6 @@ pub struct SentHandshake {
     noise: ikpsk2::SentHandshake<TAI64N>,
 }
 
-pub struct SessionPair {
-    pub send: TransmitSession,
-    pub recv: ReceiveSession,
-}
-
 /// A handshake with a peer.
 pub(crate) enum Handshake {
     /// No handshake in progress.
@@ -125,7 +127,7 @@ pub(crate) enum Handshake {
     Initiated(SentHandshake, Handle<Event>, Mac),
     /// We are the responder, awaiting an initial transport
     /// message to confirm the new session.
-    Responded(Box<SessionPair>),
+    Responded(Box<BidiSession>),
 }
 
 impl Handshake {
@@ -137,7 +139,7 @@ impl Handshake {
     pub(crate) fn session_id(&self) -> Option<SessionId> {
         match self {
             Handshake::Initiated(handshake, ..) => Some(handshake.id),
-            Handshake::Responded(tentative) => Some(tentative.recv.id()),
+            Handshake::Responded(tentative) => Some(tentative.recv_id()),
             Handshake::None => None,
         }
     }
@@ -194,7 +196,7 @@ impl Handshake {
         psk: &Psk,
         cookies: &MACReceiver,
         now: Instant,
-    ) -> Option<SessionPair> {
+    ) -> Option<BidiSession> {
         let (mut sent_handshake, timeout, _) = self.take_initiated()?;
 
         if !cookies.verify_macs(packet.as_bytes()) {
@@ -213,12 +215,19 @@ impl Handshake {
                 }
             };
 
-        let send = TransmitSession::new(session_keys.send, packet.sender_id, now);
-        let recv = ReceiveSession::new(session_keys.recv, sent_handshake.id, now);
+        let session = BidiSession::new(
+            BidiSessionKeys {
+                send_key: session_keys.send,
+                send_id: packet.sender_id,
+                recv_key: session_keys.recv,
+                recv_id: sent_handshake.id,
+            },
+            now,
+        );
 
         timeout.cancel();
 
-        Some(SessionPair { send, recv })
+        Some(session)
     }
 
     /// Confirm a handshake as responder, using the provided ciphertext packets.
@@ -234,16 +243,16 @@ impl Handshake {
         &mut self,
         session_id: SessionId,
         mut packets: Vec<PacketMut>,
-    ) -> Option<(SessionPair, Vec<PacketMut>)> {
+    ) -> Option<(BidiSession, Vec<PacketMut>)> {
         let Handshake::Responded(tentative) = self else {
             return None;
         };
 
-        if tentative.recv.id() != session_id {
+        if tentative.recv_id() != session_id {
             return None;
         };
 
-        packets = tentative.recv.decrypt(packets);
+        packets = tentative.decrypt(packets);
         if packets.is_empty() {
             return None;
         }
@@ -312,14 +321,14 @@ mod tests {
         // They can now communicate
         let a_plaintext = vec![PacketMut::from("xyzzy".as_bytes())];
         let mut packets = a_plaintext.clone();
-        a_session.send.encrypt(packets.iter_mut());
-        let b_received = b_session.recv.decrypt(packets);
+        a_session.encrypt(packets.iter_mut());
+        let b_received = b_session.decrypt(packets);
         assert_eq!(b_received, a_plaintext);
 
         let b_plaintext = vec![PacketMut::from("plover".as_bytes())];
         packets = b_plaintext.clone();
-        b_session.send.encrypt(&mut packets);
-        let a_received = a_session.recv.decrypt(packets);
+        b_session.encrypt(&mut packets);
+        let a_received = a_session.decrypt(packets);
         assert_eq!(a_received, b_plaintext);
     }
 }

@@ -112,7 +112,7 @@ async fn main() -> BoxResult<()> {
                 let mut packet = PacketMut::new(0);
                 packet.put_slice(b"test test");
 
-                let ts_tunnel::SendResult { to_peers } = ep.send([(peer_id, vec![packet])]);
+                let ts_tunnel::SendResult { to_peers } = ep.send(Instant::now(), [(peer_id, vec![packet])]);
 
                 for (peer_id, packets) in to_peers {
                     eprintln!("sending {} packets to {peer_id:?}", packets.len());
@@ -128,7 +128,7 @@ async fn main() -> BoxResult<()> {
                 eprintln!("receive resp (len {n}, from {from})");
                 let buf = &buf[..n];
 
-                let ts_tunnel::RecvResult { to_peers, to_local } = ep.recv(vec![PacketMut::from(buf)]);
+                let ts_tunnel::RecvResult { to_peers, to_local } = ep.recv(Instant::now(), vec![PacketMut::from(buf)]);
 
                 eprintln!(
                     "resp: {} packets to peers, {} to local",

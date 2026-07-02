@@ -74,7 +74,7 @@ impl DataPlane {
 
         let ts_tunnel::SendResult {
             to_peers: encrypted,
-        } = self.wireguard.send(to_wireguard);
+        } = self.wireguard.send(Instant::now(), to_wireguard);
 
         let to_peers = self
             .ur_out
@@ -96,7 +96,8 @@ impl DataPlane {
         &mut self,
         packets: impl IntoIterator<Item = PacketMut>,
     ) -> InboundResult {
-        let ts_tunnel::RecvResult { to_local, to_peers } = self.wireguard.recv(packets);
+        let ts_tunnel::RecvResult { to_local, to_peers } =
+            self.wireguard.recv(Instant::now(), packets);
 
         let to_local = to_local
             .into_iter()

@@ -51,12 +51,12 @@ impl Peer {
         }
     }
 
-    fn schedule_keepalive(&mut self, scheduler: &mut Scheduler<Event>) {
+    fn schedule_keepalive(&mut self, scheduler: &mut Scheduler<Event>, now: Instant) {
         if self.keepalive.is_some() {
             self.send_another_keepalive = true;
             return;
         }
-        let tr = TimeRange::new_around(Instant::now() + KEEPALIVE_TIMEOUT, Duration::from_secs(1));
+        let tr = TimeRange::new_around(now + KEEPALIVE_TIMEOUT, Duration::from_secs(1));
         self.keepalive = Some(scheduler.add(tr, Event::MaybeSendKeepalive(self.id)));
     }
 
@@ -65,9 +65,10 @@ impl Peer {
         &mut self,
         endpoint: &mut EndpointState,
         packets: Vec<PacketMut>,
+        now: Instant,
         out: &mut SendResult,
     ) {
-        if let Some(mut packets) = self.session.send(packets, &mut endpoint.ids) {
+        if let Some(mut packets) = self.session.send(packets, &mut endpoint.ids, now) {
             tracing::trace!("enqueueing packets to peer");
             out.queue_to_peer(self.id).append(&mut packets);
             // Fall through to check if the session is in need of rotation.
@@ -78,12 +79,12 @@ impl Peer {
             return;
         }
 
-        if !self.session.needs_handshake() {
-            tracing::trace!("session does not need rotation");
+        if !self.session.needs_handshake(now) {
+            tracing::trace!("session does not need new handshake");
             return;
         }
 
-        self.start_handshake(endpoint, out);
+        self.start_handshake(endpoint, now, out);
     }
 
     #[tracing::instrument(skip_all, fields(?session_id, n_packets = packets.len()))]
@@ -92,6 +93,7 @@ impl Peer {
         endpoint: &mut EndpointState,
         session_id: SessionId,
         mut packets: Vec<PacketMut>,
+        now: Instant,
         out: &mut RecvResult,
     ) {
         let pre_len = packets.len();
@@ -103,7 +105,7 @@ impl Peer {
             }
             Ok(MessageMut::TransportDataHeader(_)) => true,
             Ok(MessageMut::HandshakeResponse(resp)) => {
-                self.recv_handshake_response(endpoint, resp, out);
+                self.recv_handshake_response(endpoint, resp, now, out);
                 false
             }
             Ok(MessageMut::CookieReply(resp)) => {
@@ -125,7 +127,7 @@ impl Peer {
             tracing::trace!(n_dropped = pre_len - post_len, "dropped packets");
         }
 
-        self.recv_transport_data(endpoint, session_id, packets, out);
+        self.recv_transport_data(endpoint, session_id, packets, now, out);
     }
 
     fn recv_cookie_reply(&mut self, packet: &CookieReply) {
@@ -140,6 +142,7 @@ impl Peer {
         &mut self,
         endpoint: &mut EndpointState,
         packet: &mut HandshakeResponse,
+        now: Instant,
         out: &mut RecvResult,
     ) {
         let Some(session) = self.handshake.finish(
@@ -147,18 +150,18 @@ impl Peer {
             &endpoint.my_key,
             &self.config.psk,
             &endpoint.my_cookie,
-            Instant::now(),
+            now,
         ) else {
             tracing::error!("handshake failed to complete");
             return;
         };
 
-        let mut packets = self.session.activate(session, &mut endpoint.ids, true);
+        let mut packets = self.session.activate(session, &mut endpoint.ids, now, true);
         out.queue_to_peer(self.id).append(&mut packets);
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         };
-        let expiry = Instant::now() + SESSION_LIFETIME;
+        let expiry = now + SESSION_LIFETIME;
         self.session_cleanup = Some(endpoint.scheduler.add(
             TimeRange::new(expiry, expiry + SESSION_CLEANUP_GRACE),
             Event::ExpireSession(self.id),
@@ -170,13 +173,14 @@ impl Peer {
         endpoint: &mut EndpointState,
         session_id: SessionId,
         packets: Vec<PacketMut>,
+        now: Instant,
         out: &mut RecvResult,
     ) {
-        if let Some(recv) = self.session.get_recv(session_id, &mut endpoint.ids) {
+        if let Some(recv) = self.session.get_recv(session_id, &mut endpoint.ids, now) {
             let mut packets = recv.decrypt(packets);
             if !packets.is_empty() {
                 out.queue_to_local(self.id).append(&mut packets);
-                self.schedule_keepalive(&mut endpoint.scheduler);
+                self.schedule_keepalive(&mut endpoint.scheduler, now);
             }
             return;
         }
@@ -187,9 +191,11 @@ impl Peer {
         };
 
         out.queue_to_local(self.id).append(&mut packets);
-        self.schedule_keepalive(&mut endpoint.scheduler);
+        self.schedule_keepalive(&mut endpoint.scheduler, now);
 
-        let mut packets_for_peer = self.session.activate(session, &mut endpoint.ids, false);
+        let mut packets_for_peer = self
+            .session
+            .activate(session, &mut endpoint.ids, now, false);
         if !packets_for_peer.is_empty() {
             out.queue_to_peer(self.id).append(&mut packets_for_peer);
         }
@@ -197,7 +203,7 @@ impl Peer {
             handle.cancel();
         }
         // Session was just activated above, so it has an expiry time.
-        let expiry = self.session.expiry(&mut endpoint.ids).unwrap();
+        let expiry = self.session.expiry(&mut endpoint.ids, now).unwrap();
         self.session_cleanup = Some(
             endpoint
                 .scheduler
@@ -209,6 +215,7 @@ impl Peer {
         &mut self,
         endpoint: &mut EndpointState,
         handshake: ReceivedHandshake,
+        now: Instant,
         out: &mut RecvResult,
     ) {
         if let Some(timestamp) = self.last_seen_timestamp
@@ -231,12 +238,17 @@ impl Peer {
             handshake,
             &self.config.psk,
             &self.cookie_sender,
-            Instant::now(),
+            now,
         );
         out.queue_to_peer(self.id).push(packet);
     }
 
-    fn handshake_timeout(&mut self, endpoint: &mut EndpointState, out: &mut EventResult) {
+    fn handshake_timeout(
+        &mut self,
+        endpoint: &mut EndpointState,
+        now: Instant,
+        out: &mut EventResult,
+    ) {
         if !self.handshake.is_active() {
             // Handshake completed prior to timeout firing.
             return;
@@ -245,11 +257,16 @@ impl Peer {
         endpoint.ids.remove_handshake_session(&self.handshake);
         self.handshake = Handshake::None;
 
-        self.start_handshake(endpoint, out);
+        self.start_handshake(endpoint, now, out);
     }
 
-    fn send_keepalive(&mut self, endpoint: &mut EndpointState, out: &mut EventResult) {
-        let Some(packet) = self.session.send_keepalive(&mut endpoint.ids) else {
+    fn send_keepalive(
+        &mut self,
+        endpoint: &mut EndpointState,
+        now: Instant,
+        out: &mut EventResult,
+    ) {
+        let Some(packet) = self.session.send_keepalive(&mut endpoint.ids, now) else {
             tracing::trace!("send keepalive: session expired, skipping");
             return;
         };
@@ -258,13 +275,13 @@ impl Peer {
         self.keepalive = None;
 
         if self.send_another_keepalive {
-            self.schedule_keepalive(&mut endpoint.scheduler);
+            self.schedule_keepalive(&mut endpoint.scheduler, now);
             self.send_another_keepalive = false;
         }
     }
 
-    fn cleanup_expired(&mut self, endpoint: &mut EndpointState) {
-        self.session.cleanup_expired(&mut endpoint.ids)
+    fn cleanup_expired(&mut self, endpoint: &mut EndpointState, now: Instant) {
+        self.session.cleanup_expired(&mut endpoint.ids, now)
     }
 
     fn shutdown(&mut self, endpoint: &mut EndpointState) {
@@ -282,7 +299,12 @@ impl Peer {
 
     /// (Soft) precondition: `self.handshake == HandshakeState::None` (previous handshake is lost, but
     /// that shouldn't cause anything terrible to happen).
-    fn start_handshake(&mut self, endpoint: &mut EndpointState, out: &mut impl QueueToPeer) {
+    fn start_handshake(
+        &mut self,
+        endpoint: &mut EndpointState,
+        now: Instant,
+        out: &mut impl QueueToPeer,
+    ) {
         // TODO most of this logic might be better in the `handshake` module.
         let session_id = endpoint.ids.allocate_session(self.id);
         let (handshake, packet) = initiate_handshake(
@@ -298,10 +320,7 @@ impl Peer {
         tracing::debug!(peer_id = ?self.id, ?session_id, "enqueue handshake start");
 
         out.queue_to_peer(self.id).push(packet);
-        let tr = TimeRange::new_around(
-            Instant::now() + HANDSHAKE_TIMEOUT,
-            Duration::from_millis(500),
-        );
+        let tr = TimeRange::new_around(now + HANDSHAKE_TIMEOUT, Duration::from_millis(500));
 
         let timeout = endpoint.scheduler.add(tr, Event::HandshakeTimeout(self.id));
         self.handshake = Handshake::Initiated(handshake, timeout, mac);
@@ -387,6 +406,7 @@ impl Endpoint {
     /// Send packets to peers.
     pub fn send(
         &mut self,
+        now: Instant,
         packets: impl IntoIterator<Item = (PeerId, Vec<PacketMut>)>,
     ) -> SendResult {
         let mut ret = SendResult::default();
@@ -402,13 +422,17 @@ impl Endpoint {
                 "processing send packets"
             );
 
-            peer.send(&mut self.state, packets, &mut ret);
+            peer.send(&mut self.state, packets, now, &mut ret);
         }
         ret
     }
 
     /// Receive packets from peers.
-    pub fn recv(&mut self, packets: impl IntoIterator<Item = PacketMut>) -> RecvResult {
+    pub fn recv(
+        &mut self,
+        now: Instant,
+        packets: impl IntoIterator<Item = PacketMut>,
+    ) -> RecvResult {
         let mut ret = RecvResult::default();
 
         let mut packets = packets.into_iter().into_group_map_by(|packet| {
@@ -426,7 +450,7 @@ impl Endpoint {
         }
 
         for packet in handshakes {
-            self.process_one_handshake(packet, &mut ret);
+            self.process_one_handshake(packet, now, &mut ret);
         }
 
         tracing::trace!(n = packets.len(), "processing packets");
@@ -443,13 +467,13 @@ impl Endpoint {
                 continue;
             };
 
-            peer.recv(&mut self.state, session_id, packets, &mut ret);
+            peer.recv(&mut self.state, session_id, packets, now, &mut ret);
         }
 
         ret
     }
 
-    fn process_one_handshake(&mut self, mut packet: PacketMut, out: &mut RecvResult) {
+    fn process_one_handshake(&mut self, mut packet: PacketMut, now: Instant, out: &mut RecvResult) {
         let Ok(MessageMut::HandshakeInitiation(init)) = MessageMut::try_from(packet.as_mut())
         else {
             tracing::error!("message parsing failed");
@@ -471,7 +495,7 @@ impl Endpoint {
             return;
         };
 
-        peer.respond_to_handshake(&mut self.state, handshake, out)
+        peer.respond_to_handshake(&mut self.state, handshake, now, out)
     }
 
     /// Dispatch time-based events that are due to occur at or before the given instant.
@@ -486,19 +510,19 @@ impl Endpoint {
                     let Some(peer) = self.peers.get_mut(&peer_id) else {
                         continue;
                     };
-                    peer.handshake_timeout(&mut self.state, &mut out);
+                    peer.handshake_timeout(&mut self.state, now, &mut out);
                 }
                 Event::MaybeSendKeepalive(peer_id) => {
                     let Some(peer) = self.peers.get_mut(&peer_id) else {
                         continue;
                     };
-                    peer.send_keepalive(&mut self.state, &mut out);
+                    peer.send_keepalive(&mut self.state, now, &mut out);
                 }
                 Event::ExpireSession(peer_id) => {
                     let Some(peer) = self.peers.get_mut(&peer_id) else {
                         continue;
                     };
-                    peer.cleanup_expired(&mut self.state);
+                    peer.cleanup_expired(&mut self.state, now);
                 }
             }
         }
@@ -601,6 +625,7 @@ mod tests {
     fn test_one_peer() {
         let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
         let psk = rand::random();
+        let now = Instant::now();
 
         let (mut a_ep, mut b_ep) = (
             Endpoint::new(a_static.clone()),
@@ -640,7 +665,7 @@ mod tests {
         // A sends to B. Results in a handshake initiation being transmitted, not the
         // requested packet (which gets buffered internally by the endpoint).
         let to_send = HashMap::from([(a_peer, Vec::from([a_to_b_packets[0].clone()]))]);
-        let a_acts = a_ep.send(to_send);
+        let a_acts = a_ep.send(now, to_send);
         assert_eq!(
             a_acts.to_peers.len(),
             1,
@@ -654,11 +679,11 @@ mod tests {
 
         // A sends another packet. No further activity, but pkt2 gets queued as well.
         let to_send = HashMap::from([(a_peer, Vec::from([a_to_b_packets[1].clone()]))]);
-        let a_acts2 = a_ep.send(to_send);
+        let a_acts2 = a_ep.send(now, to_send);
         assert_eq!(a_acts2, SendResult::default());
 
         // B processes the handshake and responds. No packets delivered to B.
-        let b_acts = b_ep.recv(packets.clone());
+        let b_acts = b_ep.recv(now, packets.clone());
         assert_eq!(b_acts.to_local.len(), 0, "unexpected received message");
         assert_eq!(
             b_acts.to_peers.len(),
@@ -672,7 +697,7 @@ mod tests {
         assert_eq!(packets.len(), 1, "unexpected packet count for B's peer");
 
         // A processes the response, and sends the two queued packets.
-        let a_acts3 = a_ep.recv(packets.clone());
+        let a_acts3 = a_ep.recv(now, packets.clone());
         assert_eq!(a_acts3.to_local.len(), 0, "unexpected received message");
         assert_eq!(
             a_acts3.to_peers.len(),
@@ -686,7 +711,7 @@ mod tests {
         assert_eq!(packets.len(), 2, "wrong number of packets for A's peer");
 
         // B receives transport messages.
-        let b_acts = b_ep.recv(packets.clone());
+        let b_acts = b_ep.recv(now, packets.clone());
         assert_eq!(b_acts.to_local.len(), 1, "didn't receive message");
         let packets = b_acts
             .to_local
@@ -698,7 +723,7 @@ mod tests {
         // B sends transport message
         let b_to_a_packet = PacketMut::from(vec![9, 10, 11, 12]);
         let to_send = HashMap::from([(b_peer, vec![b_to_a_packet.clone()])]);
-        let b_acts = b_ep.send(to_send);
+        let b_acts = b_ep.send(now, to_send);
         assert_eq!(
             b_acts.to_peers.len(),
             1,
@@ -711,7 +736,7 @@ mod tests {
         assert_eq!(packets.len(), 1, "unexpected packet count for B's peer");
 
         // A receives
-        let a_acts = a_ep.recv(packets.clone());
+        let a_acts = a_ep.recv(now, packets.clone());
         assert_eq!(a_acts.to_local.len(), 1, "didn't receive message");
         let packets = a_acts
             .to_local

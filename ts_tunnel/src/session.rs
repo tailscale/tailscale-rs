@@ -16,7 +16,6 @@ use zerocopy::{
 };
 
 use crate::{
-    handshake::SessionPair,
     ids::IdMap,
     messages::{SessionId, TransportDataHeader},
     replay::ReplayWindow,
@@ -126,58 +125,6 @@ pub const SESSION_LIFETIME: Duration = Duration::from_secs(240);
 /// session's state to persist for short additional time before requiring that it be deleted.
 pub const SESSION_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 
-/// Established session that can only send.
-pub struct TransmitSession {
-    cipher: ChaCha20Poly1305,
-    nonce: NonceGenerator,
-    id: SessionId,
-    created: Instant,
-}
-
-impl TransmitSession {
-    pub fn new(key: SessionKey, id: SessionId, now: Instant) -> Self {
-        TransmitSession {
-            cipher: ChaCha20Poly1305::new(&key),
-            nonce: Default::default(),
-            id,
-            created: now,
-        }
-    }
-
-    /// Encrypt a batch of packets.
-    pub fn encrypt<'a, Into, Iter>(&self, packets: Into)
-    where
-        Iter: ExactSizeIterator<Item = &'a mut PacketMut>,
-        Into: IntoIterator<Item = &'a mut PacketMut, IntoIter = Iter>,
-    {
-        let packets = packets.into_iter();
-        let nonce = self.nonce.batch(packets.len());
-        for (packet, nonce) in packets.zip(nonce) {
-            // Session encryption only fails if the provided packet can't grow, which ours can.
-            self.cipher
-                .encrypt_in_place(nonce.as_ref(), &[], packet)
-                .unwrap();
-            let header = TransportDataHeader {
-                receiver_id: self.id,
-                nonce: nonce.counter,
-                ..Default::default()
-            };
-            packet.grow_front(size_of::<TransportDataHeader>());
-            // Write only fails if the packet is too small, and we just extended it to have
-            // enough space.
-            header.write_to_prefix(packet.as_mut()).unwrap();
-        }
-    }
-
-    pub fn stale(&self, now: Instant) -> bool {
-        now.duration_since(self.created) > SESSION_FRESH_LIFETIME
-    }
-
-    pub fn expired(&self, now: Instant) -> bool {
-        now.duration_since(self.created) > SESSION_LIFETIME
-    }
-}
-
 /// Established session that can only receive.
 pub struct ReceiveSession {
     cipher: ChaCha20Poly1305,
@@ -249,7 +196,7 @@ impl ReceiveSession {
         }
 
         let nonce = Nonce::from(header.nonce);
-        pkt.truncate_front(size_of::<TransportDataHeader>());
+        pkt.truncate_front(size_of_val(header));
 
         match self.cipher.decrypt_in_place(nonce.as_ref(), &[], pkt) {
             Ok(_) => {
@@ -263,12 +210,102 @@ impl ReceiveSession {
         }
     }
 
+    /// Return the session ID that will appear on received packets meant for this session.
     pub fn id(&self) -> SessionId {
         self.id
     }
 
+    /// Report whether the session is expired.
     pub fn expired(&self, now: Instant) -> bool {
         now > self.expiry
+    }
+}
+
+/// Established session that can send and receive.
+pub struct BidiSession {
+    recv: ReceiveSession,
+
+    send_id: SessionId,
+    send_cipher: ChaCha20Poly1305,
+    send_nonce: NonceGenerator,
+}
+
+pub struct BidiSessionKeys {
+    pub send_key: SessionKey,
+    pub send_id: SessionId,
+    pub recv_key: SessionKey,
+    pub recv_id: SessionId,
+}
+
+impl BidiSession {
+    pub fn new(keys: BidiSessionKeys, now: Instant) -> Self {
+        Self {
+            recv: ReceiveSession::new(keys.recv_key, keys.recv_id, now),
+            send_id: keys.send_id,
+            send_cipher: ChaCha20Poly1305::new(&keys.send_key),
+            send_nonce: Default::default(),
+        }
+    }
+
+    /// Encrypt wireguard transport data messages in place.
+    pub fn encrypt<'a, Into, Iter>(&self, packets: Into)
+    where
+        Iter: ExactSizeIterator<Item = &'a mut PacketMut>,
+        Into: IntoIterator<Item = &'a mut PacketMut, IntoIter = Iter>,
+    {
+        let packets = packets.into_iter();
+        let nonce = self.send_nonce.batch(packets.len());
+        for (packet, nonce) in packets.zip(nonce) {
+            // Session encryption only fails if the provided packet can't grow, which ours can.
+            self.send_cipher
+                .encrypt_in_place(nonce.as_ref(), &[], packet)
+                .unwrap();
+            let header = TransportDataHeader {
+                receiver_id: self.send_id,
+                nonce: nonce.counter,
+                ..Default::default()
+            };
+            packet.grow_front(size_of_val(&header));
+            // Write only fails if the packet is too small, and we just extended it to have
+            // enough space.
+            header.write_to_prefix(packet.as_mut()).unwrap();
+        }
+    }
+
+    /// Decrypt wireguard transport data messages in place.
+    ///
+    /// Returns the packets which successfully decrypted.
+    pub fn decrypt(&mut self, packets: Vec<PacketMut>) -> Vec<PacketMut> {
+        self.recv.decrypt(packets)
+    }
+
+    /// Return the session ID that will appear on received packets meant for this session.
+    pub fn recv_id(&self) -> SessionId {
+        self.recv.id
+    }
+
+    /// Return the time at which the session expires.
+    pub fn expiry(&self) -> Instant {
+        self.recv.expiry
+    }
+
+    pub fn rotation_time(&self) -> Instant {
+        self.recv.expiry - SESSION_LIFETIME + SESSION_FRESH_LIFETIME
+    }
+
+    /// Report whether the session is expired.
+    pub fn expired(&self, now: Instant) -> bool {
+        now > self.recv.expiry
+    }
+
+    pub fn stale(&self, now: Instant) -> bool {
+        now > self.rotation_time()
+    }
+}
+
+impl From<BidiSession> for ReceiveSession {
+    fn from(session: BidiSession) -> Self {
+        session.recv
     }
 }
 
@@ -279,23 +316,13 @@ const MAX_QUEUED_PER_PEER: usize = 32;
 pub struct Queue(VecDeque<PacketMut>);
 
 impl Queue {
-    /// Shorthand for Queue::default then Queue::append.
-    fn new_with(packets: Vec<PacketMut>) -> Self {
-        let mut queue = Self::default();
-        queue.append(packets);
-        queue
-    }
-
     fn append(&mut self, packets: Vec<PacketMut>) {
         let new_packets = min(packets.len(), MAX_QUEUED_PER_PEER);
         let drop_incoming = packets.len() - new_packets;
         let keep_queued = MAX_QUEUED_PER_PEER - new_packets;
         let drop_queued = self.0.len().saturating_sub(keep_queued);
         self.0.drain(..drop_queued);
-        packets
-            .into_iter()
-            .skip(drop_incoming)
-            .for_each(|packet| self.0.push_back(packet));
+        self.0.extend(packets.into_iter().skip(drop_incoming));
     }
 }
 
@@ -316,17 +343,15 @@ impl IntoIterator for Queue {
 
 /// A bidirectional established session.
 pub struct ActiveSession {
-    recv: Box<ReceiveSession>,
-    send: Box<TransmitSession>,
-    recv_prev: Option<Box<ReceiveSession>>,
+    cur: Box<BidiSession>,
+    prev: Option<Box<ReceiveSession>>,
 }
 
-impl From<SessionPair> for ActiveSession {
-    fn from(pair: SessionPair) -> Self {
+impl From<BidiSession> for ActiveSession {
+    fn from(session: BidiSession) -> Self {
         Self {
-            recv: Box::new(pair.recv),
-            send: Box::new(pair.send),
-            recv_prev: None,
+            cur: Box::new(session),
+            prev: None,
         }
     }
 }
@@ -336,36 +361,34 @@ impl ActiveSession {
     ///
     /// The prior receive session is rotated into the previous slot, and will continue to accept
     /// packets until the next rotation (or the hard session expiry deadline).
-    ///
-    /// If a receive session was already in the previous slot, destroys it and returns its session
-    /// ID for further cleanup.
-    fn rotate(&mut self, next: SessionPair, ids: &mut IdMap) {
-        if let Some(prev) = self.recv_prev.as_ref() {
+    fn rotate(&mut self, next: BidiSession, ids: &mut IdMap, now: Instant) {
+        if let Some(prev) = self.prev.as_ref() {
             ids.remove_session(prev.id());
         }
-        let send = Box::new(next.send);
-        let recv = Box::new(next.recv);
-        if self.recv.expired(Instant::now()) {
-            ids.remove_session(self.recv.id());
-            self.recv_prev = None;
+        let prev = std::mem::replace(self.cur.as_mut(), next);
+        if prev.expired(now) {
+            ids.remove_session(prev.recv_id());
         } else {
-            self.recv_prev = Some(std::mem::replace(&mut self.recv, recv));
+            self.prev = Some(Box::new(prev.into()));
         }
-        self.send = send;
     }
 
     fn cleanup_ids(&mut self, ids: &mut IdMap) {
-        ids.remove_session(self.recv.id());
-        if let Some(prev) = self.recv_prev.as_ref() {
+        ids.remove_session(self.cur.recv_id());
+        if let Some(prev) = self.prev.as_ref() {
             ids.remove_session(prev.id());
         }
     }
 
+    fn expired(&self, now: Instant) -> bool {
+        self.cur.expired(now)
+    }
+
     fn soonest_expiry(&self) -> Instant {
-        if let Some(prev) = self.recv_prev.as_ref() {
+        if let Some(prev) = self.prev.as_ref() {
             prev.expiry
         } else {
-            self.recv.expiry
+            self.cur.expiry()
         }
     }
 }
@@ -389,36 +412,19 @@ impl Default for Session {
 
 impl Session {
     fn take(&mut self) -> Session {
-        std::mem::replace(self, Self::None(Queue::default()))
+        std::mem::take(self)
     }
 
     /// Return a reference to the active session, if any.
     ///
-    /// Incidentally performs session expiry checking and cleanup. Callers can assume that
-    /// if they get a &mut ActiveSession, it contains only valid non-expired session state.
-    fn as_active(&mut self, ids: &mut IdMap) -> Option<&mut ActiveSession> {
-        match self {
-            Self::None(_) => None,
-            Self::Active(session) => {
-                if session.recv.expired(Instant::now()) {
-                    session.cleanup_ids(ids);
-                    *self = Self::default();
-                    None
-                } else {
-                    if let Some(prev) = session.recv_prev.as_ref()
-                        && prev.expired(Instant::now())
-                    {
-                        ids.remove_session(prev.id());
-                        session.recv_prev = None;
-                    }
-                    // Re-borrow session, because rustc can't see that the assignment to *self
-                    // above is mutually exclusive with continued use of the borrow.
-                    let Self::Active(session) = self else {
-                        unreachable!();
-                    };
-                    Some(session)
-                }
-            }
+    /// Calls [`Session::maybe_expire`], so callers can assume that the returned session
+    /// consists only of unexpired state.
+    fn as_active(&mut self, ids: &mut IdMap, now: Instant) -> Option<&mut ActiveSession> {
+        self.cleanup_expired(ids, now);
+        if let Self::Active(session) = self {
+            Some(session)
+        } else {
+            None
         }
     }
 
@@ -428,8 +434,9 @@ impl Session {
     /// returned.
     pub fn activate(
         &mut self,
-        next: SessionPair,
+        next: BidiSession,
         ids: &mut IdMap,
+        now: Instant,
         need_keepalive: bool,
     ) -> Vec<PacketMut> {
         tracing::trace!(recv_id = ?next.recv.id(), "activating new session");
@@ -437,7 +444,7 @@ impl Session {
         let (active, mut packets) = match self.take() {
             Self::None(queue) => (next.into(), queue.into()),
             Self::Active(mut session) => {
-                session.rotate(next, ids);
+                session.rotate(next, ids, now);
                 (session, vec![])
             }
         };
@@ -445,7 +452,7 @@ impl Session {
         if need_keepalive && packets.is_empty() {
             packets.push(PacketMut::new(0));
         }
-        active.send.encrypt(&mut packets);
+        active.cur.encrypt(&mut packets);
         *self = Self::Active(active);
         packets
     }
@@ -461,10 +468,10 @@ impl Session {
     /// Encrypt a keepalive packet for the peer.
     ///
     /// Returns None if the session is inactive (and thus no keepalive is necessary).
-    pub fn send_keepalive(&mut self, ids: &mut IdMap) -> Option<PacketMut> {
-        let session = self.as_active(ids)?;
+    pub fn send_keepalive(&mut self, ids: &mut IdMap, now: Instant) -> Option<PacketMut> {
+        let session = self.as_active(ids, now)?;
         let mut packet = vec![PacketMut::new(0)];
-        session.send.encrypt(&mut packet);
+        session.cur.encrypt(&mut packet);
         packet.pop()
     }
 
@@ -474,55 +481,73 @@ impl Session {
     ///
     /// Returns None to indicate that packets were queued, indicating the caller may need to
     /// initiate a handshake.
-    pub fn send(&mut self, mut packets: Vec<PacketMut>, ids: &mut IdMap) -> Option<Vec<PacketMut>> {
+    pub fn send(
+        &mut self,
+        mut packets: Vec<PacketMut>,
+        ids: &mut IdMap,
+        now: Instant,
+    ) -> Option<Vec<PacketMut>> {
+        self.cleanup_expired(ids, now);
         match self {
             Self::None(queue) => {
                 queue.append(packets);
                 None
             }
             Self::Active(session) => {
-                if session.send.expired(Instant::now()) {
-                    session.cleanup_ids(ids);
-                    *self = Self::None(Queue::new_with(packets));
-                    return None;
-                }
-                session.send.encrypt(&mut packets);
+                session.cur.encrypt(&mut packets);
                 Some(packets)
             }
         }
     }
 
     /// Get the ReceiveSession for the given receiving ID, if any.
-    pub fn get_recv(&mut self, id: SessionId, ids: &mut IdMap) -> Option<&mut ReceiveSession> {
-        let session = self.as_active(ids)?;
-        if session.recv.id() == id {
-            Some(session.recv.as_mut())
-        } else if let Some(recv_prev) = session.recv_prev.as_mut()
-            && recv_prev.id() == id
+    pub fn get_recv(
+        &mut self,
+        id: SessionId,
+        ids: &mut IdMap,
+        now: Instant,
+    ) -> Option<&mut ReceiveSession> {
+        let session = self.as_active(ids, now)?;
+        if session.cur.recv_id() == id {
+            Some(&mut session.cur.recv)
+        } else if let Some(prev) = session.prev.as_mut()
+            && prev.id() == id
         {
-            Some(recv_prev)
+            Some(prev)
         } else {
             None
         }
     }
 
     /// Reports whether the session is in need of a fresh handshake.
-    pub fn needs_handshake(&self) -> bool {
+    pub fn needs_handshake(&self, now: Instant) -> bool {
         match self {
             Self::None(_) => true,
-            Self::Active(session) => session.send.stale(Instant::now()),
+            Self::Active(session) => session.cur.stale(now),
         }
     }
 
     /// Clean up expired session state, if any.
-    pub fn cleanup_expired(&mut self, ids: &mut IdMap) {
-        self.as_active(ids);
+    pub fn cleanup_expired(&mut self, ids: &mut IdMap, now: Instant) {
+        if let Self::Active(session) = self {
+            if session.expired(now) {
+                session.cleanup_ids(ids);
+                *self = Self::default();
+                return;
+            }
+            if let Some(prev) = session.prev.as_ref()
+                && prev.expired(now)
+            {
+                ids.remove_session(prev.id());
+                session.prev = None;
+            }
+        }
     }
 
     /// Returns the soonest time at which some session state may be expired, necessitating
     /// a call to [`Session::cleanup_expired`]
-    pub fn expiry(&mut self, ids: &mut IdMap) -> Option<TimeRange> {
-        let soonest = self.as_active(ids)?.soonest_expiry();
+    pub fn expiry(&mut self, ids: &mut IdMap, now: Instant) -> Option<TimeRange> {
+        let soonest = self.as_active(ids, now)?.soonest_expiry();
         Some(TimeRange::new(soonest, soonest + SESSION_CLEANUP_GRACE))
     }
 }
@@ -530,14 +555,25 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::messages::Message;
+    use crate::{PeerId, messages::Message};
 
     #[test]
-    fn test_session() {
+    fn test_session_parts() {
         let k: [u8; 32] = rand::random();
         let session = SessionId::random();
         let now = Instant::now();
-        let send = TransmitSession::new(k.into(), session, now);
+        // NOTE: this would be catastrophically insecure in non-test code, because it reuses the
+        // same key in both directions, which leads to catastrophic nonce reuse. It's okay here
+        // because (a) it's a test and (b) we only ever transmit in one direction.
+        let send = BidiSession::new(
+            BidiSessionKeys {
+                send_key: k.into(),
+                send_id: session,
+                recv_key: k.into(),
+                recv_id: session,
+            },
+            now,
+        );
         let mut recv = ReceiveSession::new(k.into(), session, now);
 
         const CLEARTEXT: &[u8] = b"foobar";
@@ -566,28 +602,276 @@ mod tests {
         assert_eq!(pkt[0].as_ref(), CLEARTEXT);
     }
 
+    fn packet(payload: &str) -> Vec<PacketMut> {
+        vec![PacketMut::from(payload.as_bytes())]
+    }
+
+    #[derive(Default)]
+    struct PeerSession {
+        ids: IdMap,
+        recv_id: Option<SessionId>,
+        recv_id_prev: Option<SessionId>,
+        session: Session,
+    }
+
+    impl PeerSession {
+        fn allocate_id(&mut self) -> SessionId {
+            self.recv_id_prev = self.recv_id.take();
+            let id = self.ids.allocate_session(PeerId(1));
+            self.recv_id = Some(id);
+            id
+        }
+
+        fn handshake_with(
+            &mut self,
+            other: &mut Self,
+            now: Instant,
+        ) -> (Vec<PacketMut>, Vec<PacketMut>) {
+            let (k1, k2): ([u8; 32], [u8; 32]) = rand::random();
+            let sid1 = self.allocate_id();
+            let sid2 = other.allocate_id();
+            let s1 = BidiSession::new(
+                BidiSessionKeys {
+                    send_key: k1.into(),
+                    send_id: sid2,
+                    recv_key: k2.into(),
+                    recv_id: sid1,
+                },
+                now,
+            );
+            let s2 = BidiSession::new(
+                BidiSessionKeys {
+                    send_key: k2.into(),
+                    send_id: sid1,
+                    recv_key: k1.into(),
+                    recv_id: sid2,
+                },
+                now,
+            );
+            let p1 = self.session.activate(s1, &mut self.ids, now, false);
+            let p2 = other.session.activate(s2, &mut other.ids, now, false);
+            (p1, p2)
+        }
+
+        fn send(&mut self, now: Instant, packets: Vec<PacketMut>) -> Option<Vec<PacketMut>> {
+            self.session.send(packets, &mut self.ids, now)
+        }
+
+        fn get_recv(&mut self, now: Instant, packets: &[PacketMut]) -> Option<&mut ReceiveSession> {
+            let (hdr, _) =
+                TransportDataHeader::try_ref_from_prefix(packets.first()?.as_ref()).unwrap();
+            self.session.get_recv(hdr.receiver_id, &mut self.ids, now)
+        }
+
+        fn recv(&mut self, now: Instant, packets: Vec<PacketMut>) -> Vec<PacketMut> {
+            self.get_recv(now, &packets).unwrap().decrypt(packets)
+        }
+
+        fn unknown_recv(&mut self, now: Instant, packets: Vec<PacketMut>) -> bool {
+            self.get_recv(now, &packets).is_none()
+        }
+
+        fn needs_handshake(&self, now: Instant) -> bool {
+            self.session.needs_handshake(now)
+        }
+    }
+
     #[test]
-    fn session_timers() {
-        let k: [u8; 32] = rand::random();
-        let session = SessionId::random();
+    fn test_session() {
+        let mut a = PeerSession::default();
+        let mut b = PeerSession::default();
+
         let now = Instant::now();
-        let send = TransmitSession::new(k.into(), session, now);
-        let recv = ReceiveSession::new(k.into(), session, now);
+
+        assert_eq!(a.send(now, packet("foobar")), None);
+        assert_eq!(b.send(now, packet("qux")), None);
+
+        assert!(a.needs_handshake(now));
+        assert!(b.needs_handshake(now));
+
+        // Establish a session between the peers. We're cheating and not doing any of the
+        // handshake lifecycle.
+        let (a_to_b, b_to_a) = a.handshake_with(&mut b, now);
+        assert_eq!(a_to_b.len(), 1);
+        assert_eq!(b_to_a.len(), 1);
+
+        // Verify that the packets queued prior to session activation transmit correctly.
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("foobar"));
+
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("qux"));
+
+        assert!(!a.needs_handshake(now));
+        assert!(!b.needs_handshake(now));
+
+        // Transmit with established session.
+        let now = now + Duration::from_secs(60);
+
+        let a_to_b = a.send(now, packet("frobozz")).unwrap();
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("frobozz"));
+
+        let b_to_a = b.send(now, packet("xyzzy")).unwrap();
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("xyzzy"));
+
+        assert!(!a.needs_handshake(now));
+        assert!(!b.needs_handshake(now));
+
+        // Transmit with stale session.
+        let now = now + Duration::from_secs(70);
+
+        let a_to_b = a.send(now, packet("foo")).unwrap();
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("foo"));
+
+        let b_to_a = b.send(now, packet("bar")).unwrap();
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("bar"));
+
+        assert!(a.needs_handshake(now));
+        assert!(b.needs_handshake(now));
+
+        // Transmit with expired session.
+        let now = now + Duration::from_secs(120);
+
+        let a_to_b = a.send(now, packet("no"));
+        assert_eq!(a_to_b, None);
+
+        let b_to_a = b.send(now, packet("nope"));
+        assert_eq!(b_to_a, None);
+
+        assert!(a.needs_handshake(now));
+        assert!(b.needs_handshake(now));
+    }
+
+    #[test]
+    fn test_rotation() {
+        let mut a = PeerSession::default();
+        let mut b = PeerSession::default();
+
+        let start = Instant::now();
         let epsilon = Duration::from_secs(1);
 
-        assert!(!send.stale(now));
-        assert!(!send.stale(now + SESSION_FRESH_LIFETIME - epsilon));
-        assert!(send.stale(now + SESSION_FRESH_LIFETIME + epsilon));
-        assert!(send.stale(now + SESSION_LIFETIME + epsilon));
+        let now = start;
+        let (a_to_b, b_to_a) = a.handshake_with(&mut b, now);
+        assert!(a_to_b.is_empty());
+        assert!(b_to_a.is_empty());
 
-        assert!(!send.expired(now));
-        assert!(!send.expired(now + SESSION_FRESH_LIFETIME - epsilon));
-        assert!(!send.expired(now + SESSION_FRESH_LIFETIME + epsilon));
-        assert!(send.expired(now + SESSION_LIFETIME + epsilon));
+        let now = start + SESSION_FRESH_LIFETIME - epsilon;
+        let a_to_b = a.send(now, packet("foo")).unwrap();
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("foo"));
 
+        let b_to_a = b.send(now, packet("bar")).unwrap();
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("bar"));
+
+        // Rotate session, with packets delivered across the rotation.
+        let a_to_b = a.send(now, packet("before rotate A->B")).unwrap();
+        let b_to_a = b.send(now, packet("before rotate B->A")).unwrap();
+
+        let very_delayed_a_to_b = a.send(now, packet("delayed A->B")).unwrap();
+        let very_delayed_b_to_a = b.send(now, packet("delayed B->A")).unwrap();
+
+        let to_send = a.handshake_with(&mut b, now);
+        assert_eq!(to_send, (vec![], vec![]));
+
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("before rotate A->B"));
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("before rotate B->A"));
+
+        let a_to_b = a.send(now, packet("after rotate A->B")).unwrap();
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("after rotate A->B"));
+
+        let b_to_a = b.send(now, packet("after rotate B->A")).unwrap();
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("after rotate B->A"));
+
+        // Rotate again, delayed packets should not decrypt anymore.
+        let now = start + SESSION_FRESH_LIFETIME + epsilon;
+        let a_to_b = a.send(now, packet("before rotate2 A->B")).unwrap();
+        let b_to_a = b.send(now, packet("before rotate2 B->A")).unwrap();
+
+        let to_send = a.handshake_with(&mut b, now);
+        assert_eq!(to_send, (vec![], vec![]));
+
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("before rotate2 A->B"));
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("before rotate2 B->A"));
+
+        let a_to_b = a.send(now, packet("after rotate2 A->B")).unwrap();
+        let a_to_b = b.recv(now, a_to_b);
+        assert_eq!(a_to_b, packet("after rotate2 A->B"));
+
+        let b_to_a = b.send(now, packet("after rotate2 B->A")).unwrap();
+        let b_to_a = a.recv(now, b_to_a);
+        assert_eq!(b_to_a, packet("after rotate2 B->A"));
+
+        assert!(b.unknown_recv(now, very_delayed_a_to_b));
+        assert!(a.unknown_recv(now, very_delayed_b_to_a));
+    }
+
+    #[test]
+    fn test_expiration() {
+        let mut a = PeerSession::default();
+        let mut b = PeerSession::default();
+
+        let now = Instant::now();
+        let to_send = a.handshake_with(&mut b, now);
+        assert_eq!(to_send, (vec![], vec![]));
+
+        let a_to_b = a.send(now, packet("A->B")).unwrap();
+        let b_to_a = b.send(now, packet("B->A")).unwrap();
+
+        let now = now + SESSION_LIFETIME + SESSION_LIFETIME;
+
+        assert!(b.unknown_recv(now, a_to_b));
+        assert!(a.unknown_recv(now, b_to_a));
+
+        assert_eq!(a.send(now, packet("expired A->B")), None);
+        assert_eq!(b.send(now, packet("expired B->A")), None);
+    }
+
+    #[test]
+    fn test_session_timers() {
+        let k: [u8; 32] = rand::random();
+        let id = SessionId::random();
+        let now = Instant::now();
+        let epsilon = Duration::from_secs(1);
+
+        let recv = ReceiveSession::new(k.into(), id, now);
         assert!(!recv.expired(now));
         assert!(!recv.expired(now + SESSION_FRESH_LIFETIME - epsilon));
         assert!(!recv.expired(now + SESSION_FRESH_LIFETIME + epsilon));
         assert!(recv.expired(now + SESSION_LIFETIME + epsilon));
+
+        let k2: [u8; 32] = rand::random();
+        let id2 = SessionId::random();
+
+        let bidi = BidiSession::new(
+            BidiSessionKeys {
+                send_key: k.into(),
+                send_id: id,
+                recv_key: k2.into(),
+                recv_id: id2,
+            },
+            now,
+        );
+        assert!(!bidi.expired(now));
+        assert!(!bidi.stale(now));
+
+        assert!(!bidi.expired(now + SESSION_FRESH_LIFETIME - epsilon));
+        assert!(!bidi.stale(now + SESSION_FRESH_LIFETIME - epsilon));
+
+        assert!(!bidi.expired(now + SESSION_FRESH_LIFETIME + epsilon));
+        assert!(bidi.stale(now + SESSION_FRESH_LIFETIME + epsilon));
+
+        assert!(bidi.expired(now + SESSION_LIFETIME + epsilon));
+        assert!(bidi.stale(now + SESSION_LIFETIME + epsilon));
     }
 }
