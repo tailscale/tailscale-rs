@@ -1,9 +1,5 @@
 use core::time::Duration;
-use std::{
-    cmp::min,
-    collections::{HashMap, VecDeque, vec_deque},
-    time::Instant,
-};
+use std::{collections::HashMap, time::Instant};
 
 use itertools::Itertools;
 use ts_keys::{NodeKeyPair, NodePublicKey};
@@ -13,14 +9,13 @@ use zerocopy::IntoBytes;
 
 use crate::{
     config::{PeerConfig, PeerId},
-    handshake::{Handshake, ReceivedHandshake, SessionPair, initiate_handshake},
+    handshake::{Handshake, ReceivedHandshake, initiate_handshake},
+    ids::IdMap,
     macs::{MACReceiver, MACSender},
     messages::{CookieReply, HandshakeResponse, Message, MessageMut, SessionId},
-    session::{ReceiveSession, SESSION_CLEANUP_GRACE, SESSION_LIFETIME, TransmitSession},
+    session::{SESSION_CLEANUP_GRACE, SESSION_LIFETIME, Session},
     time::{TAI64N, TAI64NClock},
 };
-
-const MAX_QUEUED_PER_PEER: usize = 32;
 
 /// If an endpoint hasn't sent any packets to a peer for `KEEPALIVE_TIMEOUT` after receiving a
 /// packet from that peer, it must send an empty keepalive message so that the peer can distinguish
@@ -28,277 +23,10 @@ const MAX_QUEUED_PER_PEER: usize = 32;
 /// See: WireGuard spec, section 6.5
 const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A bounded packet queue that drops oldest packets when full.
-#[derive(Default)]
-struct Queue(VecDeque<PacketMut>);
-
-impl Queue {
-    /// Shorthand for Queue::default then Queue::append.
-    fn new_with(packets: Vec<PacketMut>) -> Self {
-        let mut queue = Self::default();
-        queue.append(packets);
-        queue
-    }
-
-    fn append(&mut self, packets: Vec<PacketMut>) {
-        let new_packets = min(packets.len(), MAX_QUEUED_PER_PEER);
-        let drop_incoming = packets.len() - new_packets;
-        let keep_queued = MAX_QUEUED_PER_PEER - new_packets;
-        let drop_queued = self.0.len().saturating_sub(keep_queued);
-        self.0.drain(..drop_queued);
-        packets
-            .into_iter()
-            .skip(drop_incoming)
-            .for_each(|packet| self.0.push_back(packet));
-    }
-}
-
-impl From<Queue> for Vec<PacketMut> {
-    fn from(queue: Queue) -> Self {
-        queue.0.into()
-    }
-}
-
-impl IntoIterator for Queue {
-    type Item = PacketMut;
-    type IntoIter = vec_deque::IntoIter<PacketMut>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-/// State of a peer's session.
-enum SessionState {
-    /// No active session, packets may be queued for future transmission.
-    None(Queue),
-    /// Active session available.
-    Active {
-        recv: Box<ReceiveSession>,
-        recv_prev: Option<Box<ReceiveSession>>,
-        send: TransmitSession,
-    },
-}
-
-impl SessionState {
-    /// Take the session state, leaving SessionState::None in its place.
-    fn take(&mut self) -> SessionState {
-        std::mem::replace(self, SessionState::None(Queue::default()))
-    }
-
-    /// Activate the session using the provided send/receive sessions.
-    ///
-    /// Existing sessions are rotated appropriately. Returns encrypted packets to send to the
-    /// peer, if any were queued.
-    fn activate(&mut self, endpoint: &mut EndpointState, next: SessionPair) -> Vec<PacketMut> {
-        tracing::trace!(recv_id = ?next.recv.id(), "activating new session");
-
-        match self.take() {
-            SessionState::None(queue) => {
-                let mut ret = queue.into();
-                next.send.encrypt(&mut ret);
-                *self = SessionState::Active {
-                    send: next.send,
-                    recv: Box::new(next.recv),
-                    recv_prev: None,
-                };
-                ret
-            }
-            SessionState::Active {
-                recv,
-                mut recv_prev,
-                ..
-            } => {
-                recv_prev
-                    .take()
-                    .inspect(|recv_prev| endpoint.ids.remove_session(recv_prev.id()));
-                *self = SessionState::Active {
-                    send: next.send,
-                    recv: Box::new(next.recv),
-                    recv_prev: Some(recv),
-                };
-                vec![]
-            }
-        }
-    }
-
-    /// Deactivate the session, releasing any active session IDs.
-    fn deactivate(&mut self, endpoint: &mut EndpointState) {
-        if let SessionState::Active {
-            recv,
-            mut recv_prev,
-            ..
-        } = self.take()
-        {
-            endpoint.ids.remove_session(recv.id());
-            recv_prev
-                .as_mut()
-                .inspect(|recv_prev| endpoint.ids.remove_session(recv_prev.id()));
-        }
-    }
-
-    /// Encrypt a keepalive packet for transmission.
-    ///
-    /// Returns None if the session cannot currently transmit.
-    fn encrypt_keepalive(&mut self) -> Option<PacketMut> {
-        if let SessionState::Active { send, .. } = self
-            && !send.expired(Instant::now())
-        {
-            let mut packet = vec![PacketMut::new(0)];
-            send.encrypt(&mut packet);
-            packet.pop()
-        } else {
-            None
-        }
-    }
-
-    /// Encrypt packets for transmission.
-    ///
-    /// Returns the encrypted packets if a session is available, otherwise queues the packets and
-    /// returns None to signal that the caller needs to establish a session.
-    fn encrypt_or_queue(&mut self, mut packets: Vec<PacketMut>) -> Option<Vec<PacketMut>> {
-        match self {
-            SessionState::None(queue) => {
-                queue.append(packets);
-                None
-            }
-            SessionState::Active { send, .. } => {
-                if send.expired(Instant::now()) {
-                    // Note, this also deletes both receive sessions. This is okay: due to the
-                    // semantics of session rotation, if the transmit session has expired, all
-                    // receive sessions have also expired.
-                    *self = SessionState::None(Queue::new_with(packets));
-                    return None;
-                }
-                send.encrypt(&mut packets);
-                Some(packets)
-            }
-        }
-    }
-
-    /// Get the receive session matching the given ID, if any.
-    fn get_recv(&mut self, id: SessionId) -> Option<&mut ReceiveSession> {
-        match self {
-            SessionState::None(_) => None,
-            SessionState::Active {
-                recv, recv_prev, ..
-            } => {
-                if recv.id() == id && !recv.expired(Instant::now()) {
-                    Some(recv)
-                } else if let Some(recv_prev) = recv_prev.as_mut()
-                    && recv_prev.id() == id
-                    && !recv.expired(Instant::now())
-                {
-                    Some(recv_prev)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Report whether the transmit side of the session is stale and in need of key rotation.
-    ///
-    /// Returns true if no session exists.
-    fn needs_rotation(&self) -> bool {
-        match self {
-            SessionState::None(_) => true,
-            SessionState::Active { send, .. } => send.stale(Instant::now()),
-        }
-    }
-
-    fn expire_sessions(&mut self, endpoint: &mut EndpointState) {
-        match self {
-            SessionState::None(_) => (),
-            SessionState::Active {
-                recv, recv_prev, ..
-            } => {
-                if recv.expired(Instant::now()) {
-                    // If the latest recv session is expired, send is also expired and any
-                    // recv_prev will be as well.
-                    self.deactivate(endpoint)
-                } else if let Some(prev) = recv_prev
-                    && prev.expired(Instant::now())
-                {
-                    recv_prev
-                        .take()
-                        .inspect(|recv_prev| endpoint.ids.remove_session(recv_prev.id()));
-                }
-            }
-        }
-    }
-}
-
-/// Tracks and allocates session IDs for peer sessions.
-#[derive(Default)]
-struct IdMap {
-    sessions: HashMap<SessionId, PeerId>,
-    // TODO: track recently abandoned session IDs, avoid reusing them for
-    // one or two session lifetimes to avoid confusion with reordered packets.
-    node_keys: HashMap<NodePublicKey, PeerId>,
-}
-
-impl IdMap {
-    /// Return the peer handle for a node public key, if any.
-    fn get_by_nodekey(&self, key: &NodePublicKey) -> Option<PeerId> {
-        self.node_keys.get(key).copied()
-    }
-
-    /// Return the peer handle for a session, if any.
-    fn get_by_session_id(&self, key: &SessionId) -> Option<&PeerId> {
-        self.sessions.get(key)
-    }
-
-    /// Add a peer handle for communicating with the given peer pubkey.
-    ///
-    /// Returns `false` if a peer already exists for the key.
-    fn add_peer(&mut self, id: PeerId, key: &NodePublicKey) -> bool {
-        if self.node_keys.contains_key(key) {
-            return false;
-        }
-
-        self.node_keys.insert(*key, id);
-        true
-    }
-
-    /// Allocate a new session ID for communication with the given peer.
-    ///
-    /// Note that due to key rotation, a peer can have multiple session IDs in use at once.
-    fn allocate_session(&mut self, peer: PeerId) -> SessionId {
-        loop {
-            let ret = SessionId::random();
-            if let std::collections::hash_map::Entry::Vacant(e) = self.sessions.entry(ret) {
-                e.insert(peer);
-                return ret;
-            }
-        }
-    }
-
-    /// Abandon the given session ID.
-    ///
-    /// Panics if the session ID isn't currently in use.
-    fn remove_session(&mut self, id: SessionId) {
-        self.sessions.remove(&id).unwrap();
-    }
-
-    fn remove_handshake_session(&mut self, handshake: &Handshake) {
-        if let Some(id) = handshake.session_id() {
-            self.remove_session(id);
-        }
-    }
-
-    /// Delete the peer handle for the given key.
-    ///
-    /// Panics if there is no peer currently using that key.
-    fn remove_peer(&mut self, key: &NodePublicKey) {
-        self.node_keys.remove(key).unwrap();
-    }
-}
-
 struct Peer {
     id: PeerId,
     config: PeerConfig,
-    session: SessionState,
+    session: Session,
     handshake: Handshake,
     last_seen_timestamp: Option<TAI64N>,
     cookie_sender: MACSender,
@@ -313,7 +41,7 @@ impl Peer {
         Self {
             id,
             config,
-            session: SessionState::None(Queue::default()),
+            session: Default::default(),
             handshake: Handshake::None,
             last_seen_timestamp: None,
             cookie_sender: macs,
@@ -339,7 +67,7 @@ impl Peer {
         packets: Vec<PacketMut>,
         out: &mut SendResult,
     ) {
-        if let Some(mut packets) = self.session.encrypt_or_queue(packets) {
+        if let Some(mut packets) = self.session.send(packets, &mut endpoint.ids) {
             tracing::trace!("enqueueing packets to peer");
             out.queue_to_peer(self.id).append(&mut packets);
             // Fall through to check if the session is in need of rotation.
@@ -350,7 +78,7 @@ impl Peer {
             return;
         }
 
-        if !self.session.needs_rotation() {
+        if !self.session.needs_handshake() {
             tracing::trace!("session does not need rotation");
             return;
         }
@@ -425,15 +153,7 @@ impl Peer {
             return;
         };
 
-        let mut packets = self.session.activate(endpoint, session);
-        if packets.is_empty() {
-            // Upon completing a handshake, the initiator must send at least one packet to confirm
-            // the session. Usually that can be a queued packet, but if we happen to complete a
-            // handshake with no queued packets available, we have to send an empty packet explicitly.
-            packets.push(PacketMut::new(0));
-            // Session was just activated, therefore it can encrypt.
-            packets = self.session.encrypt_or_queue(packets).unwrap();
-        }
+        let mut packets = self.session.activate(session, &mut endpoint.ids, true);
         out.queue_to_peer(self.id).append(&mut packets);
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
@@ -449,11 +169,11 @@ impl Peer {
         &mut self,
         endpoint: &mut EndpointState,
         session_id: SessionId,
-        mut packets: Vec<PacketMut>,
+        packets: Vec<PacketMut>,
         out: &mut RecvResult,
     ) {
-        if let Some(session) = self.session.get_recv(session_id) {
-            packets = session.decrypt(packets);
+        if let Some(recv) = self.session.get_recv(session_id, &mut endpoint.ids) {
+            let mut packets = recv.decrypt(packets);
             if !packets.is_empty() {
                 out.queue_to_local(self.id).append(&mut packets);
                 self.schedule_keepalive(&mut endpoint.scheduler);
@@ -469,18 +189,20 @@ impl Peer {
         out.queue_to_local(self.id).append(&mut packets);
         self.schedule_keepalive(&mut endpoint.scheduler);
 
-        let mut packets_for_peer = self.session.activate(endpoint, session);
+        let mut packets_for_peer = self.session.activate(session, &mut endpoint.ids, false);
         if !packets_for_peer.is_empty() {
             out.queue_to_peer(self.id).append(&mut packets_for_peer);
         }
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         }
-        let expiry = Instant::now() + SESSION_LIFETIME;
-        self.session_cleanup = Some(endpoint.scheduler.add(
-            TimeRange::new(expiry, expiry + SESSION_CLEANUP_GRACE),
-            Event::ExpireSession(self.id),
-        ));
+        // Session was just activated above, so it has an expiry time.
+        let expiry = self.session.expiry(&mut endpoint.ids).unwrap();
+        self.session_cleanup = Some(
+            endpoint
+                .scheduler
+                .add(expiry, Event::ExpireSession(self.id)),
+        );
     }
 
     fn respond_to_handshake(
@@ -526,8 +248,8 @@ impl Peer {
         self.start_handshake(endpoint, out);
     }
 
-    fn send_keepalive(&mut self, scheduler: &mut Scheduler<Event>, out: &mut EventResult) {
-        let Some(packet) = self.session.encrypt_keepalive() else {
+    fn send_keepalive(&mut self, endpoint: &mut EndpointState, out: &mut EventResult) {
+        let Some(packet) = self.session.send_keepalive(&mut endpoint.ids) else {
             tracing::trace!("send keepalive: session expired, skipping");
             return;
         };
@@ -536,20 +258,26 @@ impl Peer {
         self.keepalive = None;
 
         if self.send_another_keepalive {
-            self.schedule_keepalive(scheduler);
+            self.schedule_keepalive(&mut endpoint.scheduler);
             self.send_another_keepalive = false;
         }
     }
 
-    fn expire_sessions(&mut self, endpoint: &mut EndpointState) {
-        self.session.expire_sessions(endpoint);
+    fn cleanup_expired(&mut self, endpoint: &mut EndpointState) {
+        self.session.cleanup_expired(&mut endpoint.ids)
     }
 
     fn shutdown(&mut self, endpoint: &mut EndpointState) {
-        self.session.deactivate(endpoint);
+        self.session.deactivate(&mut endpoint.ids);
 
         endpoint.ids.remove_handshake_session(&self.handshake);
         self.handshake = Handshake::None;
+        if let Some(handle) = self.session_cleanup.take() {
+            handle.cancel();
+        }
+        if let Some(handle) = self.keepalive.take() {
+            handle.cancel();
+        }
     }
 
     /// (Soft) precondition: `self.handshake == HandshakeState::None` (previous handshake is lost, but
@@ -764,13 +492,13 @@ impl Endpoint {
                     let Some(peer) = self.peers.get_mut(&peer_id) else {
                         continue;
                     };
-                    peer.send_keepalive(&mut self.state.scheduler, &mut out);
+                    peer.send_keepalive(&mut self.state, &mut out);
                 }
                 Event::ExpireSession(peer_id) => {
                     let Some(peer) = self.peers.get_mut(&peer_id) else {
                         continue;
                     };
-                    peer.expire_sessions(&mut self.state);
+                    peer.cleanup_expired(&mut self.state);
                 }
             }
         }

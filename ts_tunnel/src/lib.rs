@@ -3,6 +3,7 @@
 mod config;
 mod endpoint;
 mod handshake;
+mod ids;
 mod macs;
 mod messages;
 mod replay;

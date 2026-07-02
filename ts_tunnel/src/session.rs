@@ -1,5 +1,7 @@
 use core::fmt::{Debug, Formatter};
 use std::{
+    cmp::min,
+    collections::{VecDeque, vec_deque},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -7,12 +9,15 @@ use std::{
 use aead::AeadInPlace;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 use ts_packet::PacketMut;
+use ts_time::TimeRange;
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
     little_endian::{U32, U64},
 };
 
 use crate::{
+    handshake::SessionPair,
+    ids::IdMap,
     messages::{SessionId, TransportDataHeader},
     replay::ReplayWindow,
 };
@@ -177,7 +182,7 @@ impl TransmitSession {
 pub struct ReceiveSession {
     cipher: ChaCha20Poly1305,
     id: SessionId,
-    created: Instant,
+    expiry: Instant,
     window: ReplayWindow,
 }
 
@@ -194,7 +199,7 @@ impl ReceiveSession {
         ReceiveSession {
             cipher: ChaCha20Poly1305::new(&key),
             id,
-            created: now,
+            expiry: now + SESSION_LIFETIME,
             window: ReplayWindow::default(),
         }
     }
@@ -263,7 +268,262 @@ impl ReceiveSession {
     }
 
     pub fn expired(&self, now: Instant) -> bool {
-        now.duration_since(self.created) > SESSION_LIFETIME
+        now > self.expiry
+    }
+}
+
+const MAX_QUEUED_PER_PEER: usize = 32;
+
+/// A bounded packet queue that drops oldest packets when full.
+#[derive(Default)]
+pub struct Queue(VecDeque<PacketMut>);
+
+impl Queue {
+    /// Shorthand for Queue::default then Queue::append.
+    fn new_with(packets: Vec<PacketMut>) -> Self {
+        let mut queue = Self::default();
+        queue.append(packets);
+        queue
+    }
+
+    fn append(&mut self, packets: Vec<PacketMut>) {
+        let new_packets = min(packets.len(), MAX_QUEUED_PER_PEER);
+        let drop_incoming = packets.len() - new_packets;
+        let keep_queued = MAX_QUEUED_PER_PEER - new_packets;
+        let drop_queued = self.0.len().saturating_sub(keep_queued);
+        self.0.drain(..drop_queued);
+        packets
+            .into_iter()
+            .skip(drop_incoming)
+            .for_each(|packet| self.0.push_back(packet));
+    }
+}
+
+impl From<Queue> for Vec<PacketMut> {
+    fn from(queue: Queue) -> Self {
+        queue.0.into()
+    }
+}
+
+impl IntoIterator for Queue {
+    type Item = PacketMut;
+    type IntoIter = vec_deque::IntoIter<PacketMut>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// A bidirectional established session.
+pub struct ActiveSession {
+    recv: Box<ReceiveSession>,
+    send: Box<TransmitSession>,
+    recv_prev: Option<Box<ReceiveSession>>,
+}
+
+impl From<SessionPair> for ActiveSession {
+    fn from(pair: SessionPair) -> Self {
+        Self {
+            recv: Box::new(pair.recv),
+            send: Box::new(pair.send),
+            recv_prev: None,
+        }
+    }
+}
+
+impl ActiveSession {
+    /// Start using a new keypair for communication.
+    ///
+    /// The prior receive session is rotated into the previous slot, and will continue to accept
+    /// packets until the next rotation (or the hard session expiry deadline).
+    ///
+    /// If a receive session was already in the previous slot, destroys it and returns its session
+    /// ID for further cleanup.
+    fn rotate(&mut self, next: SessionPair, ids: &mut IdMap) {
+        if let Some(prev) = self.recv_prev.as_ref() {
+            ids.remove_session(prev.id());
+        }
+        let send = Box::new(next.send);
+        let recv = Box::new(next.recv);
+        if self.recv.expired(Instant::now()) {
+            ids.remove_session(self.recv.id());
+            self.recv_prev = None;
+        } else {
+            self.recv_prev = Some(std::mem::replace(&mut self.recv, recv));
+        }
+        self.send = send;
+    }
+
+    fn cleanup_ids(&mut self, ids: &mut IdMap) {
+        ids.remove_session(self.recv.id());
+        if let Some(prev) = self.recv_prev.as_ref() {
+            ids.remove_session(prev.id());
+        }
+    }
+
+    fn soonest_expiry(&self) -> Instant {
+        if let Some(prev) = self.recv_prev.as_ref() {
+            prev.expiry
+        } else {
+            self.recv.expiry
+        }
+    }
+}
+
+/// A communication session to a peer.
+pub enum Session {
+    /// No session established yet.
+    ///
+    /// This session cannot receive packets. Sent packets are queued if possible, and will be
+    /// transmitted if the session becomes active in the future.
+    None(Queue),
+    /// Active session capable of bidirectional communication.
+    Active(ActiveSession),
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::None(Queue::default())
+    }
+}
+
+impl Session {
+    fn take(&mut self) -> Session {
+        std::mem::replace(self, Self::None(Queue::default()))
+    }
+
+    /// Return a reference to the active session, if any.
+    ///
+    /// Incidentally performs session expiry checking and cleanup. Callers can assume that
+    /// if they get a &mut ActiveSession, it contains only valid non-expired session state.
+    fn as_active(&mut self, ids: &mut IdMap) -> Option<&mut ActiveSession> {
+        match self {
+            Self::None(_) => None,
+            Self::Active(session) => {
+                if session.recv.expired(Instant::now()) {
+                    session.cleanup_ids(ids);
+                    *self = Self::default();
+                    None
+                } else {
+                    if let Some(prev) = session.recv_prev.as_ref()
+                        && prev.expired(Instant::now())
+                    {
+                        ids.remove_session(prev.id());
+                        session.recv_prev = None;
+                    }
+                    // Re-borrow session, because rustc can't see that the assignment to *self
+                    // above is mutually exclusive with continued use of the borrow.
+                    let Self::Active(session) = self else {
+                        unreachable!();
+                    };
+                    Some(session)
+                }
+            }
+        }
+    }
+
+    /// Activate the session with the given keys.
+    ///
+    /// If any packets were queued waiting for an active session, they are encrypted and
+    /// returned.
+    pub fn activate(
+        &mut self,
+        next: SessionPair,
+        ids: &mut IdMap,
+        need_keepalive: bool,
+    ) -> Vec<PacketMut> {
+        tracing::trace!(recv_id = ?next.recv.id(), "activating new session");
+
+        let (active, mut packets) = match self.take() {
+            Self::None(queue) => (next.into(), queue.into()),
+            Self::Active(mut session) => {
+                session.rotate(next, ids);
+                (session, vec![])
+            }
+        };
+
+        if need_keepalive && packets.is_empty() {
+            packets.push(PacketMut::new(0));
+        }
+        active.send.encrypt(&mut packets);
+        *self = Self::Active(active);
+        packets
+    }
+
+    /// Discard all state for this session.
+    pub fn deactivate(&mut self, ids: &mut IdMap) {
+        if let Self::Active(mut session) = self.take() {
+            session.cleanup_ids(ids);
+        }
+        *self = Self::default();
+    }
+
+    /// Encrypt a keepalive packet for the peer.
+    ///
+    /// Returns None if the session is inactive (and thus no keepalive is necessary).
+    pub fn send_keepalive(&mut self, ids: &mut IdMap) -> Option<PacketMut> {
+        let session = self.as_active(ids)?;
+        let mut packet = vec![PacketMut::new(0)];
+        session.send.encrypt(&mut packet);
+        packet.pop()
+    }
+
+    /// Send packets to the peer.
+    ///
+    /// If the session is inactive, packets are queued for future transmission.
+    ///
+    /// Returns None to indicate that packets were queued, indicating the caller may need to
+    /// initiate a handshake.
+    pub fn send(&mut self, mut packets: Vec<PacketMut>, ids: &mut IdMap) -> Option<Vec<PacketMut>> {
+        match self {
+            Self::None(queue) => {
+                queue.append(packets);
+                None
+            }
+            Self::Active(session) => {
+                if session.send.expired(Instant::now()) {
+                    session.cleanup_ids(ids);
+                    *self = Self::None(Queue::new_with(packets));
+                    return None;
+                }
+                session.send.encrypt(&mut packets);
+                Some(packets)
+            }
+        }
+    }
+
+    /// Get the ReceiveSession for the given receiving ID, if any.
+    pub fn get_recv(&mut self, id: SessionId, ids: &mut IdMap) -> Option<&mut ReceiveSession> {
+        let session = self.as_active(ids)?;
+        if session.recv.id() == id {
+            Some(session.recv.as_mut())
+        } else if let Some(recv_prev) = session.recv_prev.as_mut()
+            && recv_prev.id() == id
+        {
+            Some(recv_prev)
+        } else {
+            None
+        }
+    }
+
+    /// Reports whether the session is in need of a fresh handshake.
+    pub fn needs_handshake(&self) -> bool {
+        match self {
+            Self::None(_) => true,
+            Self::Active(session) => session.send.stale(Instant::now()),
+        }
+    }
+
+    /// Clean up expired session state, if any.
+    pub fn cleanup_expired(&mut self, ids: &mut IdMap) {
+        self.as_active(ids);
+    }
+
+    /// Returns the soonest time at which some session state may be expired, necessitating
+    /// a call to [`Session::cleanup_expired`]
+    pub fn expiry(&mut self, ids: &mut IdMap) -> Option<TimeRange> {
+        let soonest = self.as_active(ids)?.soonest_expiry();
+        Some(TimeRange::new(soonest, soonest + SESSION_CLEANUP_GRACE))
     }
 }
 
