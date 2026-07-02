@@ -4,9 +4,8 @@ use kameo::{
     actor::ActorRef,
     message::{Context, Message},
 };
-use tokio::sync::mpsc;
-use ts_packet::PacketMut;
-use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
+use ts_dataplane::async_tokio::{FromOverlay, FromUnderlay, Rx, ToOverlay, ToUnderlay, Tx};
+use ts_transport::{OverlayTransportId, UnderlayTransportId};
 
 use crate::{
     Error,
@@ -16,18 +15,6 @@ use crate::{
     route_updater::{PeerRouteUpdate, SelfRouteUpdate},
     src_filter::SourceFilterState,
 };
-
-/// Queue for packets sent from the overlay to the dataplane.
-pub type OverlayToDataplane = mpsc::UnboundedSender<Vec<PacketMut>>;
-
-/// Queue for packets entering the overlay from the dataplane.
-pub type OverlayFromDataplane = mpsc::UnboundedReceiver<Vec<PacketMut>>;
-
-/// Queue for packets leaving the underlay to the dataplane.
-pub type UnderlayToDataplane = mpsc::UnboundedSender<(PeerId, Vec<PacketMut>)>;
-
-/// Queue for packets entering an underlay from the dataplane.
-pub type UnderlayFromDataplane = mpsc::UnboundedReceiver<(PeerId, Vec<PacketMut>)>;
 
 pub struct DataplaneActor {
     dataplane: Arc<ts_dataplane::async_tokio::DataPlane>,
@@ -45,18 +32,14 @@ impl DataplaneActor {
     #[message]
     pub async fn new_overlay_transport(
         &self,
-    ) -> (OverlayTransportId, OverlayToDataplane, OverlayFromDataplane) {
+    ) -> (OverlayTransportId, Tx<FromOverlay>, Rx<ToOverlay>) {
         self.dataplane.new_overlay_transport().await
     }
 
     #[message]
     pub async fn new_underlay_transport(
         &self,
-    ) -> (
-        UnderlayTransportId,
-        UnderlayFromDataplane,
-        UnderlayToDataplane,
-    ) {
+    ) -> (UnderlayTransportId, Rx<ToUnderlay>, Tx<FromUnderlay>) {
         self.dataplane.new_underlay_transport().await
     }
 }
@@ -66,9 +49,8 @@ impl kameo::Actor for DataplaneActor {
     type Error = Error;
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        let dataplane = Arc::new(ts_dataplane::async_tokio::DataPlane::new(
-            env.keys.node_keys.clone(),
-        ));
+        let (dataplane, ..) = ts_dataplane::async_tokio::DataPlane::new(env.keys.node_keys.clone());
+        let dataplane = Arc::new(dataplane);
 
         env.subscribe::<PeerRouteUpdate>(&slf).await?;
         env.subscribe::<SelfRouteUpdate>(&slf).await?;

@@ -9,19 +9,35 @@ use ts_tunnel::NodeKeyPair;
 
 use crate::{EventResult, InboundResult, OutboundResult};
 
-/// Queue for packets leaving the data plane "up" into an overlay transport.
-pub type DataplaneToOverlay = mpsc::UnboundedSender<Vec<PacketMut>>;
+// NOTE(npry): this used to have unique types for each queue, but the names got confusing due to
+// having to think about the cartesian product of PacketType x QueueDirection x Network
+// (this is a "sender handle for receive packets on the overlay", vs. "receive handle for sender
+// packets on the overlay", etc.). It wasn't always clear to distinguish what referred to the
+// channel direction (sender/receiver) and what referred to the actual traffic kind (packets
+// received _from_ the underlay are different from packets sent _to_ the underlay). So now we name
+// the packet type here (to/from overlay/underlay) and use separate helper types to make the channel
+// directions easier to name.
 
-/// Queue for packets entering the data plane "down" from an overlay transport.
-pub type DataplaneFromOverlay = mpsc::UnboundedReceiver<Vec<PacketMut>>;
+/// Packet batches sent to an overlay.
+pub type ToOverlay = Vec<PacketMut>;
+/// Packet batches received from an overlay.
+pub type FromOverlay = Vec<PacketMut>;
 
-/// Queue for packets leaving the data plane "down" into an underlay transport.
-pub type DataplaneToUnderlay = mpsc::UnboundedSender<(PeerId, Vec<PacketMut>)>;
+/// Packet batches sent to an underlay.
+pub type ToUnderlay = (PeerId, Vec<PacketMut>);
+/// Packet batches received from an underlay.
+pub type FromUnderlay = Vec<PacketMut>;
 
-/// Queue for packets entering the data plane "up" from an underlay transport.
-pub type DataplaneFromUnderlay = mpsc::UnboundedReceiver<(PeerId, Vec<PacketMut>)>;
+/// A batch of disco packets received from an underlay transport.
+pub type DiscoBatch = Vec<PacketMut>;
+/// A batch of stun packets received from an underlay transport.
+pub type StunBatch = Vec<PacketMut>;
 
-// TODO: wire in overlay/underlay transport traits
+/// Shorthand for a sender channel.
+pub type Tx<T> = mpsc::UnboundedSender<T>;
+
+/// Shorthand for a receiver channel.
+pub type Rx<T> = mpsc::UnboundedReceiver<T>;
 
 /// Transforms packets to make tailscale happen.
 pub struct DataPlane {
@@ -30,8 +46,10 @@ pub struct DataPlane {
 
     transports_changed: tokio::sync::Notify,
 
-    underlay_down: DataplaneToUnderlay,
-    overlay_up: DataplaneToOverlay,
+    // These are the senders handed out in new_*_transport, just held here so we can clone them, we
+    // never send to them.
+    underlay_down: Tx<FromUnderlay>,
+    overlay_up: Tx<FromOverlay>,
 
     next_underlay_transport: AtomicU32,
     next_overlay_transport: AtomicU32,
@@ -42,17 +60,22 @@ struct CoreState {
     sync: crate::DataPlane,
 
     /// Queues to write packets to overlay transports.
-    overlay_transports: HashMap<OverlayTransportId, DataplaneToOverlay>,
+    overlay_transports: HashMap<OverlayTransportId, Tx<ToOverlay>>,
     /// Queues to write packets to underlay transports.
-    underlay_transports: HashMap<UnderlayTransportId, DataplaneToUnderlay>,
+    underlay_transports: HashMap<UnderlayTransportId, Tx<ToUnderlay>>,
+
+    /// Send handle for disco packets received from underlays.
+    disco_out: Tx<DiscoBatch>,
+    /// Send handle for stun packets received from underlays.
+    stun_out: Tx<StunBatch>,
 }
 
 /// State that must be held during async polling.
 struct PollState {
     /// Queue for packets entering the data plane ("coming down") from overlay transports.
-    from_overlay: DataplaneFromOverlay,
+    from_overlay: Rx<FromOverlay>,
     /// Queue for packets entering the data plane ("coming up") from underlay transports.
-    from_underlay: DataplaneFromUnderlay,
+    from_underlay: Rx<FromUnderlay>,
 }
 
 impl DataPlane {
@@ -60,13 +83,19 @@ impl DataPlane {
     ///
     /// The caller must configure overlay/underlay output queues for the data plane to be useful,
     /// otherwise all it can do is drop packets.
-    pub fn new(my_key: NodeKeyPair) -> Self {
+    ///
+    /// The second and third elements of the return tuple are output queues for disco and
+    /// STUN messages, respectively.
+    pub fn new(my_key: NodeKeyPair) -> (Self, Rx<DiscoBatch>, Rx<StunBatch>) {
         let (overlay_up, overlay_down) = mpsc::unbounded_channel();
         let (underlay_down, underlay_up) = mpsc::unbounded_channel();
 
+        let (disco_tx, disco_rx) = mpsc::unbounded_channel();
+        let (stun_tx, stun_rx) = mpsc::unbounded_channel();
+
         let sync = crate::DataPlane::new(my_key);
 
-        Self {
+        let dp = Self {
             underlay_down,
             overlay_up,
 
@@ -77,6 +106,8 @@ impl DataPlane {
 
             core_state: Mutex::new(CoreState {
                 sync,
+                stun_out: stun_tx,
+                disco_out: disco_tx,
                 overlay_transports: Default::default(),
                 underlay_transports: Default::default(),
             }),
@@ -85,17 +116,18 @@ impl DataPlane {
                 from_overlay: overlay_down,
                 from_underlay: underlay_up,
             }),
-        }
+        };
+
+        (dp, disco_rx, stun_rx)
     }
 
     /// Allocate a new underlay transport.
+    ///
+    /// The channels handed back are for an underlay to receive messages from the dataplane
+    /// (`ToUnderlay`) and send messages to the dataplane (`FromUnderlay`).
     pub async fn new_underlay_transport(
         &self,
-    ) -> (
-        UnderlayTransportId,
-        DataplaneFromUnderlay,
-        DataplaneToUnderlay,
-    ) {
+    ) -> (UnderlayTransportId, Rx<ToUnderlay>, Tx<FromUnderlay>) {
         let id = self
             .next_underlay_transport
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -114,9 +146,12 @@ impl DataPlane {
     }
 
     /// Allocate a new overlay transport.
+    ///
+    /// The channels handed back are for an overlay to send messages to the dataplane
+    /// (`FromOverlay`) and receive messages from the dataplane (`ToOverlay`).
     pub async fn new_overlay_transport(
         &self,
-    ) -> (OverlayTransportId, DataplaneToOverlay, DataplaneFromOverlay) {
+    ) -> (OverlayTransportId, Tx<FromOverlay>, Rx<ToOverlay>) {
         let id = self
             .next_overlay_transport
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -146,7 +181,7 @@ impl DataPlane {
     pub async fn step(&self) {
         enum SelectResult {
             OverlayDown(Vec<PacketMut>),
-            UnderlayUp(PeerId, Vec<PacketMut>),
+            UnderlayUp(Vec<PacketMut>),
             TransportsChanged,
             Event,
         }
@@ -185,10 +220,10 @@ impl DataPlane {
                 }
 
                 underlay_pkts = underlay_up.recv() => {
-                    let (peer_id, underlay_pkts) = underlay_pkts.unwrap();
-                    tracing::trace!(%peer_id, n_underlay_pkts = underlay_pkts.len());
+                    let underlay_pkts = underlay_pkts.unwrap();
+                    tracing::trace!(n_underlay_pkts = underlay_pkts.len());
 
-                    SelectResult::UnderlayUp(peer_id, underlay_pkts)
+                    SelectResult::UnderlayUp(underlay_pkts)
                 }
 
                 _ = self.transports_changed.notified() => {
@@ -214,8 +249,21 @@ impl DataPlane {
 
                 (Some(to_peers), Some(loopback))
             }
-            SelectResult::UnderlayUp(_peer_id, underlay_up) => {
-                let InboundResult { to_local, to_peers } = core.sync.process_inbound(underlay_up);
+            SelectResult::UnderlayUp(underlay_up) => {
+                let InboundResult {
+                    to_local,
+                    to_peers,
+                    disco,
+                    stun,
+                } = core.sync.process_inbound(underlay_up);
+
+                if !disco.is_empty() && core.disco_out.send(disco).is_err() {
+                    tracing::warn!("disco packets dropped: no receiver");
+                }
+
+                if !stun.is_empty() && core.stun_out.send(stun).is_err() {
+                    tracing::warn!("stun packets dropped: no receiver");
+                }
 
                 (Some(to_peers), Some(to_local))
             }

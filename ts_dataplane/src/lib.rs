@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+extern crate ts_disco_protocol as disco;
+
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use ts_bart::RoutingTable;
@@ -12,6 +14,9 @@ use ts_tunnel::{Endpoint, NodeKeyPair};
 use ts_underlay_router as ur;
 
 pub mod async_tokio;
+mod packet_ident;
+
+pub use packet_ident::{PacketIdent, PacketType};
 
 /// A data plane subsystem that can be the subject of timer events.
 pub enum Subsystem {
@@ -96,7 +101,26 @@ impl DataPlane {
         &mut self,
         packets: impl IntoIterator<Item = PacketMut>,
     ) -> InboundResult {
-        let ts_tunnel::RecvResult { to_local, to_peers } = self.wireguard.recv(packets);
+        let (wireguard, disco, stun) = packets.into_iter().fold(
+            (vec![], vec![], vec![]),
+            |(mut wg, mut disco, mut stun), pkt| {
+                let ident = PacketIdent::identify(pkt.as_ref());
+
+                match ident.ty {
+                    PacketType::Disco => {
+                        disco.push(pkt);
+                    }
+                    PacketType::StunBinding => {
+                        stun.push(pkt);
+                    }
+                    PacketType::Wireguard | PacketType::Unknown => wg.push(pkt),
+                }
+
+                (wg, disco, stun)
+            },
+        );
+
+        let ts_tunnel::RecvResult { to_local, to_peers } = self.wireguard.recv(wireguard);
 
         let to_local = to_local
             .into_iter()
@@ -195,7 +219,12 @@ impl DataPlane {
             prev.cancel();
         }
 
-        InboundResult { to_local, to_peers }
+        InboundResult {
+            to_local,
+            to_peers,
+            disco,
+            stun,
+        }
     }
 
     /// Return the next time at which [`DataPlane::process_events`] must be called.
@@ -255,6 +284,12 @@ pub struct InboundResult {
     pub to_local: HashMap<OverlayTransportId, Vec<PacketMut>>,
     /// Encrypted packets to be sent to wireguard peers by the underlay.
     pub to_peers: HashMap<(UnderlayTransportId, PeerId), Vec<PacketMut>>,
+
+    /// Encrypted disco packets to be handled externally.
+    pub disco: Vec<PacketMut>,
+
+    /// STUN packets to be handled externally.
+    pub stun: Vec<PacketMut>,
 }
 
 /// The result of processing an event.

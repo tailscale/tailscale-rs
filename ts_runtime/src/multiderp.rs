@@ -11,6 +11,7 @@ use kameo::{
 };
 use tokio::{sync::watch, task::JoinSet};
 use ts_control::DerpRegion;
+use ts_dataplane::async_tokio::{FromUnderlay, Rx, ToUnderlay, Tx};
 use ts_derp::RegionId;
 use ts_keys::{NodeKeyPair, NodePublicKey};
 use ts_transport::{
@@ -19,7 +20,7 @@ use ts_transport::{
 
 use crate::{
     Env, Error,
-    dataplane::{DataplaneActor, NewUnderlayTransport, UnderlayFromDataplane, UnderlayToDataplane},
+    dataplane::{DataplaneActor, NewUnderlayTransport},
     derp_latency::DerpLatencyMeasurement,
     peer_tracker::{PeerDb, PeerState},
 };
@@ -161,8 +162,8 @@ async fn run_derp_once(
     id: RegionId,
     region: &DerpRegion,
     keys: &NodeKeyPair,
-    to_dataplane: &UnderlayToDataplane,
-    from_dataplane: &mut UnderlayFromDataplane,
+    to_dataplane: &Tx<FromUnderlay>,
+    from_dataplane: &mut Rx<ToUnderlay>,
     home_derp_rx: &mut watch::Receiver<bool>,
     peer_db: &RwLock<Option<Arc<PeerDb>>>,
 ) -> Result<(), ts_derp::Error> {
@@ -215,7 +216,7 @@ async fn run_derp_once(
 
                         tracing::trace!(parent: &span, %peer_id, len = pkts.len(), "packet from derp server");
 
-                        let Ok(()) = to_dataplane.send((peer_id, pkts)) else {
+                        let Ok(()) = to_dataplane.send(pkts) else {
                             tracing::error!(parent: &span, "underlay receive channel closed");
                             break;
                         };
