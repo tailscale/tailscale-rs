@@ -71,7 +71,6 @@ pub struct State {
     pub default_route_interface_v6: Option<InterfaceId>,
 }
 
-#[expect(dead_code)]
 impl State {
     /// Iterate the addresses on all interfaces in the `up` state.
     pub fn up_addrs(&self) -> impl Iterator<Item = (InterfaceId, ipnet::IpNet)> {

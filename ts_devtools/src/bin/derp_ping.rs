@@ -30,9 +30,11 @@ async fn main() -> ts_cli_util::Result<()> {
 
     let args = Args::parse();
 
-    let (config, mut control, stream) = args.common.connect_control().await?;
+    let (config, keys, ctrl_conn, stream) = args.common.connect_control().await?;
 
-    let (region_id, derp_servers) = ts_cli_util::set_closest_derp(&mut control, stream).await?;
+    let (region_id, derp_servers) =
+        ts_cli_util::set_closest_derp(&keys, &config.control_server_url, &ctrl_conn, stream)
+            .await?;
 
     let mut tasks = JoinSet::new();
 

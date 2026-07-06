@@ -8,14 +8,21 @@ use url::Url;
 
 const LOAD_BALANCER_HEADER_KEY: &str = "Ts-Lb";
 
+/// Error registering this node with the control server.
 #[derive(Debug, thiserror::Error, Clone, Eq, PartialEq)]
 pub enum RegistrationError {
+    /// The machine's keys weren't authorized to join the tailnet.
+    ///
+    /// The contained URL, if present, may be visited by the user in a browser to interactively
+    /// authenticate the machine.
     #[error("machine was not authorized by control to join tailnet")]
     MachineNotAuthorized(Option<Url>),
 
+    /// A network error occurred. Retrying later may resolve the problem.
     #[error("Network error")]
     NetworkError,
 
+    /// An internal error occurred.
     #[error("error during registration: {0}")]
     Internal(InternalErrorKind),
 }
@@ -103,11 +110,17 @@ impl From<InternalErrorKind> for crate::InternalErrorKind {
     }
 }
 
+/// Send a request to the control server to register this device.
+///
+/// If the `followup` argument is present, the request blocks in a long-poll until the user
+/// authorizes the device using a browser. The url should have been produced by a previous call to
+/// `register` via [`RegistrationError::MachineNotAuthorized`].
 #[tracing::instrument(skip_all, fields(%control_url))]
 pub async fn register(
     config: &crate::Config,
     control_url: &Url,
     auth_key: Option<&str>,
+    followup: Option<Url>,
     node_keystate: &ts_keys::NodeState,
     http2_conn: &Http2<BytesBody>,
 ) -> Result<(), RegistrationError> {
@@ -125,6 +138,7 @@ pub async fn register(
         },
         nl_key: Some(network_lock_public_key),
         auth: auth_key.map(RegisterAuth::from),
+        followup,
         ephemeral: config.ephemeral,
         ..Default::default()
     };

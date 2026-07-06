@@ -94,6 +94,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let dev = Device::new(&config, args.auth_key).await?;
+    if let tailscale::AuthState::NotAuthorized(url) = dev.is_authorized().await? {
+        tracing::warn!("device isn't authorized, please visit {url} in your browser");
+    }
 
     let listener = dev
         .tcp_listen((dev.ipv4_addr().await?, args.port).into())

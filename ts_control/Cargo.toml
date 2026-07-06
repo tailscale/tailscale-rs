@@ -42,7 +42,6 @@ url = { workspace = true, features = ["serde", "std"] }
 zerocopy.workspace = true
 futures-util = { workspace = true }
 tokio = { workspace = true }
-tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
 
 [features]
 # Allow derp connections to be made without verifying TLS certs. Only for use in tests.

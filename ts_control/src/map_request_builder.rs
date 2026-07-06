@@ -1,7 +1,5 @@
 use ts_capabilityversion::CapabilityVersion;
-use ts_control_serde::{HostInfo, MapRequest, NetInfo};
-
-use crate::Endpoint;
+use ts_control_serde::{Endpoint, HostInfo, MapRequest, NetInfo};
 
 /// Builder type for [`MapRequest`]s; smooths over the annoying parts of creating a request.
 #[derive(Debug, Clone)]
@@ -15,10 +13,10 @@ impl<'a> MapRequestBuilder<'a> {
     /// - [`MapRequest::omit_peers`] is `true`
     /// - [`MapRequest::stream`] is `false`
     /// - [`MapRequest::host_info`]:
-    ///     - [`HostInfo::hostname`] is populated from [`TailnetPeerConfig::hostname`]
+    ///     - [`HostInfo::hostname`] is populated from [`Config::hostname`][crate::Config::hostname]
     ///     - [`HostInfo::net_info`] is `None`, therefore:
-    ///         - [`NetInfo::derp_latency`][crate::types::NetInfo::derp_latency] is not populated
-    ///         - [`NetInfo::preferred_derp`][crate::types::NetInfo::preferred_derp] is not populated
+    ///         - [`NetInfo::derp_latency`] is not populated
+    ///         - [`NetInfo::preferred_derp`] is not populated
     pub fn new(key_state: &ts_keys::NodeState) -> Self {
         Self {
             req: MapRequest {
@@ -61,7 +59,7 @@ impl<'a> MapRequestBuilder<'a> {
         self
     }
 
-    /// Set the [`MapRequest::Endpoints`] field.
+    /// Set the [`MapRequest::endpoints`] field.
     pub fn endpoints(mut self, endpoints: Vec<Endpoint>) -> Self {
         self.req.endpoints = endpoints;
         self

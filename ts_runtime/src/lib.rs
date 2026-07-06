@@ -157,7 +157,8 @@ forward!(
     ControlRunner,
     control_runner::Ipv4,
     control_runner::Ipv6,
-    control_runner::SelfNode
+    control_runner::SelfNode,
+    control_runner::AuthUrl,
 );
 forward!(
     PeerTracker,

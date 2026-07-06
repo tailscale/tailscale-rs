@@ -22,10 +22,13 @@ lazy_static::lazy_static! {
     pub static ref CONTROL_PROTOCOL_VERSION: String = format!("Tailscale Control Protocol v{}", CapabilityVersion::CURRENT);
 }
 
+/// Error encountered while connecting to the control server.
 #[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectionError {
+    /// An internal error occurred.
     #[error("internal error during connection: {0}")]
     Internal(InternalErrorKind),
+    /// Connection failed due to network conditions; retrying later may solve the problem.
     #[error("Network error")]
     NetworkError,
 }
@@ -150,6 +153,10 @@ impl fmt::Display for ControlPublicKeys {
     }
 }
 
+/// Establish a connection to the control server.
+///
+/// Does not make use of use [`ControlDialer`][crate::ControlDialer] and so should not be used for
+/// long-duration connections that may need to reconnect (e.g. listening for netmap changes).
 #[tracing::instrument(skip_all, fields(%control_url), err)]
 pub async fn connect(
     control_url: &Url,
@@ -188,6 +195,13 @@ async fn connect_h1(url: &Url) -> Result<ts_http_util::Http1<EmptyBody>, Connect
     }
 }
 
+/// Fetch the control server's [`MachinePublicKey`], which is used to encrypt the Noise connection
+/// to the control server.
+///
+/// If the `insecure-keyfetch` feature flag is not enabled, this forces the key url scheme to HTTPS
+/// and validates the server's certificate. This is a critical, load-bearing requirement for
+/// security: if the control server key is MITMed, it's game over. `insecure-keyfetch` is provided
+/// ONLY for integration testing, where it's not practical to issue valid certs.
 #[tracing::instrument(skip_all, fields(%control_url), ret, err, level = "trace")]
 pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, ConnectionError> {
     let mut key_url = control_url.join("/key")?;
@@ -221,6 +235,8 @@ pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, Co
     Ok(control_public_key)
 }
 
+/// Execute the TS2021 upgrade: make an HTTP upgrade request over `h1_client` and perform a Noise
+/// handshake to establish an encrypted channel to control.
 #[tracing::instrument(skip_all, fields(%control_url, %init_msg), err)]
 pub async fn upgrade_ts2021(
     control_url: &Url,

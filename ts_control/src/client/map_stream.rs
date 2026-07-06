@@ -99,6 +99,7 @@ pub struct StateUpdate {
     pub dial_plan: Option<DialPlan>,
 }
 
+/// Read a stream of netmap responses from `reader`, converting them into `StateUpdate`s.
 pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpdate> {
     futures_util::stream::unfold(reader, async |mut reader| {
         let msg_len = reader
@@ -243,12 +244,13 @@ fn packet_filter(map_response: &MapResponse<'_>) -> Option<FilterUpdate> {
     ))
 }
 
+/// Send a [`MapRequest`] on the given HTTP2 connection.
 #[tracing::instrument(skip_all, fields(map_url = %url.as_str()))]
 pub async fn send_map_request(
     map_request: MapRequest<'_>,
     url: &Url,
     http2_conn: &Http2<BytesBody>,
-) -> Result<impl AsyncRead + 'static, MapStreamError> {
+) -> Result<impl AsyncRead + 'static + use<>, MapStreamError> {
     tracing::debug!("sending map request to control server...");
 
     let body = if cfg!(debug_assertions) {
