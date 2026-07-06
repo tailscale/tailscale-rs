@@ -9,7 +9,7 @@ use ts_keys::{MachineKeyPair, MachinePublicKey};
 use url::Url;
 use zerocopy::network_endian::U32;
 
-use crate::tokio::prefixed_reader::PrefixedReader;
+use crate::client::prefixed_reader::PrefixedReader;
 
 const CHALLENGE_MAGIC: [u8; 5] = [0xFF, 0xFF, 0xFF, b'T', b'S'];
 const HANDSHAKE_HEADER_KEY: &str = "X-Tailscale-Handshake";

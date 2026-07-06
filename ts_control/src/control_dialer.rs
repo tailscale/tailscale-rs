@@ -246,18 +246,18 @@ where
             return Err(Error::InvalidUrl(url.clone()));
         }
     };
-    let control_public_key = crate::tokio::fetch_control_key(url).await?;
+    let control_public_key = crate::client::fetch_control_key(url).await?;
 
     let (handshake, init_msg) = ts_control_noise::Handshake::initialize(
-        &crate::tokio::CONTROL_PROTOCOL_VERSION,
+        &crate::client::CONTROL_PROTOCOL_VERSION,
         machine_keys,
         &control_public_key,
         CapabilityVersion::CURRENT,
     );
 
     let conn =
-        crate::tokio::upgrade_ts2021(url, &init_msg, handshake, machine_keys, h1_client).await?;
-    let conn = crate::tokio::read_challenge_packet(conn).await?;
+        crate::client::upgrade_ts2021(url, &init_msg, handshake, machine_keys, h1_client).await?;
+    let conn = crate::client::read_challenge_packet(conn).await?;
 
     let h2_conn = ts_http_util::http2::connect(conn).await?;
     tracing::debug!("http2 connection to control established");

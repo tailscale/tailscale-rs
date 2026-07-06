@@ -8,14 +8,21 @@ use tokio::{
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use url::Url;
 
-use crate::{
-    ControlDialer, Error,
-    map_request_builder::MapRequestBuilder,
-    tokio::{
-        map_stream::{StateUpdate, map_stream, send_map_request},
-        ping::handle_ping,
-    },
+use crate::{ControlDialer, Error, map_request_builder::MapRequestBuilder};
+
+mod connect;
+mod map_stream;
+mod ping;
+mod prefixed_reader;
+mod register;
+
+pub use connect::{
+    CONTROL_PROTOCOL_VERSION, connect, fetch_control_key, read_challenge_packet, upgrade_ts2021,
 };
+pub use map_stream::{FilterUpdate, PeerUpdate, StateUpdate};
+use map_stream::{map_stream, send_map_request};
+use ping::handle_ping;
+pub use register::register;
 
 /// A client to communicate with control.
 #[derive(Debug)]
@@ -36,9 +43,8 @@ impl AsyncControlClient {
     ) -> Result<(), Error> {
         let control_url = &config.server_url;
 
-        let h2_client = crate::tokio::connect(control_url, &node_keys.machine_keys).await?;
-
-        crate::tokio::register(config, control_url, auth_key, node_keys, &h2_client).await?;
+        let h2_client = connect(control_url, &node_keys.machine_keys).await?;
+        register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
         Ok(())
     }
@@ -63,10 +69,10 @@ impl AsyncControlClient {
         let control_url = &config.server_url;
         let mut tasks = JoinSet::new();
 
-        let h2_client = crate::tokio::connect(control_url, &node_keys.machine_keys).await?;
+        let h2_client = connect(control_url, &node_keys.machine_keys).await?;
         tracing::info!("connected to control, registering");
 
-        crate::tokio::register(config, control_url, auth_key, node_keys, &h2_client).await?;
+        register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
         tracing::info!("registered, starting netmap stream");
 
@@ -213,7 +219,7 @@ async fn run_once(
         .full_connect_next(control_url, &node_keys.machine_keys)
         .await?;
 
-    crate::tokio::register(config, control_url, auth_key, node_keys, &h2_client).await?;
+    register(config, control_url, auth_key, node_keys, &h2_client).await?;
 
     let builder = MapRequestBuilder::new(node_keys)
         .keep_alive(true)
