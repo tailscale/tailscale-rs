@@ -1,4 +1,3 @@
-
 # cargo-vet config file
 
 [cargo-vet]
@@ -9,6 +8,114 @@ url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
 
 [imports.mozilla]
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
+
+[policy.tailscale]
+audit-as-crates-io = false
+
+[policy.ts_array256]
+audit-as-crates-io = false
+
+[policy.ts_bart]
+audit-as-crates-io = false
+
+[policy.ts_bart_packetfilter]
+audit-as-crates-io = false
+
+[policy.ts_bitset]
+audit-as-crates-io = false
+
+[policy.ts_capabilityversion]
+audit-as-crates-io = false
+
+[policy.ts_control]
+audit-as-crates-io = false
+
+[policy.ts_control_noise]
+audit-as-crates-io = false
+
+[policy.ts_control_serde]
+audit-as-crates-io = false
+
+[policy.ts_dataplane]
+audit-as-crates-io = false
+
+[policy.ts_disco_protocol]
+audit-as-crates-io = false
+
+[policy.ts_dynbitset]
+audit-as-crates-io = false
+
+[policy.ts_elixir]
+audit-as-crates-io = false
+
+[policy.ts_ffi]
+audit-as-crates-io = false
+
+[policy.ts_hexdump]
+audit-as-crates-io = false
+
+[policy.ts_http_util]
+audit-as-crates-io = false
+
+[policy.ts_keys]
+audit-as-crates-io = false
+
+[policy.ts_netcheck]
+audit-as-crates-io = false
+
+[policy.ts_netstack_smoltcp]
+audit-as-crates-io = false
+
+[policy.ts_netstack_smoltcp_core]
+audit-as-crates-io = false
+
+[policy.ts_netstack_smoltcp_socket]
+audit-as-crates-io = false
+
+[policy.ts_nodecapability]
+audit-as-crates-io = false
+
+[policy.ts_overlay_router]
+audit-as-crates-io = false
+
+[policy.ts_packet]
+audit-as-crates-io = false
+
+[policy.ts_packetfilter]
+audit-as-crates-io = false
+
+[policy.ts_packetfilter_serde]
+audit-as-crates-io = false
+
+[policy.ts_packetfilter_state]
+audit-as-crates-io = false
+
+[policy.ts_peercapability]
+audit-as-crates-io = false
+
+[policy.ts_python]
+audit-as-crates-io = false
+
+[policy.ts_runtime]
+audit-as-crates-io = false
+
+[policy.ts_time]
+audit-as-crates-io = false
+
+[policy.ts_tls_util]
+audit-as-crates-io = false
+
+[policy.ts_transport]
+audit-as-crates-io = false
+
+[policy.ts_transport_tun]
+audit-as-crates-io = false
+
+[policy.ts_tunnel]
+audit-as-crates-io = false
+
+[policy.ts_underlay_router]
+audit-as-crates-io = false
 
 [[exemptions.aead]]
 version = "0.5.2"
@@ -114,21 +221,9 @@ criteria = "safe-to-deploy"
 version = "1.11.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.c2rust-bitfields]]
-version = "0.21.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.c2rust-bitfields-derive]]
-version = "0.21.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.cc]]
 version = "1.2.56"
 criteria = "safe-to-deploy"
-
-[[exemptions.cesu8]]
-version = "1.1.0"
-criteria = "safe-to-run"
 
 [[exemptions.cfg-if]]
 version = "1.0.4"
@@ -418,10 +513,6 @@ criteria = "safe-to-deploy"
 version = "0.15.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.hashbrown]]
-version = "0.16.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.heapless]]
 version = "0.8.0"
 criteria = "safe-to-deploy"
@@ -478,10 +569,6 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.id-arena]]
-version = "2.3.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.ident_case]]
 version = "1.0.1"
 criteria = "safe-to-deploy"
@@ -534,16 +621,8 @@ criteria = "safe-to-deploy"
 version = "0.3.91"
 criteria = "safe-to-deploy"
 
-[[exemptions.leb128fmt]]
-version = "0.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.libc]]
 version = "0.2.183"
-criteria = "safe-to-deploy"
-
-[[exemptions.libloading]]
-version = "0.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.linux-raw-sys]]
@@ -599,10 +678,6 @@ version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.netlink-packet-core]]
-version = "0.7.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.netlink-packet-core]]
 version = "0.8.1"
 criteria = "safe-to-deploy"
 
@@ -612,10 +687,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.netlink-packet-route]]
 version = "0.28.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.netlink-packet-utils]]
-version = "0.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.netlink-sys]]
@@ -628,14 +699,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.nix]]
 version = "0.31.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.noise-protocol]]
-version = "0.2.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.noise-rust-crypto]]
-version = "0.6.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.nom]]
@@ -710,10 +773,6 @@ criteria = "safe-to-run"
 version = "0.2.17"
 criteria = "safe-to-deploy"
 
-[[exemptions.pin-utils]]
-version = "0.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.piper]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
@@ -732,14 +791,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ppv-lite86]]
 version = "0.2.21"
-criteria = "safe-to-deploy"
-
-[[exemptions.prettyplease]]
-version = "0.2.37"
-criteria = "safe-to-deploy"
-
-[[exemptions.proc-macro2]]
-version = "1.0.106"
 criteria = "safe-to-deploy"
 
 [[exemptions.proptest]]
@@ -1006,10 +1057,6 @@ criteria = "safe-to-run"
 version = "0.5.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.tap]]
-version = "1.0.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.tempfile]]
 version = "3.27.0"
 criteria = "safe-to-run"
@@ -1174,10 +1221,6 @@ criteria = "safe-to-deploy"
 version = "1.0.2+wasi-0.2.9"
 criteria = "safe-to-deploy"
 
-[[exemptions.wasip3]]
-version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
-criteria = "safe-to-deploy"
-
 [[exemptions.wasm-bindgen]]
 version = "0.2.114"
 criteria = "safe-to-deploy"
@@ -1192,18 +1235,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-shared]]
 version = "0.2.114"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-encoder]]
-version = "0.244.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasm-metadata]]
-version = "0.244.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wasmparser]]
-version = "0.244.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.web-sys]]
@@ -1287,19 +1318,7 @@ version = "0.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows-sys]]
-version = "0.45.0"
-criteria = "safe-to-run"
-
-[[exemptions.windows-sys]]
 version = "0.52.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows-sys]]
-version = "0.59.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows-sys]]
-version = "0.60.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows-sys]]
@@ -1307,15 +1326,7 @@ version = "0.61.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows-targets]]
-version = "0.42.2"
-criteria = "safe-to-run"
-
-[[exemptions.windows-targets]]
 version = "0.52.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows-targets]]
-version = "0.53.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows-threading]]
@@ -1323,95 +1334,35 @@ version = "0.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows_aarch64_gnullvm]]
-version = "0.42.2"
-criteria = "safe-to-run"
-
-[[exemptions.windows_aarch64_gnullvm]]
 version = "0.52.6"
 criteria = "safe-to-deploy"
-
-[[exemptions.windows_aarch64_gnullvm]]
-version = "0.53.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_aarch64_msvc]]
-version = "0.42.2"
-criteria = "safe-to-run"
 
 [[exemptions.windows_aarch64_msvc]]
 version = "0.52.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.windows_aarch64_msvc]]
-version = "0.53.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_i686_gnu]]
-version = "0.42.2"
-criteria = "safe-to-run"
-
 [[exemptions.windows_i686_gnu]]
 version = "0.52.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_i686_gnu]]
-version = "0.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows_i686_gnullvm]]
 version = "0.52.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.windows_i686_gnullvm]]
-version = "0.53.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_i686_msvc]]
-version = "0.42.2"
-criteria = "safe-to-run"
-
 [[exemptions.windows_i686_msvc]]
 version = "0.52.6"
 criteria = "safe-to-deploy"
-
-[[exemptions.windows_i686_msvc]]
-version = "0.53.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_x86_64_gnu]]
-version = "0.42.2"
-criteria = "safe-to-run"
 
 [[exemptions.windows_x86_64_gnu]]
 version = "0.52.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.windows_x86_64_gnu]]
-version = "0.53.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_x86_64_gnullvm]]
-version = "0.42.2"
-criteria = "safe-to-run"
-
 [[exemptions.windows_x86_64_gnullvm]]
 version = "0.52.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.windows_x86_64_gnullvm]]
-version = "0.53.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_x86_64_msvc]]
-version = "0.42.2"
-criteria = "safe-to-run"
-
 [[exemptions.windows_x86_64_msvc]]
 version = "0.52.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.windows_x86_64_msvc]]
-version = "0.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.winnow]]
@@ -1424,30 +1375,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.wit-bindgen]]
 version = "0.51.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wit-bindgen-core]]
-version = "0.51.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wit-bindgen-rust]]
-version = "0.51.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wit-bindgen-rust-macro]]
-version = "0.51.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wit-component]]
-version = "0.244.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.wit-parser]]
-version = "0.244.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.x25519-dalek]]
-version = "2.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.x25519-dalek]]
