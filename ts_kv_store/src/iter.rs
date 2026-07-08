@@ -285,8 +285,7 @@ impl<'guard, Guard, D: IndexDesc, Kind> Drop for IndexIterator<'guard, Guard, D,
 
 /// An iterator for an indexed table (described by the generic parameter `D`) in the KV
 /// store. Gives mutable access to base table values.
-pub struct IndexIteratorMut<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: IndexDesc, Kind>
-{
+pub struct IndexIteratorMut<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: IndexDesc> {
     /// Guard on the KV store's storage (all of it).
     guard: Guard,
     /// An iterator over the `HashMap` representing the table.
@@ -295,11 +294,10 @@ pub struct IndexIteratorMut<'guard, Guard: StorageGuardMut<D::Storage> + 'guard,
     ///   - `inner.is_some()` once `new` has completed.
     inner: Option<(&'guard mut Indexes<D>, InnerIterator<'guard, D>)>,
     modified: HashSet<D::Value>,
-    _kind: PhantomData<Kind>,
 }
 
-impl<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: IndexDesc, Kind>
-    IndexIteratorMut<'guard, Guard, D, Kind>
+impl<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: IndexDesc>
+    IndexIteratorMut<'guard, Guard, D>
 where
     <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone,
 {
@@ -312,7 +310,6 @@ where
             guard,
             inner: None,
             modified: HashSet::new(),
-            _kind: PhantomData,
         };
         let txn_id = result.guard.storage().txn_id();
 
@@ -330,19 +327,35 @@ where
         ));
         result
     }
+}
 
-    #[allow(clippy::type_complexity)]
-    fn inner_next(
-        &mut self,
-    ) -> Option<(
+impl<'guard, Guard: StorageGuardMut<D::Storage>, D: IndexDesc> Drop
+    for IndexIteratorMut<'guard, Guard, D>
+{
+    fn drop(&mut self) {
+        let storage = self.guard.storage();
+        let txn_id = storage.txn_id();
+        let max_transaction_id = storage.max_committed_id();
+        let table = <D::BaseTable as TableDesc>::get_table_mut(&mut storage.tables);
+        for k in &self.modified {
+            table.rebuild_indexes_for_key(k, txn_id, max_transaction_id);
+        }
+    }
+}
+
+impl<'guard, Guard: StorageGuardMut<D::Storage>, D: IndexDesc> Iterator
+    for IndexIteratorMut<'guard, Guard, D>
+where
+    D::Value: Clone + Hash + Eq,
+    <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone,
+{
+    type Item = (
         &'guard D::Key,
         &'guard <D::BaseTable as TableDesc>::Key,
         &'guard mut <D::BaseTable as TableDesc>::Value,
-    )>
-    where
-        D::Value: Clone + Hash + Eq,
-        <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone,
-    {
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
         let max_transaction_id = self.guard.storage().max_committed_id();
         let (base, iter) = self.inner.as_mut().unwrap();
         let (k, bk) = iter.next()?;
@@ -358,53 +371,6 @@ where
         self.modified.insert(bk.clone());
 
         Some((k, bk, value))
-    }
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage>, D: IndexDesc, Kind> Drop
-    for IndexIteratorMut<'guard, Guard, D, Kind>
-{
-    fn drop(&mut self) {
-        let storage = self.guard.storage();
-        let txn_id = storage.txn_id();
-        let max_transaction_id = storage.max_committed_id();
-        let table = <D::BaseTable as TableDesc>::get_table_mut(&mut storage.tables);
-        for k in &self.modified {
-            table.rebuild_indexes_for_key(k, txn_id, max_transaction_id);
-        }
-    }
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage>, D: IndexDesc> Iterator
-    for IndexIteratorMut<'guard, Guard, D, KeysAndValues>
-where
-    D::Value: Clone + Hash + Eq,
-    <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone,
-{
-    type Item = (
-        &'guard D::Key,
-        &'guard <D::BaseTable as TableDesc>::Key,
-        &'guard mut <D::BaseTable as TableDesc>::Value,
-    );
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner_next()
-    }
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage>, D: IndexDesc> Iterator
-    for IndexIteratorMut<'guard, Guard, D, Values>
-where
-    D::Value: Clone + Hash + Eq,
-    <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone,
-{
-    type Item = (
-        &'guard <D::BaseTable as TableDesc>::Key,
-        &'guard mut <D::BaseTable as TableDesc>::Value,
-    );
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner_next().map(|(_, bk, v)| (bk, v))
     }
 }
 

@@ -594,9 +594,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
         BaseValue<Self::IndexDesc>: Clone,
     {
         let guard = self.write_lock();
-        IndexIteratorMut::<'guard, Self::WriteLock, Self::IndexDesc, iter::KeysAndValues>::new(
-            guard, owner,
-        )
+        IndexIteratorMut::<'guard, Self::WriteLock, Self::IndexDesc>::new(guard, owner)
     }
 
     fn values_mut<'guard>(
@@ -610,15 +608,15 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
     >
     where
         Self::WriteLock: 'guard,
-        Self::IndexDesc: 'guard,
-        IndexValue<Self::IndexDesc>: Hash + Eq,
-        BaseKey<Self::IndexDesc>: Clone,
         BaseValue<Self::IndexDesc>: Clone,
     {
         let guard = self.write_lock();
-        IndexIteratorMut::<'guard, Self::WriteLock, Self::IndexDesc, iter::Values>::new(
-            guard, owner,
-        )
+        TableIteratorMut::<
+            'guard,
+            Self::WriteLock,
+            <Self::IndexDesc as IndexDesc>::BaseTable,
+            iter::KeysAndValues,
+        >::new(guard, owner)
     }
 }
 

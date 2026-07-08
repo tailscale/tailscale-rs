@@ -312,13 +312,15 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// transaction.
     pub fn with_iter_mut<F, T>(&self, mut f: F) -> T
     where
-        F: for<'a> FnMut(Box<dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)> + 'a>) -> T,
+        F: for<'a> FnMut(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
         D::Value: Clone,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
-        let iter = TabularOpsMut::iter_mut(&mut txn_table, self.owner);
-        let result = f(Box::new(iter));
+        let result = {
+            let mut iter = TabularOpsMut::iter_mut(&mut txn_table, self.owner);
+            f(&mut iter)
+        };
         // Should never panic since transaction should only fail on index inserts.
         txn.commit().unwrap();
         result
@@ -637,7 +639,7 @@ mod test {
         let store = KvStore::new();
         let table = store.table::<Items>(OWNER);
         table.insert("k", "hello".to_owned());
-        table.with_iter_mut(|mut i| i.next().unwrap().1.push('!'));
+        table.with_iter_mut(|i| i.next().unwrap().1.push('!'));
         assert_eq!(table.get("k"), Some("hello!".to_owned()));
     }
 

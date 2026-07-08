@@ -188,15 +188,17 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
     pub fn with_iter_mut<F, T>(&self, mut f: F) -> T
     where
         F: for<'a> FnMut(
-            Box<dyn Iterator<Item = (&D::Key, &'a BaseKey<D>, &'a mut BaseValue<D>)> + 'a>,
+            &mut dyn Iterator<Item = (&D::Key, &'a BaseKey<D>, &'a mut BaseValue<D>)>,
         ) -> T,
         IndexValue<D>: Eq + Hash + Clone,
         BaseValue<D>: Clone,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactionalIndex::<D> { txn: &mut txn };
-        let iter = IndexedOpsMut::iter_mut(&mut txn_table, self.owner);
-        let result = f(Box::new(iter));
+        let result = {
+            let mut iter = IndexedOpsMut::iter_mut(&mut txn_table, self.owner);
+            f(&mut iter)
+        };
         // Should never panic since transaction should only fail on index inserts.
         txn.commit().unwrap();
         result
@@ -372,9 +374,8 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     }
 
     /// Iterate all the values in a table.
-    pub fn values_mut(&mut self) -> impl Iterator<Item = (&BaseKey<D>, &mut BaseValue<D>)>
+    pub fn iter_base_mut(&mut self) -> impl Iterator<Item = (&BaseKey<D>, &mut BaseValue<D>)>
     where
-        IndexValue<D>: Eq + Hash + Clone,
         BaseValue<D>: Clone,
     {
         let owner = self.txn.owner;
@@ -847,7 +848,7 @@ mod test {
         let store = KvStore::new();
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         let index = store.table_by::<index::Users::name>(OWNER);
-        index.with_iter_mut(|mut i| i.next().unwrap().2.name.push('!'));
+        index.with_iter_mut(|i| i.next().unwrap().2.name.push('!'));
         assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice!")));
     }
 
@@ -857,7 +858,7 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table::<Users>(OWNER)
-            .with_iter_mut(|mut i| i.next().unwrap().1.name = "Charlie".to_owned());
+            .with_iter_mut(|i| i.next().unwrap().1.name = "Charlie".to_owned());
         assert!(
             store
                 .table_by::<index::Users::name>(OWNER)
@@ -879,7 +880,7 @@ mod test {
         store.table::<Users>(OWNER).insert(1, row("Alice"));
         store
             .table_by::<index::Users::name>(OWNER)
-            .with_iter_mut(|mut i| i.next().unwrap().2.name = "Charlie".to_owned());
+            .with_iter_mut(|i| i.next().unwrap().2.name = "Charlie".to_owned());
         assert!(
             store
                 .table_by::<index::Users::name>(OWNER)
@@ -1203,7 +1204,7 @@ mod test_two_indexes {
         store
             .table::<People>(OWNER)
             .insert(1, person("a@example.com", b"alice"));
-        store.table::<People>(OWNER).with_iter_mut(|mut i| {
+        store.table::<People>(OWNER).with_iter_mut(|i| {
             let v = &mut i.next().unwrap().1;
             v.email = "b@example.com".to_owned();
             v.username = b"bob".to_vec();
@@ -1456,7 +1457,7 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.table_by::<index::Users::name>().insert(1, row("Alice"));
         txn.table_by::<index::Users::name>()
-            .values_mut()
+            .iter_base_mut()
             .for_each(|(_, v)| v.name = "Charlie".to_owned());
         assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
         assert_eq!(
