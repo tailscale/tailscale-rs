@@ -20,20 +20,22 @@ C, Elixir, and Python.
 ## Getting Started
 
 The following instructions are for Rust! For other languages, see the language-specific README:
+
 - [C](ts_ffi/README.md)
 - [Elixir](ts_elixir/README.md)
-- [Python](ts_python/README.md) 
+- [Python](ts_python/README.md)
 
 Add this dependency line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tailscale = { version = "0.3" }
+tailscale = { version = "0.4" }
 ```
 
 Examples of using the `tailscale` crate can be found in [`examples/`](examples/README.md).
 
-For instructions on how to run tests, lints, etc., see [CONTRIBUTING.md](CONTRIBUTING.md). For the high-level architecture and
+For instructions on how to run tests, lints, etc., see [CONTRIBUTING.md](CONTRIBUTING.md). For the high-level
+architecture and
 repository layout, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Code sample
@@ -112,7 +114,8 @@ We support the following platforms and architectures:
 ## Status
 
 `tailscale-rs` is a work-in-progress - we're still rapidly iterating, fixing bugs, and adding new
-features. We aim to keep this section up-to-date, but our [issue tracker](https://github.com/tailscale/tailscale-rs/issues)
+features. We aim to keep this section up-to-date, but
+our [issue tracker](https://github.com/tailscale/tailscale-rs/issues)
 is the best way to see the latest updates.
 
 ### Implemented
@@ -120,12 +123,12 @@ is the best way to see the latest updates.
 These are features that we currently implement:
 
 - Basics
-  - Create TCP and UDP sockets on the tailnet
-  - Communicate with peers via public DERP relays
-  - Communicate with the Tailscale Go client, `tsnet`, and `libtailscale`
+    - Create TCP and UDP sockets on the tailnet
+    - Communicate with peers via public DERP relays
+    - Communicate with the Tailscale Go client, `tsnet`, and `libtailscale`
 - Language support
-  - Rust API
-  - C, Elixir, and Python bindings
+    - Rust API
+    - C, Elixir, and Python bindings
 
 ### Coming Soon
 
@@ -149,41 +152,41 @@ Unsupported features
 </summary>
 
 - Networking
-  - Peer relays
-  - Exit Nodes (either being one, or using one)
-  - MagicDNS
-  - Private DERP relays
-  - Split DNS
-  - Subnet Routers (either being one, or using one)
+    - Peer relays
+    - Exit Nodes (either being one, or using one)
+    - MagicDNS
+    - Private DERP relays
+    - Split DNS
+    - Subnet Routers (either being one, or using one)
 - Platforms
-  - AIX
-  - Android
-  - BSDs
-  - iOS
-  - Plan9
-  - QNAP
-  - Synology DSM
+    - AIX
+    - Android
+    - BSDs
+    - iOS
+    - Plan9
+    - QNAP
+    - Synology DSM
 - Observability
-  - Client Metrics
-  - Endpoint Collection
-  - Device Posture Collection
-  - Log Streaming
-  - Network Flow Logs
+    - Client Metrics
+    - Endpoint Collection
+    - Device Posture Collection
+    - Log Streaming
+    - Network Flow Logs
 - Other Features
-  - Application Capabilities
-  - Automatic Key Rotation
-  - HTTPS Certificates
-  - Kubernetes
-  - Mullvad VPN
-  - Node Sharing
-  - Taildrive
-  - Taildrop
-  - Tailnet Lock
-  - Tailscale Funnel
-  - Tailscale Serve
-  - Tailscale SSH
-  - Tailscale Services
-  - Webhooks
+    - Application Capabilities
+    - Automatic Key Rotation
+    - HTTPS Certificates
+    - Kubernetes
+    - Mullvad VPN
+    - Node Sharing
+    - Taildrive
+    - Taildrop
+    - Tailnet Lock
+    - Tailscale Funnel
+    - Tailscale Serve
+    - Tailscale SSH
+    - Tailscale Services
+    - Webhooks
 - Any other features not listed in "Implemented" or "Coming Soon"
 
 </details>
