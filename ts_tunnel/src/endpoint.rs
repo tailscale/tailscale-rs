@@ -13,7 +13,7 @@ use crate::{
     ids::IdMap,
     macs::{MACReceiver, MACSender},
     messages::{CookieReply, HandshakeResponse, Message, MessageMut, SessionId},
-    session::{SESSION_CLEANUP_GRACE, SESSION_LIFETIME, Session},
+    session::Session,
     time::{TAI64N, TAI64NClock},
 };
 
@@ -156,16 +156,16 @@ impl Peer {
             return;
         };
 
-        let mut packets = self.session.activate(session, &mut endpoint.ids, now, true);
+        let (expiry, mut packets) = self.session.activate(session, &mut endpoint.ids, now, true);
         out.queue_to_peer(self.id).append(&mut packets);
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         };
-        let expiry = now + SESSION_LIFETIME;
-        self.session_cleanup = Some(endpoint.scheduler.add(
-            TimeRange::new(expiry, expiry + SESSION_CLEANUP_GRACE),
-            Event::ExpireSession(self.id),
-        ));
+        self.session_cleanup = Some(
+            endpoint
+                .scheduler
+                .add(expiry, Event::ExpireSession(self.id)),
+        );
     }
 
     fn recv_transport_data(
@@ -193,17 +193,15 @@ impl Peer {
         out.queue_to_local(self.id).append(&mut packets);
         self.schedule_keepalive(&mut endpoint.scheduler, now);
 
-        let mut packets_for_peer = self
-            .session
-            .activate(session, &mut endpoint.ids, now, false);
+        let (expiry, mut packets_for_peer) =
+            self.session
+                .activate(session, &mut endpoint.ids, now, false);
         if !packets_for_peer.is_empty() {
             out.queue_to_peer(self.id).append(&mut packets_for_peer);
         }
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         }
-        // Session was just activated above, so it has an expiry time.
-        let expiry = self.session.expiry(&mut endpoint.ids, now).unwrap();
         self.session_cleanup = Some(
             endpoint
                 .scheduler

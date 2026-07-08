@@ -284,11 +284,6 @@ impl BidiSession {
         self.recv.id
     }
 
-    /// Return the time at which the session expires.
-    pub fn expiry(&self) -> Instant {
-        self.recv.expiry
-    }
-
     pub fn rotation_time(&self) -> Instant {
         self.recv.expiry - SESSION_LIFETIME + SESSION_FRESH_LIFETIME
     }
@@ -383,14 +378,6 @@ impl ActiveSession {
     fn expired(&self, now: Instant) -> bool {
         self.cur.expired(now)
     }
-
-    fn soonest_expiry(&self) -> Instant {
-        if let Some(prev) = self.prev.as_ref() {
-            prev.expiry
-        } else {
-            self.cur.expiry()
-        }
-    }
 }
 
 /// A communication session to a peer.
@@ -430,15 +417,15 @@ impl Session {
 
     /// Activate the session with the given keys.
     ///
-    /// If any packets were queued waiting for an active session, they are encrypted and
-    /// returned.
+    /// Returns the expiry time for the session. If any packets were queued waiting
+    /// for an active session, they are encrypted and returned.
     pub fn activate(
         &mut self,
         next: BidiSession,
         ids: &mut IdMap,
         now: Instant,
         need_keepalive: bool,
-    ) -> Vec<PacketMut> {
+    ) -> (TimeRange, Vec<PacketMut>) {
         tracing::trace!(recv_id = ?next.recv.id(), "activating new session");
 
         let (active, mut packets) = match self.take() {
@@ -454,7 +441,13 @@ impl Session {
         }
         active.cur.encrypt(&mut packets);
         *self = Self::Active(active);
-        packets
+        (
+            TimeRange::new(
+                now + SESSION_LIFETIME,
+                now + SESSION_LIFETIME + SESSION_CLEANUP_GRACE,
+            ),
+            packets,
+        )
     }
 
     /// Discard all state for this session.
@@ -542,13 +535,6 @@ impl Session {
                 session.prev = None;
             }
         }
-    }
-
-    /// Returns the soonest time at which some session state may be expired, necessitating
-    /// a call to [`Session::cleanup_expired`]
-    pub fn expiry(&mut self, ids: &mut IdMap, now: Instant) -> Option<TimeRange> {
-        let soonest = self.as_active(ids, now)?.soonest_expiry();
-        Some(TimeRange::new(soonest, soonest + SESSION_CLEANUP_GRACE))
     }
 }
 
@@ -648,8 +634,8 @@ mod tests {
                 },
                 now,
             );
-            let p1 = self.session.activate(s1, &mut self.ids, now, false);
-            let p2 = other.session.activate(s2, &mut other.ids, now, false);
+            let (_, p1) = self.session.activate(s1, &mut self.ids, now, false);
+            let (_, p2) = other.session.activate(s2, &mut other.ids, now, false);
             (p1, p2)
         }
 
