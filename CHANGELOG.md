@@ -6,7 +6,7 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
-## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.3) - 2026-07-08
+## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
 - Added (Rust API): Experimental support for user-defined tailnet SSH servers using
   [`russh`](https://docs.rs/russh/latest/russh/) and (optionally)
