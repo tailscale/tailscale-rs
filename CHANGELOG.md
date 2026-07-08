@@ -2,14 +2,59 @@
 
 Record breaking or significant changes here. All dates are UTC.
 
-## Unreleased - June 2026
+## Unreleased - August 2026
 
 Put changes for the upcoming release here!
+
+## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.3) - 2026-07-08
 
 - Added (Rust API): Experimental support for user-defined tailnet SSH servers using
   [`russh`](https://docs.rs/russh/latest/russh/) and (optionally)
   [`ratatui`](https://docs.rs/ratatui/latest/ratatui/).
   [#178](https://github.com/tailscale/tailscale-rs/pull/178).
+- Added (ts_netmon): Monitor network interface changes across Linux and Windows (macOS coming in a
+  future release).
+  [#214](https://github.com/tailscale/tailscale-rs/pull/214).
+- Added (ts_kv_store): Transactional KV store for future use by multiple components (peer tracker,
+  control client, etc.).
+  [#208](https://github.com/tailscale/tailscale-rs/pull/208).
+  [#223](https://github.com/tailscale/tailscale-rs/pull/223).
+  [#228](https://github.com/tailscale/tailscale-rs/pull/228).
+  [#241](https://github.com/tailscale/tailscale-rs/pull/241).
+  [#252](https://github.com/tailscale/tailscale-rs/pull/252).
+  [#263](https://github.com/tailscale/tailscale-rs/pull/263).
+  [#265](https://github.com/tailscale/tailscale-rs/pull/265).
+- Added (ts_control*, ts_derp, ts_runtime): Handling of various peer change messages from the
+  control plane.
+  [#185](https://github.com/tailscale/tailscale-rs/pull/185).
+  [#248](https://github.com/tailscale/tailscale-rs/pull/248).
+- Added (ts_runtime): STUN protocol support and periodic STUN checks.
+  [#234](https://github.com/tailscale/tailscale-rs/pull/234).
+  [#244](https://github.com/tailscale/tailscale-rs/pull/244).
+- Added (ts_tunnel): Cleanup of expired sessions that no longer receive traffic.
+  [#264](https://github.com/tailscale/tailscale-rs/pull/264).
+- Added (ts_python): Type stubs for the `tailscale-py` package, along with minor improvements to
+  documentation.
+  [#211](https://github.com/tailscale/tailscale-rs/pull/211).
+  [#247](https://github.com/tailscale/tailscale-rs/pull/247).
+- Fixed (ts_keys, ts_noise): Private key types are properly zeroized on drop and are now passed by
+  reference rather than Copy.
+  [#221](https://github.com/tailscale/tailscale-rs/pull/221).
+  [#245](https://github.com/tailscale/tailscale-rs/pull/245).
+  [#249](https://github.com/tailscale/tailscale-rs/pull/249).
+  [#251](https://github.com/tailscale/tailscale-rs/pull/251).
+- Fixed (ts_packetfilter_serde): `IpRange::Wildcard.iter_prefixes()` now covers the full `::/0`
+  IPv6 address space. Thanks to @immanuwell for the report!
+  [#212](https://github.com/tailscale/tailscale-rs/pull/212).
+- Fixed (ts_netstack_smoltcp{_core}): Overlay network stack now returns an error on IP version
+  mismatch between local/remote endpoints instead of panicking.
+  [#213](https://github.com/tailscale/tailscale-rs/pull/213).
+- Fixed (ts_netstack_smoltcp_core): TCP accept loop now correctly handles CLOSE_WAIT transitions and
+  half-open sockets that transition back to the LISTEN state.
+  [#200](https://github.com/tailscale/tailscale-rs/pull/200).
+  [#239](https://github.com/tailscale/tailscale-rs/pull/239).
+- Fixed (ts_runtime): DERP connectivity is now re-established after a control client reconnect.
+  [#242](https://github.com/tailscale/tailscale-rs/pull/242).
 
 ## [0.3.3](https://github.com/tailscale/tailscale-rs/releases/tag/v0.3.3) - 2026-05-20
 
@@ -51,7 +96,8 @@ Internal release; this version is tagged, but was not published to any package r
 - Added (Rust API, Python, Elixir): `Device::self_node`.
   [#147](https://github.com/tailscale/tailscale-rs/pull/147).
 - Added (Python and Elixir bindings): optional configuration parameters.
-  [#140](https://github.com/tailscale/tailscale-rs/pull/140) and [#148](https://github.com/tailscale/tailscale-rs/pull/148).
+  [#140](https://github.com/tailscale/tailscale-rs/pull/140)
+  and [#148](https://github.com/tailscale/tailscale-rs/pull/148).
 - Fixed (ts_netstack_smoltcp): big improvement to TCP accept performance.
   [#141](https://github.com/tailscale/tailscale-rs/pull/141).
 - Updated MSRV to 1.94.1.
