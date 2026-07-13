@@ -160,6 +160,9 @@ impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc, Kind> Drop
         let table = D::get_table_mut(&mut storage.tables);
         for k in &self.modified {
             table.rebuild_indexes_for_key(k, txn_id, max_transaction_id);
+            // The iterator handed out a `&mut` to this row, so treat it as mutated. Recording
+            // happens here rather than as rows are yielded because the iterator borrows the table.
+            table.record_mutated_key(k, txn_id, max_transaction_id);
         }
     }
 }

@@ -46,7 +46,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         let id = guard.begin_transaction();
 
         Transaction {
-            guard,
+            guard: Some(guard),
             owner,
             id,
             _not_send_or_sync: UnsafeCell::new(()),
@@ -70,7 +70,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         let id = guard.begin_transaction();
 
         Some(Transaction {
-            guard,
+            guard: Some(guard),
             owner,
             id,
             _not_send_or_sync: UnsafeCell::new(()),
@@ -157,7 +157,8 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
 ///
 /// A transaction must not be kept alive over an `await` point. This can lead to deadlock.
 pub struct Transaction<'guard, TableStorage: schema::GeneratedStorage> {
-    pub(crate) guard: RwLockWriteGuard<'guard, Storage<TableStorage>>,
+    /// Invariant: `guard.is_some()` except between commit and drop.
+    pub(crate) guard: Option<RwLockWriteGuard<'guard, Storage<TableStorage>>>,
     pub(crate) owner: Owner,
     id: TxnId,
     // Enforce the transaction is not `Send` or `Sync` so that it isn't accidentally held over an
@@ -167,7 +168,9 @@ pub struct Transaction<'guard, TableStorage: schema::GeneratedStorage> {
 
 impl<'guard, TableStorage: schema::GeneratedStorage> Drop for Transaction<'guard, TableStorage> {
     fn drop(&mut self) {
-        self.guard.rollback_transaction(self.id);
+        if let Some(guard) = &mut self.guard {
+            guard.rollback_transaction(self.id);
+        }
     }
 }
 
@@ -177,7 +180,7 @@ impl<'guard, 'a, TableStorage: schema::GeneratedStorage> Ops<TableStorage>
     type ReadLock = &'a RwLockWriteGuard<'guard, Storage<TableStorage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        &self.guard
+        self.guard.as_ref().unwrap()
     }
 }
 
@@ -192,7 +195,7 @@ impl<'guard, 'a, TableStorage: schema::GeneratedStorage> OpsMut<TableStorage>
     type WriteLock = &'a mut RwLockWriteGuard<'guard, Storage<TableStorage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        &mut self.guard
+        self.guard.as_mut().unwrap()
     }
 }
 
@@ -203,13 +206,14 @@ impl<TableStorage: schema::GeneratedStorage> SingletonOpsMut<TableStorage>
 
 impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableStorage> {
     /// Commit this transaction.
-    ///
-    /// This simply moves and drops the `Transaction` object. It is optional to call and currently
-    /// always succeeds. You can use this method to release the transaction's lock on the store
-    /// without needing an explicit scope.
     pub fn commit(mut self) -> Result<()> {
-        self.guard.commit_transaction(self.id)
-        // drop `self` to release the lock.
+        let id = self.id;
+        let notifications = self.write_lock().commit_transaction(id)?;
+        let guard = self.guard.take().unwrap();
+        let guard = RwLockWriteGuard::downgrade(guard);
+        guard.subscriptions.on_commit(notifications);
+
+        Ok(())
     }
 
     /// Explicitly rollback this transaction.
@@ -300,7 +304,7 @@ impl<'guard, 'txn, 'table, D: TableDesc> Ops<D::Storage>
     type ReadLock = &'table RwLockWriteGuard<'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        &self.txn.guard
+        self.txn.guard.as_ref().unwrap()
     }
 }
 
@@ -310,7 +314,7 @@ impl<'guard, 'txn, 'table, D: TableDesc> OpsMut<D::Storage>
     type WriteLock = &'table mut RwLockWriteGuard<'guard, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        &mut self.txn.guard
+        self.txn.guard.as_mut().unwrap()
     }
 }
 

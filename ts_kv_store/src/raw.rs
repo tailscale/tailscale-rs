@@ -119,6 +119,45 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         // Should never panic since transaction should only fail on index inserts.
         txn.commit().unwrap();
     }
+
+    /// Subscribe to a singleton key-value pair.
+    pub fn subscribe<D: schema::Singleton<Storage = TableStorage>>(
+        &self,
+        subscriber: crate::Subscriber,
+        _send_retained: bool,
+    ) -> Result<crate::Subscription> {
+        let subs = &self.get_read_lock().subscriptions;
+        let id = subs.register_subscription(subscriber)?;
+        subs.create_singleton_subscription::<D>(id);
+
+        Ok(id)
+    }
+
+    /// Subscribe to the whole store.
+    pub fn subscribe_global(&self, subscriber: crate::Subscriber) -> Result<crate::Subscription> {
+        let subs = &self.get_read_lock().subscriptions;
+        let id = subs.register_subscription(subscriber)?;
+        subs.create_global_subscription(id);
+
+        Ok(id)
+    }
+
+    /// Unsubscribe to a singleton key-value pair.
+    pub fn unsubscribe<S: schema::Singleton<Storage = TableStorage>>(
+        &self,
+        subscription: crate::Subscription,
+    ) {
+        self.get_read_lock()
+            .subscriptions
+            .remove_singleton_subscription::<S>(subscription)
+    }
+
+    /// Remove any subscriptions to the whole store.
+    pub fn unsubscribe_global(&self, subscription: crate::Subscription) {
+        self.get_read_lock()
+            .subscriptions
+            .remove_global_subscription(subscription);
+    }
 }
 
 impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage> {
@@ -211,6 +250,41 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// True if the table is empty.
     pub fn is_empty(&self) -> bool {
         <&Self as TabularOps<_>>::is_empty(self)
+    }
+
+    /// Subscribe to the whole table.
+    pub fn subscribe(&self, subscriber: crate::Subscriber) -> Result<crate::Subscription>
+    where
+        D::Key: Send,
+    {
+        let subs = &self.store.get_read_lock().subscriptions;
+        let id = subs.register_subscription(subscriber)?;
+        subs.create_table_subscription_all::<D>(id);
+        Ok(id)
+    }
+
+    /// Unsubscribe from the table (whole table or single key).
+    pub fn unsubscribe(&self, subscription: crate::Subscription) {
+        self.store
+            .get_read_lock()
+            .subscriptions
+            .remove_table_subscription::<D>(subscription);
+    }
+
+    /// Subscribe to a specific key in the table.
+    pub fn subscribe_key<Q>(
+        &self,
+        subscriber: crate::Subscriber,
+        key: D::Key,
+        _send_retained: bool,
+    ) -> Result<crate::Subscription>
+    where
+        D::Key: Send,
+    {
+        let subs = &self.store.get_read_lock().subscriptions;
+        let id = subs.register_subscription(subscriber)?;
+        subs.create_table_subscription::<D>(key, id);
+        Ok(id)
     }
 
     /// Clear a table by removing all its KVs.

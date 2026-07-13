@@ -222,7 +222,7 @@ impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
     type ReadLock = &'a RwLockWriteGuard<'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        &self.txn.guard
+        self.txn.guard.as_ref().unwrap()
     }
 }
 
@@ -232,7 +232,7 @@ impl<'guard, 'txn, 'a, D: IndexDesc> OpsMut<D::Storage>
     type WriteLock = &'a mut RwLockWriteGuard<'guard, Storage<D::Storage>>;
 
     fn write_lock(self) -> Self::WriteLock {
-        &mut self.txn.guard
+        self.txn.guard.as_mut().unwrap()
     }
 }
 
