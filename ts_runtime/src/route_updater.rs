@@ -17,6 +17,8 @@ pub struct RouteUpdater {
     derp_transport_map: DerpTransportMap,
     peer_state: Arc<PeerState>,
     env: Env,
+    /// Prevents building routes until the first `DerpTransportMap` has been processed.
+    is_initialized: bool,
 }
 
 impl RouteUpdater {
@@ -26,8 +28,11 @@ impl RouteUpdater {
             "reconstructing routes for peer update"
         );
 
-        let mut overlay_out = ts_bart::Table::default();
-        let mut underlay_out = HashMap::default();
+        let mut routes = PeerRoutesInner::default();
+        if !self.is_initialized {
+            tracing::debug!("not building routes, derp map unpopulated");
+            return routes;
+        }
 
         for (id, peer) in self.peer_state.peers.peers() {
             let span = tracing::trace_span!(
@@ -46,7 +51,7 @@ impl RouteUpdater {
             match self.derp_transport_map.0.get(&region) {
                 Some(&transport_id) => {
                     span.record("underlay_transport", tracing::field::debug(transport_id));
-                    underlay_out.insert(*id, transport_id);
+                    routes.underlay_routes.insert(*id, transport_id);
                 }
                 None => {
                     tracing::error!("no region stored in multiderp, no underlay route");
@@ -56,14 +61,13 @@ impl RouteUpdater {
             tracing::trace!(routes = ?peer.accepted_routes);
 
             for route in &peer.accepted_routes {
-                overlay_out.insert(*route, OutboundRouteAction::Wireguard(*id));
+                routes
+                    .overlay_out_routes
+                    .insert(*route, OutboundRouteAction::Wireguard(*id));
             }
         }
 
-        PeerRoutesInner {
-            underlay_routes: underlay_out,
-            overlay_out_routes: overlay_out,
-        }
+        routes
     }
 }
 
@@ -86,6 +90,7 @@ impl kameo::Actor for RouteUpdater {
             derp_transport_map: DerpTransportMap::default(),
             peer_state: Default::default(),
             env,
+            is_initialized: false,
         })
     }
 }
@@ -100,6 +105,7 @@ pub struct PeerRouteUpdate {
     pub inner: Arc<PeerRoutesInner>,
 }
 
+#[derive(Default)]
 pub struct PeerRoutesInner {
     pub underlay_routes: HashMap<PeerId, UnderlayTransportId>,
     pub overlay_out_routes: ts_bart::Table<OutboundRouteAction>,
@@ -136,6 +142,7 @@ impl Message<DerpTransportMap> for RouteUpdater {
         tracing::debug!("derp transport map changed, building new routes");
 
         self.derp_transport_map = msg;
+        self.is_initialized = true;
 
         let new_routes = self.build_routes();
         if let Err(e) = self
