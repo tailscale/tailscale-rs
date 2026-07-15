@@ -11,7 +11,7 @@ use crate::{
     endpoint::Event,
     macs::{MACReceiver, MACSender, Mac},
     messages::*,
-    session::{BidiSession, BidiSessionKeys},
+    session::BidiSession,
     time::TAI64N,
 };
 
@@ -19,7 +19,7 @@ const PROLOGUE: &[u8] = b"WireGuard v1 zx2c4 Jason@zx2c4.com";
 
 /// A partially completed incoming handshake.
 pub struct ReceivedHandshake {
-    send_id: SessionId,
+    responder_to_initiator_id: SessionId,
     noise: ikpsk2::ReceivedHandshake,
     // Info decrypted from the HandshakeInitiation
     pub timestamp: TAI64N,
@@ -40,7 +40,7 @@ impl ReceivedHandshake {
             ikpsk2::ReceivedHandshake::new(&mut pkt.noise, PROLOGUE, my_static.into())?;
 
         Some(ReceivedHandshake {
-            send_id: pkt.sender_id,
+            responder_to_initiator_id: pkt.sender_id,
             noise,
             timestamp: *timestamp,
         })
@@ -49,26 +49,23 @@ impl ReceivedHandshake {
     /// Finalize the handshake, producing a HandshakeResponse.
     pub fn respond(
         self,
-        session_id: SessionId,
+        initiator_to_responder_id: SessionId,
         psk: &Psk,
         macs: &MACSender,
         now: Instant,
     ) -> (BidiSession, PacketMut) {
         let mut response = HandshakeResponse {
-            sender_id: session_id,
-            receiver_id: self.send_id,
+            sender_id: initiator_to_responder_id,
+            receiver_id: self.responder_to_initiator_id,
             ..Default::default()
         };
 
         let session_keys = self.noise.finish(psk, response.noise.as_mut_bytes());
 
         let session = BidiSession::new(
-            BidiSessionKeys {
-                send_key: session_keys.send,
-                send_id: self.send_id,
-                recv_key: session_keys.recv,
-                recv_id: session_id,
-            },
+            session_keys,
+            initiator_to_responder_id,
+            self.responder_to_initiator_id,
             now,
         );
         let mut pkt = PacketMut::new(size_of::<HandshakeResponse>());
@@ -104,7 +101,7 @@ pub fn initiate_handshake(
     );
 
     let ret = SentHandshake {
-        id: session_id,
+        responder_to_initiator_id: session_id,
         noise,
     };
 
@@ -113,7 +110,7 @@ pub fn initiate_handshake(
 
 /// A partially completed sent handshake.
 pub struct SentHandshake {
-    pub id: SessionId,
+    pub responder_to_initiator_id: SessionId,
     noise: ikpsk2::SentHandshake<TAI64N>,
 }
 
@@ -138,7 +135,7 @@ impl Handshake {
     /// Return the session id of the handshake, if any.
     pub(crate) fn session_id(&self) -> Option<SessionId> {
         match self {
-            Handshake::Initiated(handshake, ..) => Some(handshake.id),
+            Handshake::Initiated(handshake, ..) => Some(handshake.responder_to_initiator_id),
             Handshake::Responded(tentative) => Some(tentative.recv_id()),
             Handshake::None => None,
         }
@@ -216,12 +213,9 @@ impl Handshake {
             };
 
         let session = BidiSession::new(
-            BidiSessionKeys {
-                send_key: session_keys.send,
-                send_id: packet.sender_id,
-                recv_key: session_keys.recv,
-                recv_id: sent_handshake.id,
-            },
+            session_keys,
+            packet.sender_id,
+            sent_handshake.responder_to_initiator_id,
             now,
         );
 

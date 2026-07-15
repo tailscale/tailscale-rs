@@ -3,7 +3,7 @@ use std::{io::ErrorKind, marker::PhantomData};
 use bytes::{Buf, BufMut, BytesMut};
 use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, Key, KeyInit, Nonce};
 use tokio_util::codec::{Decoder, Encoder};
-use ts_noise::core::Session;
+use ts_noise::core::{Role, Session};
 use zerocopy::{IntoBytes, TryCastError, TryFromBytes, network_endian::U16};
 
 use crate::messages::{Header, MessageType};
@@ -56,9 +56,15 @@ impl Decoder for BiCodec {
 
 impl From<Session> for BiCodec {
     fn from(session: Session) -> Self {
-        Self {
-            tx: Codec::<Tx>::from(session.send),
-            rx: Codec::<Rx>::from(session.recv),
+        match session.role {
+            Role::Initiator => Self {
+                tx: Codec::<Tx>::from(session.initiator_to_responder),
+                rx: Codec::<Rx>::from(session.responder_to_initiator),
+            },
+            Role::Responder => Self {
+                tx: Codec::<Tx>::from(session.responder_to_initiator),
+                rx: Codec::<Rx>::from(session.initiator_to_responder),
+            },
         }
     }
 }

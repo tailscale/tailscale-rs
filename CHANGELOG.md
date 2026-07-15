@@ -16,8 +16,6 @@ Put changes for the upcoming release here!
   anywhere by default, so this is only a concern in non-default configurations. Users
   of the C bindings who persisted logs should provision new nodes with fresh keys and
   invalidate existing credentials.
-- Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits,
-  rather than panic.
 - **Security** (ts_netmon, Windows): Fix use-after-free in Windows network monitoring
   code. During client shutdown, there is a short window in which network change
   notifications could fire with an already freed context pointer.
@@ -30,6 +28,9 @@ Put changes for the upcoming release here!
   Private keys continue to have serde implementations for serializing to/from disk.
 - **Security** (ts_elixir): don't print fields of the Keystate struct when inspected.
   Previously a GenServer crash would print the keystate in logs.
+- Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits,
+  rather than panic.
+- Fixed(ts_tunnel): adjust session rotation logic to match the spec (#286)
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
