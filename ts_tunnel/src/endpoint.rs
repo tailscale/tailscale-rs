@@ -619,135 +619,388 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests {
+    use zerocopy::TryFromBytes;
+
     use super::*;
-    use crate::config::PeerConfig;
+    use crate::{
+        config::PeerConfig,
+        messages::{HandshakeInitiation, TransportDataHeader},
+    };
+
+    /// Matches different shapes of packets.
+    #[derive(Clone)]
+    enum PacketMatcher {
+        /// Packet must be byte for byte identical to an expected packet.
+        Exact(PacketMut),
+        /// Packet must have the right size for a handshake initiation message.
+        HandshakeInitiation,
+        /// Packet must have the right size for a handshake response message.
+        HandshakeResponse,
+        /// Packet must be large enough to potentially be an encrypted transport data message.
+        TransportData,
+    }
+
+    impl PacketMatcher {
+        fn assert_matches(&self, packet: &PacketMut) {
+            match self {
+                PacketMatcher::Exact(want) => assert_eq!(want, packet),
+                PacketMatcher::HandshakeInitiation => {
+                    HandshakeInitiation::try_ref_from_bytes(packet.as_ref()).unwrap();
+                }
+                PacketMatcher::HandshakeResponse => {
+                    HandshakeResponse::try_ref_from_bytes(packet.as_ref()).unwrap();
+                }
+                PacketMatcher::TransportData => {
+                    TransportDataHeader::try_ref_from_prefix(packet.as_ref()).unwrap();
+                }
+            }
+        }
+    }
+
+    impl From<PacketMut> for PacketMatcher {
+        fn from(v: PacketMut) -> Self {
+            PacketMatcher::Exact(v)
+        }
+    }
+
+    /// Create a test packet consisting of four copies of the given byte.
+    pub fn packet(v: u8) -> PacketMut {
+        PacketMut::from(vec![v; 4])
+    }
+
+    /// A clock that creates instants relative to an arbitrary start point.
+    struct TestClock {
+        start: Instant,
+    }
+
+    impl TestClock {
+        pub fn new() -> Self {
+            Self {
+                start: Instant::now(),
+            }
+        }
+
+        /// Return an instant that is the given number of seconds after the arbitrary epoch.
+        pub fn at(&self, secs: u64) -> Instant {
+            self.start + Duration::from_secs(secs)
+        }
+    }
+
+    /// Test helper for a pair of endpoints configured to talk to each other.
+    ///
+    /// As the endpoints send and receive traffic, the helper keeps track of what
+    /// packets are currently "on the wire" between the peers in each direction, as well
+    /// as the cleartext packets that have been delivered locally to each endpoint.
+    ///
+    /// Assertion helpers let tests inspect the packets on the wire that have not yet
+    /// been received by the destination peer, as well as the post-decryption delivered
+    /// packets.
+    struct EndpointPair {
+        a: Endpoint,
+        b: Endpoint,
+
+        a_to_b: Vec<PacketMut>,
+        b_to_a: Vec<PacketMut>,
+
+        received_at_a: Vec<PacketMut>,
+        received_at_b: Vec<PacketMut>,
+    }
+
+    impl EndpointPair {
+        pub fn new() -> Self {
+            let key_a = NodeKeyPair::new();
+            let key_b = NodeKeyPair::new();
+            let mut a = Endpoint::new(key_a.clone());
+            let mut b = Endpoint::new(key_b.clone());
+            let psk = rand::random();
+            assert!(
+                a.upsert_peer(
+                    PeerId(1),
+                    PeerConfig {
+                        key: key_b.public,
+                        psk,
+                    }
+                )
+                .is_none()
+            );
+            assert!(
+                b.upsert_peer(
+                    PeerId(1),
+                    PeerConfig {
+                        key: key_a.public,
+                        psk,
+                    }
+                )
+                .is_none()
+            );
+            Self {
+                a,
+                b,
+                a_to_b: Vec::new(),
+                b_to_a: Vec::new(),
+                received_at_a: Vec::new(),
+                received_at_b: Vec::new(),
+            }
+        }
+
+        fn send(
+            now: Instant,
+            sender: &mut Endpoint,
+            packets: impl IntoIterator<Item = PacketMut>,
+            out: &mut Vec<PacketMut>,
+        ) {
+            let id = PeerId(1);
+            let mut acts = sender.send(now, HashMap::from([(id, packets.into_iter().collect())]));
+            match acts.to_peers.len() {
+                0 => (),
+                1 => {
+                    out.extend(acts.to_peers.remove(&id).unwrap());
+                }
+                _ => panic!(
+                    "got packets for {} peers, expected 0 or 1",
+                    acts.to_peers.len()
+                ),
+            }
+        }
+
+        fn recv(
+            now: Instant,
+            receiver: &mut Endpoint,
+            packets: &mut Vec<PacketMut>,
+            to_local: &mut Vec<PacketMut>,
+            to_peer: &mut Vec<PacketMut>,
+        ) {
+            let id = PeerId(1);
+            let mut acts = receiver.recv(now, std::mem::take(packets));
+            match acts.to_peers.len() {
+                0 => (),
+                1 => to_peer.extend(acts.to_peers.remove(&id).unwrap()),
+                _ => panic!(
+                    "got packets for {} peers, expected 1 or 0",
+                    acts.to_peers.len()
+                ),
+            }
+            match acts.to_local.len() {
+                0 => (),
+                1 => to_local.extend(acts.to_local.remove(&id).unwrap()),
+                _ => panic!(
+                    "got packets from {} peers, expected 0 or 1",
+                    acts.to_local.len()
+                ),
+            }
+        }
+
+        fn assert_packets<T: Into<PacketMatcher>>(
+            packets: &[PacketMut],
+            matchers: impl IntoIterator<Item = T>,
+        ) {
+            let matchers = matchers.into_iter();
+            assert_eq!(packets.len(), matchers.size_hint().0);
+            for (packet, matcher) in packets.iter().zip(matchers) {
+                matcher.into().assert_matches(packet);
+            }
+        }
+
+        /// Send cleartext packets from endpoint A to endpoint B.
+        ///
+        /// This may result in the queuing of encrypted packets from A to B, which can be
+        /// inspected with [`EndpointPair::assert_a_to_b`].
+        pub fn send_from_a(&mut self, now: Instant, packets: impl IntoIterator<Item = PacketMut>) {
+            EndpointPair::send(now, &mut self.a, packets, &mut self.a_to_b);
+        }
+
+        /// Send cleartext packets from endpoint B to endpoint A.
+        ///
+        /// This may result in the queuing of encrypted packets from B to A, which can be
+        /// inspected with [`EndpointPair::assert_b_to_a`].
+        pub fn send_from_b(&mut self, now: Instant, packets: impl IntoIterator<Item = PacketMut>) {
+            EndpointPair::send(now, &mut self.b, packets, &mut self.b_to_a);
+        }
+
+        /// Deliver all queued packets in transit from B to A.
+        ///
+        /// This may result in the queuing of encrypted packets from A to B, which can be inspected
+        /// with [`EndpointPair::assert_a_to_b`], as well as locally delivered cleartext which can
+        /// be inspected with [`EndpointPair::assert_recieved_at_a`].
+        pub fn recv_at_a(&mut self, now: Instant) {
+            EndpointPair::recv(
+                now,
+                &mut self.a,
+                &mut self.b_to_a,
+                &mut self.received_at_a,
+                &mut self.a_to_b,
+            );
+        }
+
+        /// Deliver all queued packets in transit from A to B.
+        ///
+        /// This may result in the queuing of encrypted packets from B to A, which can be inspected
+        /// with [`EndpointPair::assert_b_to_a`], as well as locally delivered cleartext which can
+        /// be inspected with [`EndpointPair::assert_recieved_at_b`].
+        pub fn recv_at_b(&mut self, now: Instant) {
+            EndpointPair::recv(
+                now,
+                &mut self.b,
+                &mut self.a_to_b,
+                &mut self.received_at_b,
+                &mut self.b_to_a,
+            );
+        }
+
+        /// Assert that packets currently in flight from A to B match the expected packet shapes.
+        ///
+        /// The inspection is non-destructive, in-flight packets will be delivered by the next call
+        /// to [`EndpointPair::recv_at_b`].
+        pub fn assert_a_to_b<T: Into<PacketMatcher>>(&self, packets: impl IntoIterator<Item = T>) {
+            EndpointPair::assert_packets(&self.a_to_b, packets);
+        }
+
+        /// Assert that packets currently in flight from B to A match the expected packet shapes.
+        ///
+        /// The inspection is non-destructive, in-flight packets will be delivered by the next call
+        /// to [`EndpointPair::recv_at_a`].
+        pub fn assert_b_to_a<T: Into<PacketMatcher>>(&self, packets: impl IntoIterator<Item = T>) {
+            EndpointPair::assert_packets(&self.b_to_a, packets);
+        }
+
+        /// Assert that data packets decrypted at A match the expected packet shapes.
+        ///
+        /// The receive queue is cleared upon inspection.
+        pub fn assert_received_at_a<T: Into<PacketMatcher>>(
+            &mut self,
+            packets: impl IntoIterator<Item = T>,
+        ) {
+            EndpointPair::assert_packets(&self.received_at_a, packets);
+            self.received_at_a.clear();
+        }
+
+        /// Assert that data packets decrypted at B match the expected packet shapes.
+        ///
+        /// The receive queue is cleared upon inspection.
+        pub fn assert_received_at_b<T: Into<PacketMatcher>>(
+            &mut self,
+            packets: impl IntoIterator<Item = T>,
+        ) {
+            EndpointPair::assert_packets(&self.received_at_b, packets);
+            self.received_at_b.clear();
+        }
+    }
+
+    /// Assert that the given packet slice is empty.
+    pub fn assert_no_packets(packets: &[PacketMut]) {
+        assert_eq!(packets.len(), 0);
+    }
 
     #[test]
     fn test_one_peer() {
-        let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
-        let psk = rand::random();
-        let now = Instant::now();
+        use PacketMatcher::*;
 
-        let (mut a_ep, mut b_ep) = (
-            Endpoint::new(a_static.clone()),
-            Endpoint::new(b_static.clone()),
-        );
-
-        let a_peer = PeerId(1);
-        let b_peer = PeerId(1);
-
-        assert!(
-            a_ep.upsert_peer(
-                a_peer,
-                PeerConfig {
-                    key: b_static.public,
-                    psk,
-                },
-            )
-            .is_none()
-        );
-
-        assert!(
-            b_ep.upsert_peer(
-                b_peer,
-                PeerConfig {
-                    key: a_static.public,
-                    psk,
-                },
-            )
-            .is_none()
-        );
-
-        let a_to_b_packets = [
-            PacketMut::from(vec![1, 2, 3, 4]),
-            PacketMut::from(vec![5, 6, 7, 8]),
-        ];
+        let mut p = EndpointPair::new();
+        let t = TestClock::new();
 
         // A sends to B. Results in a handshake initiation being transmitted, not the
         // requested packet (which gets buffered internally by the endpoint).
-        let to_send = HashMap::from([(a_peer, Vec::from([a_to_b_packets[0].clone()]))]);
-        let a_acts = a_ep.send(now, to_send);
-        assert_eq!(
-            a_acts.to_peers.len(),
-            1,
-            "communicating with unexpected number of peers"
-        );
-        let packets = a_acts
-            .to_peers
-            .get(&a_peer)
-            .expect("should have packets for A's peer");
-        assert_eq!(packets.len(), 1, "unexpected number of packets for peer");
+        p.send_from_a(t.at(0), [packet(1), packet(2)]);
+        p.assert_a_to_b([HandshakeInitiation]);
 
-        // A sends another packet. No further activity, but pkt2 gets queued as well.
-        let to_send = HashMap::from([(a_peer, Vec::from([a_to_b_packets[1].clone()]))]);
-        let a_acts2 = a_ep.send(now, to_send);
-        assert_eq!(a_acts2, SendResult::default());
+        // A sends another packet. No activity on the wire.
+        p.send_from_a(t.at(1), [packet(3)]);
+        p.assert_a_to_b([HandshakeInitiation]);
 
         // B processes the handshake and responds. No packets delivered to B.
-        let b_acts = b_ep.recv(now, packets.clone());
-        assert_eq!(b_acts.to_local.len(), 0, "unexpected received message");
-        assert_eq!(
-            b_acts.to_peers.len(),
-            1,
-            "unexpected number of sent messages"
-        );
-        let packets = b_acts
-            .to_peers
-            .get(&b_peer)
-            .expect("should have packets for B's peer");
-        assert_eq!(packets.len(), 1, "unexpected packet count for B's peer");
+        p.recv_at_b(t.at(2));
+        p.assert_b_to_a([HandshakeResponse]);
+        assert_no_packets(&p.received_at_b);
 
-        // A processes the response, and sends the two queued packets.
-        let a_acts3 = a_ep.recv(now, packets.clone());
-        assert_eq!(a_acts3.to_local.len(), 0, "unexpected received message");
-        assert_eq!(
-            a_acts3.to_peers.len(),
-            1,
-            "unexpected number of sent messages"
-        );
-        let packets = a_acts3
-            .to_peers
-            .get(&a_peer)
-            .expect("should have packets for A's peer");
-        assert_eq!(packets.len(), 2, "wrong number of packets for A's peer");
+        // A processes the response, and sends its queued packets.
+        p.recv_at_a(t.at(3));
+        p.assert_a_to_b([TransportData, TransportData, TransportData]);
+        assert_no_packets(&p.received_at_a);
 
-        // B receives transport messages.
-        let b_acts = b_ep.recv(now, packets.clone());
-        assert_eq!(b_acts.to_local.len(), 1, "didn't receive message");
-        let packets = b_acts
-            .to_local
-            .get(&b_peer)
-            .expect("should have packets from B's peer");
-        assert_eq!(packets, &a_to_b_packets, "wrong packets received from A",);
-        assert_eq!(b_acts.to_peers.len(), 0, "unexpected sent message");
+        // B receives
+        p.recv_at_b(t.at(4));
+        p.assert_received_at_b([packet(1), packet(2), packet(3)]);
+        assert_no_packets(&p.b_to_a);
 
-        // B sends transport message
-        let b_to_a_packet = PacketMut::from(vec![9, 10, 11, 12]);
-        let to_send = HashMap::from([(b_peer, vec![b_to_a_packet.clone()])]);
-        let b_acts = b_ep.send(now, to_send);
-        assert_eq!(
-            b_acts.to_peers.len(),
-            1,
-            "unexpected number of sent messages"
-        );
-        let packets = b_acts
-            .to_peers
-            .get(&b_peer)
-            .expect("should have packets for B's peer");
-        assert_eq!(packets.len(), 1, "unexpected packet count for B's peer");
+        // B sends
+        p.send_from_b(t.at(5), [packet(4)]);
+        p.assert_b_to_a([TransportData]);
 
         // A receives
-        let a_acts = a_ep.recv(now, packets.clone());
-        assert_eq!(a_acts.to_local.len(), 1, "didn't receive message");
-        let packets = a_acts
-            .to_local
-            .get(&a_peer)
-            .expect("should have packets from A's peer");
-        assert_eq!(
-            packets,
-            &[b_to_a_packet],
-            "wrong packets received from A's peer"
-        );
-        assert_eq!(a_acts.to_peers.len(), 0, "unexpected sent message");
+        p.recv_at_a(t.at(6));
+        p.assert_received_at_a([packet(4)]);
+        assert_no_packets(&p.a_to_b);
+    }
+
+    #[test]
+    fn test_rotation_initiator() {
+        use PacketMatcher::*;
+
+        let mut p = EndpointPair::new();
+        let t = TestClock::new();
+
+        // A sends a packet to establish a session.
+        p.send_from_a(t.at(0), [packet(1)]);
+        p.recv_at_b(t.at(1));
+        p.recv_at_a(t.at(2));
+        p.recv_at_b(t.at(3));
+        assert_no_packets(&p.received_at_a);
+        p.assert_received_at_b([packet(1)]);
+        assert_no_packets(&p.a_to_b);
+        assert_no_packets(&p.b_to_a);
+
+        // After session becomes stale, A sends a packet, causing a new handshake.
+        p.send_from_a(t.at(125), [packet(2)]);
+        p.assert_a_to_b([TransportData, HandshakeInitiation]);
+        // B receives packet and responds to handshake.
+        p.recv_at_b(t.at(126));
+        p.assert_received_at_b([packet(2)]);
+        p.assert_b_to_a([HandshakeResponse]);
+        // A receives handshake response, sends empty confirmation packet.
+        p.recv_at_a(t.at(127));
+        assert_no_packets(&p.received_at_a);
+        p.assert_a_to_b([TransportData]);
+        // B receives confirmation, finalizes rotation.
+        p.recv_at_b(t.at(128));
+        // TODO: assert that no packets are delivered. See https://github.com/tailscale/tailscale-rs/issues/287
+        p.assert_received_at_b([PacketMut::new(0)]);
+    }
+
+    #[test]
+    fn test_rotation_responder() {
+        use PacketMatcher::*;
+
+        let mut p = EndpointPair::new();
+        let t = TestClock::new();
+
+        // A sends a packet to establish a session.
+        p.send_from_a(t.at(0), [packet(1)]);
+        p.recv_at_b(t.at(1));
+        p.recv_at_a(t.at(2));
+        p.recv_at_b(t.at(3));
+        assert_no_packets(&p.received_at_a);
+        p.assert_received_at_b([packet(1)]);
+        assert_no_packets(&p.a_to_b);
+        assert_no_packets(&p.b_to_a);
+
+        // After session becomes stale, B sends a packet.
+        p.send_from_b(t.at(125), [packet(2)]);
+        p.assert_b_to_a([TransportData]);
+        // A receives packet, initiates handshake.
+        p.recv_at_a(t.at(126));
+        p.assert_received_at_a([packet(2)]);
+        p.assert_a_to_b([HandshakeInitiation]);
+        // B receives handshake init, sends response.
+        p.recv_at_b(t.at(127));
+        assert_no_packets(&p.received_at_b);
+        p.assert_b_to_a([HandshakeResponse]);
+        // A receives response, sends confirmation
+        p.recv_at_a(t.at(128));
+        assert_no_packets(&p.received_at_a);
+        p.assert_a_to_b([TransportData]);
+        // B receives confirmation, finalizes rotation.
+        p.recv_at_b(t.at(129));
+        // TODO: assert that no packets are delivered. See https://github.com/tailscale/tailscale-rs/issues/287
+        p.assert_received_at_b([PacketMut::new(0)]);
     }
 }
