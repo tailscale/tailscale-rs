@@ -18,7 +18,7 @@ pub struct RouteUpdater {
     peer_state: Arc<PeerState>,
     env: Env,
     /// Prevents building routes until the first `DerpTransportMap` has been processed.
-    is_initialized: bool,
+    seen_derp: bool,
 }
 
 impl RouteUpdater {
@@ -29,7 +29,7 @@ impl RouteUpdater {
         );
 
         let mut routes = PeerRoutesInner::default();
-        if !self.is_initialized {
+        if !self.seen_derp {
             tracing::debug!("not building routes, derp map unpopulated");
             return routes;
         }
@@ -90,7 +90,7 @@ impl kameo::Actor for RouteUpdater {
             derp_transport_map: DerpTransportMap::default(),
             peer_state: Default::default(),
             env,
-            is_initialized: false,
+            seen_derp: false,
         })
     }
 }
@@ -142,7 +142,7 @@ impl Message<DerpTransportMap> for RouteUpdater {
         tracing::debug!("derp transport map changed, building new routes");
 
         self.derp_transport_map = msg;
-        self.is_initialized = true;
+        self.seen_derp = true;
 
         let new_routes = self.build_routes();
         if let Err(e) = self
