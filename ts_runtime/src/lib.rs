@@ -24,6 +24,7 @@ mod multiderp;
 mod netmon;
 mod netstack_actor;
 mod packetfilter;
+mod path_discoverer;
 pub mod peer_tracker;
 mod registry;
 mod retained_bus;
@@ -98,6 +99,9 @@ impl kameo::Actor for Runtime {
             .spawn()
             .await;
         stunner::Stunner::supervise(&slf, env.clone()).spawn().await;
+        path_discoverer::PathDiscoverer::supervise(&slf, env.clone())
+            .spawn()
+            .await;
 
         if let Some(mon) = ts_netmon::platform_mon() {
             netmon::NetmonActor::supervise(&slf, (env.clone(), Arc::new(mon)))
