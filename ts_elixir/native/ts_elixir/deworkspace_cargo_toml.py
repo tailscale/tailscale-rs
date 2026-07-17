@@ -65,7 +65,14 @@ def main():
                     value['git'] = f'https://github.com/tailscale/tailscale-rs'
                     value['rev'] = args.repo_sha
                 else:
-                    value['version'] = wksp_deps[dep]['version']
+                    wksp_dep = wksp_deps[dep]
+
+                    if type(wksp_dep) == str:
+                        value['version'] = wksp_dep
+                    elif type(wksp_dep) == dict:
+                        value['version'] = wksp_dep['version']
+                    else:
+                        raise ValueError(f'dep "{dep}" has unknown dep format in workspace Cargo.toml')
 
                 del value['workspace']
 
