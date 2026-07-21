@@ -50,8 +50,6 @@ pub type DiscoPacket = yoke::Yoke<&'static Packet<Plaintext>, ts_packet::Packet>
 
 #[derive(Clone)]
 pub struct IncomingDiscoMsg {
-    // TODO(npry): used as part of direct transport
-    #[expect(dead_code)]
     pub sender: DynEndpoint,
     pub packet: DiscoPacket,
 }
