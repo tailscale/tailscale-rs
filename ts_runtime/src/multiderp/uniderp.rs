@@ -97,6 +97,7 @@ impl kameo::Actor for Uniderp {
         let runner = Runner {
             region_id: args.region_id,
             region: args.region,
+            transport_id,
             peer_db: Arc::new(RwLock::new(None)),
             home_derp_rx,
             to_dataplane,
@@ -219,6 +220,7 @@ impl Message<DerpLatencyMeasurement> for Uniderp {
 struct Runner {
     region_id: RegionId,
     region: DerpRegion,
+    transport_id: UnderlayTransportId,
     home_derp_rx: watch::Receiver<bool>,
     to_dataplane: Tx<FromUnderlay>,
     from_dataplane: Arc<Mutex<Rx<ToUnderlay>>>,
@@ -277,7 +279,7 @@ impl Runner {
         Ok(transport)
     }
 
-    #[tracing::instrument(skip_all, level = "trace")]
+    #[tracing::instrument(skip_all, fields(transport_id = ?self.transport_id), level = "trace")]
     async fn run_transport(
         &mut self,
         transport: impl UnderlayTransport<Error = ts_derp::Error>,
@@ -301,7 +303,7 @@ impl Runner {
 
                         tracing::trace!(parent: &span, ?ep, len = pkts.len(), "packets from derp server");
 
-                        let Ok(()) = self.to_dataplane.send((ep, pkts)) else {
+                        let Ok(()) = self.to_dataplane.send((self.transport_id, ep, pkts)) else {
                             tracing::error!(parent: &span, "underlay receive channel closed");
                             break;
                         };

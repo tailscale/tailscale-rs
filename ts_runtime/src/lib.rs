@@ -105,6 +105,7 @@ impl kameo::Actor for Runtime {
             (
                 env.clone(),
                 Default::default(),
+                netstack_id,
                 netstack_up,
                 Arc::new(Mutex::new(netstack_down)),
             ),

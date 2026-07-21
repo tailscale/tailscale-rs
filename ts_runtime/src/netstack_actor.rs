@@ -11,6 +11,7 @@ use netstack::{
 use tokio::sync::Mutex;
 use ts_dataplane::async_tokio::{FromOverlay, Rx, ToOverlay, Tx};
 use ts_packet::PacketMut;
+use ts_transport::OverlayTransportId;
 
 use crate::{Error, env::Env, task::Task};
 
@@ -22,13 +23,14 @@ impl kameo::Actor for NetstackActor {
     type Args = (
         Env,
         netstack::netcore::Config,
+        OverlayTransportId,
         Tx<FromOverlay>,
         Arc<Mutex<Rx<ToOverlay>>>,
     );
     type Error = Error;
 
     async fn on_start(
-        (env, config, netstack_up, netstack_down): Self::Args,
+        (env, config, id, netstack_up, netstack_down): Self::Args,
         slf: ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
@@ -49,7 +51,7 @@ impl kameo::Actor for NetstackActor {
 
         Task::spawn_link(&slf, async move {
             while let Some(buf) = netstack_down_rx.recv_async().await {
-                if netstack_up.send(vec![buf.to_vec().into()]).is_err() {
+                if netstack_up.send((id, vec![buf.to_vec().into()])).is_err() {
                     break;
                 }
             }
