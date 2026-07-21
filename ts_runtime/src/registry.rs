@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use kameo::{
     Reply,
-    actor::{ActorRef, WeakActorRef},
+    actor::{ActorRef, Spawn, WeakActorRef},
     error::{BoxSendError, Infallible, SendError},
     message::{Context, Message},
     reply::{BoxReplySender, DelegatedReply, ForwardedReply, ReplyError},
@@ -249,6 +249,56 @@ where
     }
 }
 
+/// Request to ensure a given actor exists in the registry.
+///
+/// If the actor doesn't exist, it'll be created with the args produced by the contained function.
+/// The reply type is whether an actor was created and the ref to the actor.
+pub struct Ensure<A, F, Fut> {
+    id: Id,
+    create: F,
+    _phantom: PhantomData<(A, Fut)>,
+}
+
+impl<A, F, Fut> Ensure<A, F, Fut> {
+    /// Construct an [`Ensure`] message.
+    pub fn new(name: Option<SmolStr>, mk_args: F) -> Self
+    where
+        A: Any,
+    {
+        Self {
+            id: Id::new::<A>(name),
+            create: mk_args,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<A, F, Fut> Message<Ensure<A, F, Fut>> for Registry
+where
+    A: kameo::Actor,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = A::Args> + Send + 'static,
+{
+    type Reply = (bool, ActorRef<A>);
+
+    async fn handle(
+        &mut self,
+        msg: Ensure<A, F, Fut>,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> (bool, ActorRef<A>) {
+        if let Some(aref) = self.actors.get(&msg.id) {
+            return (true, aref.downcast_ref().cloned().unwrap());
+        }
+
+        let args = (msg.create)().await;
+        let aref = A::spawn(args);
+
+        self.actors.insert(msg.id, Box::new(aref.downgrade()));
+
+        (true, aref)
+    }
+}
+
 /// Request to forward a message of type `M` to an actor of type `A` under a particular registered
 /// name.
 pub struct Forward<A, M> {
@@ -350,7 +400,8 @@ where
 {
     type Reply = RegistryForward<M, A::Reply>;
 
-    #[tracing::instrument(skip_all, fields(msgty = type_name::<M>(), actor = type_name::<A>(), name = %msg.id.name))]
+    #[tracing::instrument(skip_all, fields(msgty = type_name::<M>(), actor = type_name::<A>(), name = %msg.id.name
+    ))]
     async fn handle(
         &mut self,
         msg: Forward<A, M>,
