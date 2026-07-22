@@ -6,6 +6,12 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- **Breaking** (Rust API, lang bindings, ts_control): Support for `ephemeral`
+  config option. This was previously effectively hardcoded to `true`, the default
+  is now `false` (tailscale-rs nodes are _not_ ephemeral unless you explicitly
+  configure them to be).
+  [#292](https://github.com/tailscale/tailscale-rs/pull/292).
+
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
 - Added (Rust API): Experimental support for user-defined tailnet SSH servers using
