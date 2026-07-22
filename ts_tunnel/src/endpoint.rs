@@ -1,5 +1,5 @@
 use core::time::Duration;
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, iter::once, time::Instant};
 
 use itertools::Itertools;
 use ts_keys::{NodeKeyPair, NodePublicKey};
@@ -68,9 +68,9 @@ impl Peer {
         now: Instant,
         out: &mut SendResult,
     ) {
-        if let Some(mut packets) = self.session.send(packets, &mut endpoint.ids, now) {
+        if let Some(packets) = self.session.send(packets, &mut endpoint.ids, now) {
             tracing::trace!("enqueueing packets to peer");
-            out.queue_to_peer(self.id).append(&mut packets);
+            out.queue_to_peer(self.id, packets);
             // Fall through to check if the session is in need of rotation.
         }
 
@@ -156,8 +156,8 @@ impl Peer {
             return;
         };
 
-        let (expiry, mut packets) = self.session.activate(session, &mut endpoint.ids, now, true);
-        out.queue_to_peer(self.id).append(&mut packets);
+        let (expiry, packets) = self.session.activate(session, &mut endpoint.ids, now, true);
+        out.queue_to_peer(self.id, packets);
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         };
@@ -177,9 +177,9 @@ impl Peer {
         out: &mut RecvResult,
     ) {
         if let Some(recv) = self.session.get_recv(session_id, &mut endpoint.ids, now) {
-            let mut packets = recv.decrypt(packets);
+            let packets = recv.decrypt(packets);
             if !packets.is_empty() {
-                out.queue_to_local(self.id).append(&mut packets);
+                out.queue_to_local(self.id, packets);
                 self.schedule_keepalive(&mut endpoint.scheduler, now);
                 if self.session.needs_rotation(now) {
                     self.start_handshake(endpoint, now, out);
@@ -188,19 +188,19 @@ impl Peer {
             return;
         }
 
-        let Some((session, mut packets)) = self.handshake.confirm(session_id, packets) else {
+        let Some((session, packets)) = self.handshake.confirm(session_id, packets) else {
             // TODO: log
             return;
         };
 
-        out.queue_to_local(self.id).append(&mut packets);
+        out.queue_to_local(self.id, packets);
         self.schedule_keepalive(&mut endpoint.scheduler, now);
 
-        let (expiry, mut packets_for_peer) =
+        let (expiry, packets_for_peer) =
             self.session
                 .activate(session, &mut endpoint.ids, now, false);
         if !packets_for_peer.is_empty() {
-            out.queue_to_peer(self.id).append(&mut packets_for_peer);
+            out.queue_to_peer(self.id, packets_for_peer);
         }
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
@@ -241,7 +241,7 @@ impl Peer {
             &self.cookie_sender,
             now,
         );
-        out.queue_to_peer(self.id).push(packet);
+        out.queue_to_peer(self.id, once(packet));
     }
 
     fn handshake_timeout(
@@ -271,7 +271,7 @@ impl Peer {
             tracing::trace!("send keepalive: session expired, skipping");
             return;
         };
-        out.queue_to_peer(self.id).push(packet);
+        out.queue_to_peer(self.id, once(packet));
 
         self.keepalive = None;
 
@@ -320,7 +320,7 @@ impl Peer {
 
         tracing::debug!(peer_id = ?self.id, ?session_id, "enqueue handshake start");
 
-        out.queue_to_peer(self.id).push(packet);
+        out.queue_to_peer(self.id, once(packet));
         let tr = TimeRange::new_around(now + HANDSHAKE_TIMEOUT, Duration::from_millis(500));
 
         let timeout = endpoint.scheduler.add(tr, Event::HandshakeTimeout(self.id));
@@ -554,7 +554,7 @@ impl Endpoint {
 }
 
 trait QueueToPeer {
-    fn queue_to_peer(&mut self, peer: PeerId) -> &mut Vec<PacketMut>;
+    fn queue_to_peer(&mut self, peer: PeerId, packets: impl IntoIterator<Item = PacketMut>);
 }
 
 /// The outcome of attempting to send packets to peers.
@@ -565,8 +565,8 @@ pub struct SendResult {
 }
 
 impl QueueToPeer for SendResult {
-    fn queue_to_peer(&mut self, peer: PeerId) -> &mut Vec<PacketMut> {
-        self.to_peers.entry(peer).or_default()
+    fn queue_to_peer(&mut self, peer: PeerId, packets: impl IntoIterator<Item = PacketMut>) {
+        self.to_peers.entry(peer).or_default().extend(packets);
     }
 }
 
@@ -580,14 +580,17 @@ pub struct RecvResult {
 }
 
 impl RecvResult {
-    fn queue_to_local(&mut self, peer: PeerId) -> &mut Vec<PacketMut> {
-        self.to_local.entry(peer).or_default()
+    fn queue_to_local(&mut self, peer: PeerId, packets: impl IntoIterator<Item = PacketMut>) {
+        self.to_local
+            .entry(peer)
+            .or_default()
+            .extend(packets.into_iter().filter(|p| !p.is_empty()));
     }
 }
 
 impl QueueToPeer for RecvResult {
-    fn queue_to_peer(&mut self, peer: PeerId) -> &mut Vec<PacketMut> {
-        self.to_peers.entry(peer).or_default()
+    fn queue_to_peer(&mut self, peer: PeerId, packets: impl IntoIterator<Item = PacketMut>) {
+        self.to_peers.entry(peer).or_default().extend(packets);
     }
 }
 
@@ -599,8 +602,8 @@ pub struct EventResult {
 }
 
 impl QueueToPeer for EventResult {
-    fn queue_to_peer(&mut self, peer: PeerId) -> &mut Vec<PacketMut> {
-        self.to_peers.entry(peer).or_default()
+    fn queue_to_peer(&mut self, peer: PeerId, packets: impl IntoIterator<Item = PacketMut>) {
+        self.to_peers.entry(peer).or_default().extend(packets);
     }
 }
 
@@ -962,8 +965,7 @@ mod tests {
         p.assert_a_to_b([TransportData]);
         // B receives confirmation, finalizes rotation.
         p.recv_at_b(t.at(128));
-        // TODO: assert that no packets are delivered. See https://github.com/tailscale/tailscale-rs/issues/287
-        p.assert_received_at_b([PacketMut::new(0)]);
+        assert_no_packets(&p.received_at_b);
     }
 
     #[test]
@@ -1000,7 +1002,6 @@ mod tests {
         p.assert_a_to_b([TransportData]);
         // B receives confirmation, finalizes rotation.
         p.recv_at_b(t.at(129));
-        // TODO: assert that no packets are delivered. See https://github.com/tailscale/tailscale-rs/issues/287
-        p.assert_received_at_b([PacketMut::new(0)]);
+        assert_no_packets(&p.received_at_b);
     }
 }

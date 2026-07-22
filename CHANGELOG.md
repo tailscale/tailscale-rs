@@ -12,6 +12,7 @@ Put changes for the upcoming release here!
   configure them to be).
   [#292](https://github.com/tailscale/tailscale-rs/pull/292).
 - Fixed(ts_tunnel): adjust session rotation logic to match the spec (#286)
+- Fixed(ts_tunnel): don't yield empty decrypted keepalive packets to the caller (#287)
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
