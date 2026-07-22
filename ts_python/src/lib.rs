@@ -37,7 +37,7 @@ pub mod _internal {
 
     /// Connect to tailscale using the specified parameters.
     #[pyfunction]
-    #[pyo3(signature = (key_file_path: "str | None" = None , /, auth_key: "str | None" = None, *, control_server_url: "str | None" = None, hostname: "str | None" = None, tags: "list[str] | None" = None, keys: "Keystate | None" = None) -> "Awaitable[Device]")]
+    #[pyo3(signature = (key_file_path: "str | None" = None , /, auth_key: "str | None" = None, *, control_server_url: "str | None" = None, hostname: "str | None" = None, tags: "list[str] | None" = None, keys: "Keystate | None" = None, ephemeral: "bool" = false) -> "Awaitable[Device]")]
     pub fn connect(
         py: Python<'_>,
         key_file_path: Option<String>,
@@ -46,6 +46,7 @@ pub mod _internal {
         hostname: Option<String>,
         tags: Option<Vec<String>>,
         keys: Option<Keystate>,
+        ephemeral: bool,
     ) -> PyFut<'_> {
         static TRACING_ONCE: Once = Once::new();
         TRACING_ONCE.call_once(|| {
@@ -83,6 +84,8 @@ pub mod _internal {
             if let Some(keys) = &keys {
                 config.key_state = keys.try_into().map_err(|_| py_value_err("invalid keys"))?;
             }
+
+            config.ephemeral = ephemeral;
 
             let dev = ts::Device::new(&config, auth_key)
                 .await
