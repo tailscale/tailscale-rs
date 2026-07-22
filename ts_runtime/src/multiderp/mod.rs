@@ -14,9 +14,17 @@ use kameo::{
 use kameo_actors::scheduler::SetTimeout;
 use ts_control::DerpRegion;
 use ts_derp::RegionId;
+use ts_keys::NodePublicKey;
+use ts_packet::PacketMut;
 use ts_transport::UnderlayTransportId;
 
-use crate::{Env, Error, multiderp::uniderp::Uniderp};
+use crate::{
+    Env, Error,
+    dataplane::{DataplaneActor, SendUnderlay},
+    disco::SendDisco,
+    multiderp::uniderp::Uniderp,
+    peer_tracker::{PeerDb, PeerState},
+};
 
 /// Consumes derp map updates and spawns an actor per region that runs an underlay transport.
 /// Also consumes home derp indications (for this node) to notify the relevant task that it
@@ -29,6 +37,7 @@ pub struct Multiderp {
     region_map: HashMap<RegionId, UnderlayTransportId>,
     env: Env,
     debounce_state: DebounceState,
+    peer_state: Arc<PeerDb>,
 }
 
 impl kameo::Actor for Multiderp {
@@ -37,12 +46,16 @@ impl kameo::Actor for Multiderp {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+        env.subscribe::<Arc<PeerState>>(&slf).await?;
+        env.subscribe::<SendDisco>(&slf).await?;
+
         env.register(None, &slf).await?;
 
         Ok(Self {
             env,
             region_map: Default::default(),
             debounce_state: Default::default(),
+            peer_state: Default::default(),
         })
     }
 
@@ -187,5 +200,55 @@ impl Message<DebouncedPublish> for Multiderp {
     async fn handle(&mut self, _: DebouncedPublish, _: &mut Context<Self, Self::Reply>) {
         self.do_map_publish().await;
         self.debounce_state.publish_enqueued = false;
+    }
+}
+
+impl Message<Arc<PeerState>> for Multiderp {
+    type Reply = ();
+
+    async fn handle(&mut self, state: Arc<PeerState>, _: &mut Context<Self, Self::Reply>) {
+        self.peer_state = state.peers.clone();
+    }
+}
+
+impl Message<SendDisco> for Multiderp {
+    type Reply = ();
+
+    async fn handle(&mut self, send: SendDisco, _: &mut Context<Self, Self::Reply>) {
+        let Some(nodekey) = send.ep.as_derp() else {
+            return;
+        };
+        let nodekey = NodePublicKey::from(nodekey);
+
+        let Some((_, peer)) = self.peer_state.get(&nodekey) else {
+            tracing::trace!(%nodekey, "no known peer");
+            return;
+        };
+
+        let Some(derp_region) = &peer.derp_region else {
+            tracing::trace!(%nodekey, "peer had no derp region");
+            return;
+        };
+
+        let Some(transport_id) = self.region_map.get(derp_region) else {
+            tracing::trace!(%nodekey, ?derp_region, "derp region had no transport");
+            return;
+        };
+
+        let sent = self
+            .env
+            .ask::<DataplaneActor, _>(
+                None,
+                SendUnderlay {
+                    endpoint: send.ep,
+                    bufs: vec![PacketMut::from(send.buf.to_vec())],
+                    underlay_id: *transport_id,
+                },
+                true,
+            )
+            .await
+            .unwrap();
+
+        tracing::trace!(?sent, %nodekey, ?derp_region, "disco send result");
     }
 }

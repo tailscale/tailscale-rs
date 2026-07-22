@@ -28,10 +28,7 @@ impl kameo::Actor for Disco {
 
 #[derive(Clone)]
 pub struct SendDisco {
-    // TODO(npry): consumed by transports in future commits
-    #[expect(dead_code)]
     pub buf: Bytes,
-    #[expect(dead_code)]
     pub ep: DynEndpoint,
 }
 
