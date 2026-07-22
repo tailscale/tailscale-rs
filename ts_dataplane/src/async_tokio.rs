@@ -261,7 +261,7 @@ impl DataPlane {
 
                 underlay_pkts = underlay_up.recv() => {
                     let (id, ep, underlay_pkts) = underlay_pkts.unwrap();
-                    tracing::trace!(underlay_id = ?id, from_ep = %ep.ty(), n_underlay_pkts = underlay_pkts.len());
+                    tracing::trace!(underlay_id = ?id, from_ep = ?ep, n_underlay_pkts = underlay_pkts.len());
 
                     SelectResult::UnderlayUp((id, ep, underlay_pkts))
                 }
@@ -373,7 +373,7 @@ impl DataPlane {
 async fn write_to_overlay(slf: &CoreState, packets: HashMap<OverlayTransportId, Vec<PacketMut>>) {
     for (id, packets) in packets {
         if let Some(queue) = slf.overlay_transports.get(&id) {
-            tracing::trace!(overlay_id = ?id, n_packets = packets.len());
+            tracing::trace!(overlay_id = ?id, n_packets = packets.len(), "overlay packets");
             queue.send(packets).unwrap();
         }
     }
@@ -381,7 +381,7 @@ async fn write_to_overlay(slf: &CoreState, packets: HashMap<OverlayTransportId, 
 
 async fn write_to_underlay(slf: &CoreState, packets: ts_underlay_router::outbound::Result) {
     for ((tid, endpoint), packets) in packets {
-        tracing::trace!(underlay_id = ?tid, ?endpoint, n_packets = packets.len());
+        tracing::trace!(underlay_id = ?tid, ?endpoint, n_packets = packets.len(), "underlay data packets");
 
         if let Some(queue) = slf.underlay_transports.get(&tid) {
             queue.send((endpoint, packets)).unwrap();
