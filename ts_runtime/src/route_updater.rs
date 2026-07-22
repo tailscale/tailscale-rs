@@ -10,59 +10,66 @@ use ts_overlay_router::{
 };
 use ts_transport::{DynEndpoint, OverlayTransportId, PeerId, UnderlayTransportId};
 
-use crate::{Error, env::Env, multiderp::DerpTransportMap, peer_tracker::PeerState};
+use crate::{
+    Error,
+    env::Env,
+    multiderp::DerpTransportMap,
+    path_discoverer::{BestPathMap, BestPaths},
+    peer_tracker::PeerState,
+};
 
 pub struct RouteUpdater {
     default_overlay_transport: OverlayTransportId,
     /// Map of all available DERP regions to the ID of the underlay transport that handles that
-    /// region.  If `None`, we haven't received a `DerpTransportMap` message yet. `Some` but empty
-    /// is a valid state meaning there aren't any regions available or underlay transports to handle
-    /// them; usually means connectivity loss or we're shutting down.
-    derp_transport_map: Option<DerpTransportMap>,
+    /// region.
+    derp_transport_map: DerpTransportMap,
     peer_state: Arc<PeerState>,
+    best_paths: Arc<BestPathMap>,
     env: Env,
 }
 
 impl RouteUpdater {
-    fn build_routes(&self) -> PeerRoutesInner {
+    fn build_peer_routes(&self) -> PeerRoutesInner {
         tracing::trace!(
             n_peers = self.peer_state.peers.peers().len(),
             "reconstructing routes for peer update"
         );
 
         let mut routes = PeerRoutesInner::default();
-        let Some(derp_map) = &self.derp_transport_map else {
-            tracing::debug!("not building routes, derp map unpopulated");
-            return routes;
-        };
 
         for (id, peer) in self.peer_state.peers.peers() {
             let span = tracing::trace_span!(
-                "peer_update",
+                "peer_route_update",
                 peer_key = %peer.node_key,
                 region = ?peer.derp_region,
                 underlay_transport = tracing::field::Empty,
+                ep = tracing::field::Empty,
                 peer_id = ?id,
             )
             .entered();
 
-            let Some(region) = peer.derp_region else {
+            let (transport_id, ep) = if let Some((transport_id, ep)) = self.best_paths.get(id) {
+                (*transport_id, ep.clone())
+            } else if let Some(region) = peer.derp_region
+                && let Some(transport_id) = self.derp_transport_map.0.get(&region)
+            {
+                (*transport_id, DynEndpoint::derp(peer.node_key.into()))
+            } else {
+                if !self.derp_transport_map.0.is_empty() {
+                    tracing::error!("no region stored in multiderp, no underlay route");
+                }
+
                 continue;
             };
 
-            match derp_map.0.get(&region) {
-                Some(&transport_id) => {
-                    span.record("underlay_transport", tracing::field::debug(transport_id));
-                    routes
-                        .underlay_routes
-                        .insert(*id, (transport_id, DynEndpoint::derp(peer.node_key.into())));
-                }
-                None => {
-                    tracing::error!("no region stored in multiderp, no underlay route");
-                }
-            }
+            routes
+                .underlay_routes
+                .insert(*id, (transport_id, ep.clone()));
 
-            tracing::trace!(routes = ?peer.accepted_routes);
+            span.record("underlay_transport", tracing::field::debug(&transport_id));
+            span.record("ep", tracing::field::debug(&ep));
+
+            tracing::trace!(?ep, ?transport_id, "selected route for peer");
 
             for route in &peer.accepted_routes {
                 routes
@@ -72,6 +79,20 @@ impl RouteUpdater {
         }
 
         routes
+    }
+
+    async fn publish_peer_routes(&mut self) {
+        let new_routes = self.build_peer_routes();
+
+        if let Err(e) = self
+            .env
+            .publish(PeerRouteUpdate {
+                inner: Arc::new(new_routes),
+            })
+            .await
+        {
+            tracing::error!(error = %e, "publishing peer route update");
+        }
     }
 }
 
@@ -86,13 +107,15 @@ impl kameo::Actor for RouteUpdater {
         env.subscribe::<Arc<PeerState>>(&slf).await?;
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
         env.subscribe::<DerpTransportMap>(&slf).await?;
+        env.subscribe::<BestPaths>(&slf).await?;
 
         env.register(None, &slf).await?;
 
         Ok(Self {
             default_overlay_transport: default_transport,
-            derp_transport_map: None,
+            derp_transport_map: Default::default(),
             peer_state: Default::default(),
+            best_paths: Default::default(),
             env,
         })
     }
@@ -120,7 +143,7 @@ impl Message<Arc<PeerState>> for RouteUpdater {
     async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
         self.peer_state = msg;
 
-        let new_routes = self.build_routes();
+        let new_routes = self.build_peer_routes();
 
         if let Err(e) = self
             .env
@@ -138,28 +161,14 @@ impl Message<DerpTransportMap> for RouteUpdater {
     type Reply = ();
 
     async fn handle(&mut self, msg: DerpTransportMap, _ctx: &mut Context<Self, Self::Reply>) {
-        if self
-            .derp_transport_map
-            .as_ref()
-            .is_some_and(|map| map.0 == msg.0)
-        {
+        if self.derp_transport_map.0 == msg.0 {
             return;
         }
 
         tracing::debug!("derp transport map changed, building new routes");
 
-        self.derp_transport_map = Some(msg);
-
-        let new_routes = self.build_routes();
-        if let Err(e) = self
-            .env
-            .publish(PeerRouteUpdate {
-                inner: Arc::new(new_routes),
-            })
-            .await
-        {
-            tracing::error!(error = %e, "publishing peer route update");
-        }
+        self.derp_transport_map = msg;
+        self.publish_peer_routes().await;
     }
 }
 
@@ -195,5 +204,24 @@ impl Message<Arc<ts_control::StateUpdate>> for RouteUpdater {
         {
             tracing::error!(error = %e, "publishing self route update");
         }
+    }
+}
+
+impl Message<BestPaths> for RouteUpdater {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        BestPaths(new_bps): BestPaths,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) {
+        if self.best_paths == new_bps {
+            tracing::trace!("no change to best paths, skip");
+            return;
+        }
+
+        self.best_paths = new_bps;
+
+        self.publish_peer_routes().await;
     }
 }
