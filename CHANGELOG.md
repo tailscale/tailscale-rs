@@ -18,6 +18,9 @@ Put changes for the upcoming release here!
   invalidate existing credentials.
 - Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits,
   rather than panic.
+- **Security** (ts_netmon, Windows): Fix use-after-free in Windows network monitoring
+  code. During client shutdown, there is a short window in which network change
+  notifications could fire with an already freed context pointer.
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 

@@ -24,8 +24,12 @@ macro_rules! notify_stream {
             pub struct $name {
                 #[pin]
                 rx: flume::r#async::RecvStream<'static, $msg>,
-                _tx: Box<flume::Sender<$msg >>,
                 handle: DropHandle,
+                // SAFETY: _tx must appear after handle, because handle bounds the lifetime of a
+                // raw pointer to _tx that is handed to the OS. When dropping the struct,
+                // DropHandle must die first to cancel the notification, before the pointed-to Box
+                // is dropped.
+                _tx: Box<flume::Sender<$msg >>,
             }
         }
 
