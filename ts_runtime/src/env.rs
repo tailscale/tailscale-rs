@@ -121,6 +121,27 @@ impl Env {
         self.resolve_aref(aref)
     }
 
+    /// Ensure the given actor exists in the registry.
+    ///
+    /// If it doesn't, create the actor using the given function to populate its args.
+    pub async fn ensure<A, F, Fut>(
+        &self,
+        name: Option<SmolStr>,
+        args_builder: F,
+    ) -> Result<(bool, ActorRef<A>), Error>
+    where
+        A: kameo::Actor,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = A::Args> + Send + 'static,
+    {
+        let (created, aref) = self
+            .registry
+            .ask(registry::Ensure::new(name, args_builder))
+            .await?;
+
+        Ok((created, aref))
+    }
+
     /// Send an ask to an actor in the registry.
     ///
     /// # Parameters

@@ -8,7 +8,7 @@ use ts_netcheck::RegionResult;
 
 use crate::{Error, env::Env};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DerpLatencyMeasurement {
     pub measurement: Arc<Vec<RegionResult>>,
 }

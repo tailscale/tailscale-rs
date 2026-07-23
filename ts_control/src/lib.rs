@@ -5,13 +5,13 @@ extern crate alloc;
 /// Package version of `ts_control` as reported by cargo.
 // TODO(npry): this is used to populate Hostinfo.ipn_version, which requests "long format":
 //  attach build info and whatever else that entails
-const PKG_VERSION: &str = if let Some(version) = option_env!("CARGO_PKG_VERSION") {
+pub const PKG_VERSION: &str = if let Some(version) = option_env!("CARGO_PKG_VERSION") {
     version
 } else {
     ""
 };
 
-mod client;
+pub mod client;
 mod config;
 mod control_dialer;
 mod derp;
@@ -21,16 +21,18 @@ mod node;
 
 use std::fmt;
 
-pub use client::{AsyncControlClient, FilterUpdate, PeerUpdate, StateUpdate};
+pub use client::{FilterUpdate, PeerUpdate, RegistrationError, StateUpdate, connect, register};
 #[doc(inline)]
 pub use config::{Config, DEFAULT_CONTROL_SERVER};
 pub use control_dialer::{ControlDialer, TcpDialer, complete_connection};
 pub use derp::{Map as DerpMap, Region as DerpRegion, convert_derp_map};
 pub use dial_plan::{DialCandidate, DialMode, DialPlan};
+pub use map_request_builder::MapRequestBuilder;
 pub use node::{
     Id as NodeId, Node, NodeLastSeen, NodeStatus, NodeUpdate, StableId as StableNodeId,
     TailnetAddress,
 };
+pub use ts_control_serde::{Endpoint, EndpointType};
 
 /// An error which occurred while connecting to the control server or control plane.
 #[derive(Debug, thiserror::Error, Clone, Eq, PartialEq)]

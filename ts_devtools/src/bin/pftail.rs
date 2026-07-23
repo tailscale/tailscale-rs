@@ -21,7 +21,8 @@ async fn main() -> ts_cli_util::Result<()> {
     ts_cli_util::init_tracing();
 
     let args = Args::parse();
-    let (_, _, stream) = args.common.connect_control().await?;
+
+    let (_, _, _, stream) = args.common.connect_control().await?;
     let state = Arc::new(Mutex::new(pf::BTreeFilter::new()));
 
     tracing::info!("streaming packet filter updates");

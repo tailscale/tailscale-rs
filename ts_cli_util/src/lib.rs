@@ -5,6 +5,7 @@ use std::sync::Arc;
 use futures_util::{Stream, StreamExt};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+use ts_control::MapRequestBuilder;
 use ts_derp::{RegionId, ServerConnInfo};
 use ts_netcheck::RegionResult;
 
@@ -35,14 +36,24 @@ pub struct CommonArgs {
     /// If left blank, uses the hostname reported by the OS.
     #[arg(short = 'H', long)]
     pub hostname: Option<String>,
+
+    /// URL of the control server to connect to.
+    #[arg(long)]
+    pub control_url: Option<url::Url>,
 }
 
 impl CommonArgs {
     /// Convert the args to a [`tailscale::Config`].
     pub async fn config(&self) -> Result<tailscale::Config> {
-        tailscale::Config::default_with_key_file(&self.key_state_path)
-            .await
-            .map_err(Into::into)
+        let mut config = tailscale::Config::default_with_key_file(&self.key_state_path).await?;
+
+        config.requested_hostname = self.hostname.clone();
+        config.control_server_url = self
+            .control_url
+            .clone()
+            .unwrap_or(ts_control::DEFAULT_CONTROL_SERVER.clone());
+
+        Ok(config)
     }
 
     /// Load or init the config, then connect to the configured control server.
@@ -50,20 +61,43 @@ impl CommonArgs {
         &self,
     ) -> Result<(
         tailscale::Config,
-        ts_control::AsyncControlClient,
+        ts_keys::NodeState,
+        ts_control::client::HttpConn,
         impl Stream<Item = Arc<ts_control::StateUpdate>> + Send + Sync + use<>,
     )> {
         let config: tailscale::Config = self.config().await?;
 
-        let (client, stream) = ts_control::AsyncControlClient::connect(
-            &(&config).into(),
-            &(&config.key_state).into(),
-            self.auth_key.as_deref(),
+        let conn = ts_control::connect(
+            &config.control_server_url,
+            &config.key_state.machine_key.clone().into(),
         )
         .await?;
+
+        let ctrl_conf: ts_control::Config = (&config).into();
+        let key_state = config.key_state.clone().into();
+
+        ts_control::register(
+            &ctrl_conf,
+            &config.control_server_url,
+            self.auth_key.as_deref(),
+            None,
+            &key_state,
+            &conn,
+        )
+        .await?;
+
+        let stream = ts_control::client::start_stream(
+            &ctrl_conf.server_url,
+            &key_state,
+            &ctrl_conf,
+            conn.clone(),
+        )
+        .await?
+        .map(Arc::new);
+
         tracing::info!("connected to control");
 
-        Ok((config, client, stream))
+        Ok((config, key_state, conn, stream))
     }
 }
 
@@ -110,7 +144,9 @@ pub fn init_tracing() {
 /// URL for the preferred derp server.
 #[tracing::instrument(skip(stream), ret, err)]
 pub async fn set_closest_derp(
-    client: &mut ts_control::AsyncControlClient,
+    keys: &ts_keys::NodeState,
+    control_url: &url::Url,
+    conn: &ts_control::client::HttpConn,
     stream: impl Stream<Item = Arc<ts_control::StateUpdate>>,
 ) -> Result<(RegionId, Vec<ServerConnInfo>)> {
     let mut netmap_stream = core::pin::pin![stream.filter_map(async |x| x.derp.clone())];
@@ -123,17 +159,19 @@ pub async fn set_closest_derp(
         return Err("no derp regions found".into());
     };
 
-    client
-        .set_home_region(
-            *id,
-            regions.iter().map(|result| {
-                (
-                    result.latency_map_key.as_str(),
-                    result.latency.as_secs_f64(),
-                )
-            }),
-        )
-        .await;
+    let mr = MapRequestBuilder::new(keys)
+        .as_request()
+        .preferred_derp(*id)
+        .derp_latencies(regions.iter().map(|result| {
+            (
+                result.latency_map_key.as_str(),
+                result.latency.as_secs_f64(),
+            )
+        }))
+        .build();
+
+    ts_control::client::send_map_request(mr, &control_url.join("machine/map").unwrap(), conn)
+        .await?;
 
     Ok((*id, map.get(id).unwrap().servers.clone()))
 }

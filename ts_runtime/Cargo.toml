@@ -43,6 +43,7 @@ tracing.workspace = true
 smallvec.workspace = true
 smol_str = "0.3"
 yoke.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true

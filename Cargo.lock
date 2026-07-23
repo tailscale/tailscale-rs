@@ -5448,7 +5448,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -5853,7 +5852,9 @@ dependencies = [
  "tracy-client",
  "ts_control",
  "ts_derp",
+ "ts_keys",
  "ts_netcheck",
+ "url",
 ]
 
 [[package]]
@@ -5871,7 +5872,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "ts_bitset",
@@ -6315,6 +6315,7 @@ dependencies = [
  "ts_packetfilter_state",
  "ts_transport",
  "ts_tunnel",
+ "url",
  "yoke",
 ]
 

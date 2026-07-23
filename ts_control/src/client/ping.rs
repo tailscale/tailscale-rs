@@ -75,7 +75,7 @@ fn parse_c2n_ping(payload: &str) -> Result<Request<String>, PingError> {
 /// Tailscale Go client, "GET /echo ..." invokes the C2N echo handler, while
 /// "POST /netfilter-kind ..." changes the netfilter implementation the client uses (on Linux only).
 /// The handler must return a full HTTP response to the request containing the requested data and/or
-/// status - for example, "HTTP/1.1 200 OK <body>" or "HTTP/1.1 400 Bad Request".
+/// status - for example, `HTTP/1.1 200 OK <body>` or `HTTP/1.1 400 Bad Request`.
 ///
 /// `tailscale-rs` returns an HTTP 400 Bad Request status with an error message to the control
 /// plane for any unimplemented C2N methods/paths.

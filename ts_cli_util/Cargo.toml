@@ -17,6 +17,7 @@ tailscale.workspace = true
 ts_control.workspace = true
 ts_netcheck.workspace = true
 ts_derp.workspace = true
+ts_keys.workspace = true
 
 # Unconditionally required dependencies.
 cfg-if.workspace = true
@@ -24,6 +25,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 futures-util.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
+url.workspace = true
 
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]

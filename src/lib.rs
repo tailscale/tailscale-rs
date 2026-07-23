@@ -156,6 +156,21 @@ pub struct Device {
     channel: Channel,
 }
 
+/// Whether this node is authorized to join the tailnet.
+pub enum AuthState {
+    /// The node has successfully registered with the control server.
+    Authorized,
+
+    /// The node has contacted the control server but was not authorized to register. The user
+    /// should visit the contained URL in a browser to interactively authorize the machine.
+    ///
+    /// Authorization failure occurs when the control server doesn't recognize the node's keys
+    /// and no valid auth token was provided. This can happen in a previously-working configuration
+    /// if the node's authorization has expired, or if it was registered as ephemeral and has been
+    /// offline long enough to be deleted.
+    NotAuthorized(url::Url),
+}
+
 impl Device {
     /// Create a device from the given [`Config`] and auth key.
     ///
@@ -195,6 +210,26 @@ impl Device {
         Ok(Self {
             runtime: rt,
             channel,
+        })
+    }
+
+    /// Report whether this node has been authorized to join the tailnet.
+    ///
+    /// If the node is not authorized, the returned [`AuthState::NotAuthorized`] contains a URL the
+    /// user can visit in the browser to interactively authorize the node.
+    ///
+    /// The future waits until the control server has been successfully contacted before returning,
+    /// i.e. it will remain pending in a network-down scenario.
+    pub async fn is_authorized(&self) -> Result<AuthState, Error> {
+        let ret = self
+            .runtime
+            .ask(ts_runtime::control_runner::AuthUrl)
+            .await
+            .map_err(ts_runtime::Error::from)?;
+
+        Ok(match ret {
+            Some(url) => AuthState::NotAuthorized(url),
+            None => AuthState::Authorized,
         })
     }
 
