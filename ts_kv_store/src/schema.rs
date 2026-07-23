@@ -423,14 +423,19 @@ macro_rules! store {
                 )?
                 $(
                     $(
-                        let event = self.$sname.modified_in_txn(_txn_id);
-                        _subscriptions.collect_singleton_events::<$sname>(_notifications, event);
+                        if _subscriptions.has_singleton_subscribers::<$sname>()
+                            && let Some(event) = self.$sname.modified_in_txn(_txn_id)
+                        {
+                            _subscriptions.collect_singleton_events::<$sname>(_notifications, event);
+                        }
                     )*
                 )?
                 $(
                     $(
-                        let events = self.$name.commit_txn(_txn_id, true);
-                        _subscriptions.collect_events::<$name>(_notifications, events);
+                        let events = self.$name.commit_txn(_txn_id, _subscriptions.has_subscribers::<$name>());
+                        if !events.is_empty() {
+                            _subscriptions.collect_events::<$name>(_notifications, events);
+                        }
                         $(self.$name.indexes.$field.commit_txn(_txn_id, false);)*
                     )*
                 )?

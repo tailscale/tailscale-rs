@@ -87,6 +87,15 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         map_singleton_value(D::field_ref(&self.tables), txn_id, |v| D::from_value_ref(v))
     }
 
+    pub(crate) fn get_singleton_notification_value<D: schema::Singleton<Storage = TableStorage>>(
+        &self,
+        txn_id: TxnId,
+    ) -> Option<D::NotificationValue> {
+        map_singleton_value(D::field_ref(&self.tables), txn_id, |v| {
+            D::from_value_clone(v)
+        })
+    }
+
     /// Retrieve a singleton value from the store using the given type-key.
     pub(crate) fn get_singleton_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
         &self,
