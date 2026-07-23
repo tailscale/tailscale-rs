@@ -55,7 +55,7 @@ impl_to_from!(
 );
 
 /// Tailscale key state for running a device.
-#[derive(Debug, Default)]
+#[derive(Default)]
 #[repr(C)]
 pub struct persisted_key_state {
     /// Private key for the node (device) identity.
@@ -129,8 +129,6 @@ pub unsafe extern "C" fn ts_load_key_file(
     match TOKIO_RUNTIME.block_on(tailscale::config::load_key_file(s, mode)) {
         Ok(state) => {
             *key_state = state.into();
-            tracing::info!(?key_state, "loaded key state");
-
             0
         }
         Err(e) => {

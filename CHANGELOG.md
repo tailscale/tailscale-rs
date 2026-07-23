@@ -11,6 +11,11 @@ Put changes for the upcoming release here!
   is now `false` (tailscale-rs nodes are _not_ ephemeral unless you explicitly
   configure them to be).
   [#292](https://github.com/tailscale/tailscale-rs/pull/292).
+- **Security** (C bindings): Don't log private keys in `ts_load_key_file`. Previously
+  loaded keys were logged at INFO priority. These logs aren't persisted or streamed
+  anywhere by default, so this is only a concern in non-default configurations. Users
+  of the C bindings who persisted logs should provision new nodes with fresh keys and
+  invalidate existing credentials.
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
