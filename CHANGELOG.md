@@ -24,6 +24,10 @@ Put changes for the upcoming release here!
 - **Security** (ts_control_serde): don't print authkeys when logging RegistrationRequests.
   Previously when TRACE level logging was enabled, the client printed the authkey as part
   of logging the serialized registration request.
+- **Security** (ts_keys): remove Debug/Display implementation for private keys to
+  avoid inadvertent logging via Debug/Display impls of structs that carry private keys.
+  Private keys now Debug format themselves as `[redacted]` and do not have a Display impl.
+  Private keys continue to have serde implementations for serializing to/from disk.
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 

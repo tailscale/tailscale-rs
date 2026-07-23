@@ -26,21 +26,27 @@ macro_rules! _create_x25519_base_key_type {
             pub fn to_bytes(&self) -> [u8; $key_name::KEY_LEN_BYTES] {
                 self.0
             }
-        }
 
-        impl ::core::fmt::Debug for $key_name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                ::core::write!(f, "{self}")
-            }
-        }
-
-        impl ::core::fmt::Display for $key_name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                ::core::write!(f, "{}:", $key_name::KEY_PREFIX)?;
+            fn write_key_str(&self, out: &mut impl ::alloc::fmt::Write) -> ::core::fmt::Result {
+                ::core::write!(out, "{}:", Self::KEY_PREFIX)?;
                 for b in self.0.iter() {
-                    ::core::write!(f, "{b:02x}")?;
+                    ::core::write!(out, "{b:02x}")?;
                 }
                 Ok(())
+            }
+
+            /// Return this key as a hex-encoded string.
+            ///
+            /// This method exists instead of a Display/ToString impl because the latter makes it
+            /// very easy to inadvertently print secret key material indirectly, through derived
+            /// impls that delegate to the standard traits.
+            ///
+            /// This method exists for situations where a key truly does need to be formatted as
+            /// a hex string, e.g. for credential storage.
+            pub fn to_key_str(&self) -> ::alloc::string::String {
+                let mut ret = ::alloc::string::String::with_capacity(Self::KEY_LEN_FULL_STR);
+                self.write_key_str(&mut ret).unwrap();
+                ret
             }
         }
 
@@ -133,7 +139,7 @@ macro_rules! _create_x25519_base_key_type {
         #[cfg(feature = "serde")]
         impl ::serde::Serialize for $key_name {
             fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error> where S: ::serde::Serializer {
-                serializer.serialize_str(&::alloc::format!("{self}"))
+                serializer.serialize_str(&self.to_key_str())
             }
         }
     }
@@ -165,6 +171,18 @@ macro_rules! create_x25519_public_key_type {
         impl From<&$public_name> for ::crypto_box::PublicKey {
             fn from(v: &$public_name) -> Self {
                 v.0.into()
+            }
+        }
+
+        impl ::core::fmt::Debug for $public_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                ::core::write!(f, "{self}")
+            }
+        }
+
+        impl ::core::fmt::Display for $public_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                self.write_key_str(f)
             }
         }
     }
@@ -208,6 +226,12 @@ macro_rules! create_x25519_private_key_type {
         impl From<&$private_name> for ::crypto_box::SecretKey {
             fn from(v: &$private_name) -> Self {
                 v.0.into()
+            }
+        }
+
+        impl ::core::fmt::Debug for $private_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                ::core::write!(f, "[redacted]")
             }
         }
     }
