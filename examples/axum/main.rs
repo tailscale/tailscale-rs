@@ -19,7 +19,6 @@ use axum::{
 };
 use clap::Parser;
 use tailscale::{Config, Device};
-use tracing::level_filters::LevelFilter;
 
 static WWW: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/examples/axum/www");
 
@@ -76,13 +75,15 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
+    // tracing_subscriber::fmt()
+    //     .with_env_filter(
+    //         tracing_subscriber::EnvFilter::builder()
+    //             .with_default_directive(LevelFilter::INFO.into())
+    //             .from_env_lossy(),
+    //     )
+    //     .init();
+
+    tokio::spawn(serve_tracing());
 
     let args = Args::parse();
 
@@ -113,4 +114,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     axum::serve(tailscale::axum::Listener::from(listener), router).await?;
 
     Ok(())
+}
+
+async fn serve_tracing() {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+
+    axum::serve(
+        listener,
+        tracing_web_console::TracingLayer::with_capacity("/tracing", 100_000).into_router(),
+    )
+    .await
+    .unwrap();
 }
