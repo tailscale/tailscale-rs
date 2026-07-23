@@ -23,6 +23,7 @@ defmodule Tailscale.Keystate do
           network_lock: private_key()
         }
 
+  @derive {Inspect, only: []}
   defstruct [
     :machine,
     :node,

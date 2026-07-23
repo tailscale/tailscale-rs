@@ -28,6 +28,8 @@ Put changes for the upcoming release here!
   avoid inadvertent logging via Debug/Display impls of structs that carry private keys.
   Private keys now Debug format themselves as `[redacted]` and do not have a Display impl.
   Private keys continue to have serde implementations for serializing to/from disk.
+- **Security** (ts_elixir): don't print fields of the Keystate struct when inspected.
+  Previously a GenServer crash would print the keystate in logs.
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
