@@ -78,7 +78,7 @@ macro_rules! _create_x25519_base_key_type {
                 for i in (0..$key_name::KEY_LEN_HEX_STR).step_by(2) {
                     let slice = hex_str.get(i..i + 2).unwrap();
                     let keyidx = i / 2;
-                    let x = u8::from_str_radix(slice, 16).unwrap();
+                    let x = u8::from_str_radix(slice, 16).map_err(|_| $crate::ParseError::InvalidFormat)?;
                     key.0[keyidx] = x;
                 }
                 Ok(key)

@@ -16,6 +16,8 @@ Put changes for the upcoming release here!
   anywhere by default, so this is only a concern in non-default configurations. Users
   of the C bindings who persisted logs should provision new nodes with fresh keys and
   invalidate existing credentials.
+- Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits,
+  rather than panic.
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
