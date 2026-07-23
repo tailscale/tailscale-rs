@@ -11,6 +11,7 @@ Put changes for the upcoming release here!
   is now `false` (tailscale-rs nodes are _not_ ephemeral unless you explicitly
   configure them to be).
   [#292](https://github.com/tailscale/tailscale-rs/pull/292).
+- Fixed(ts_tunnel): adjust session rotation logic to match the spec (#286)
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 

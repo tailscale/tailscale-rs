@@ -79,7 +79,7 @@ impl Peer {
             return;
         }
 
-        if !self.session.needs_handshake(now) {
+        if !self.session.needs_rotation(now) {
             tracing::trace!("session does not need new handshake");
             return;
         }
@@ -181,6 +181,9 @@ impl Peer {
             if !packets.is_empty() {
                 out.queue_to_local(self.id).append(&mut packets);
                 self.schedule_keepalive(&mut endpoint.scheduler, now);
+                if self.session.needs_rotation(now) {
+                    self.start_handshake(endpoint, now, out);
+                }
             }
             return;
         }
