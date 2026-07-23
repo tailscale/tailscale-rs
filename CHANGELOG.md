@@ -21,6 +21,9 @@ Put changes for the upcoming release here!
 - **Security** (ts_netmon, Windows): Fix use-after-free in Windows network monitoring
   code. During client shutdown, there is a short window in which network change
   notifications could fire with an already freed context pointer.
+- **Security** (ts_control_serde): don't print authkeys when logging RegistrationRequests.
+  Previously when TRACE level logging was enabled, the client printed the authkey as part
+  of logging the serialized registration request.
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 

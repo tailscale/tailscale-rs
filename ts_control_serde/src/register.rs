@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_keys::{NetworkLockPublicKey, NodePublicKey};
@@ -14,11 +16,19 @@ use crate::{
 /// In the Go codebase, this struct is named `RegisterResponseAuth` and contains another field
 /// named `Oauth2Token`; this field was only used for Tailscale v1.66 and earlier on Android, so
 /// is not present in `tailscale-rs`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RegisterAuth<'a> {
     /// A Tailscale auth key that can register a node to a specific Tailnet.
     pub auth_key: &'a str,
+}
+
+impl<'a> Debug for RegisterAuth<'a> {
+    fn fmt(&self, f: &mut alloc::fmt::Formatter<'_>) -> alloc::fmt::Result {
+        f.debug_struct("RegisterAuth")
+            .field("auth_key", &"[redacted]")
+            .finish()
+    }
 }
 
 impl<'a> From<&'a str> for RegisterAuth<'a> {
