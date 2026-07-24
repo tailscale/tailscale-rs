@@ -6091,6 +6091,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_kv_store_tokio"
+version = "0.4.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ts_kv_store",
+]
+
+[[package]]
 name = "ts_netcheck"
 version = "0.4.0"
 dependencies = [

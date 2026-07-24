@@ -211,7 +211,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
         let notifications = self.write_lock().commit_transaction(id)?;
         let guard = self.guard.take().unwrap();
         let guard = RwLockWriteGuard::downgrade(guard);
-        guard.subscriptions.on_commit(notifications);
+        guard.subscriptions.notify(notifications);
 
         Ok(())
     }

@@ -105,9 +105,10 @@
 //! Subscribers and subscriptions are essentially just opaque identifiers. Subscriptions always belong
 //! to a single subscriber. A subscriber has a single owner (multiple subscribers may have the same
 //! owner). Subscriptions watch either the whole store, a whole table, a single singleton, or a single
-//! key in a table. Subscribers can be added, but not removed (though a subscriber with no subscriptions
-//! does nothing). Subscriptions can be added or removed (note that removing a subscription requires
-//! searching through all subscriptions, so is algorithmically inefficient).
+//! key in a table. Subscribers can be added or removed (removing a subscriber also removes all its
+//! subscriptions; a subscriber with no subscriptions does nothing). Subscriptions can be added or
+//! removed (note that removing a subscription or subscriber requires searching through all
+//! subscriptions, so is algorithmically inefficient).
 //!
 //! Notifications are managed by implementations of the [`Notifier`] trait (only a no-op notifier is
 //! part of this crate). Each store has exactly one notifier. The notifier does not manage subscribers
@@ -173,7 +174,7 @@
 //! never gives it up (e.g., by panicking without calling destructors, or leaking the transaction
 //! handle), then the KV store cannot be recovered.
 
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 
 mod index;
 mod iter;
@@ -197,6 +198,7 @@ pub use pub_sub::{
 };
 #[doc(inline)]
 pub use raw::KvTable;
+pub use schema::GeneratedStorage;
 #[doc(inline)]
 pub use transactions::{KvTableRoTransactional, KvTableTransactional, RoTransaction, Transaction};
 
@@ -208,10 +210,17 @@ pub struct KvStore<TableStorage: schema::GeneratedStorage> {
 
 impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     #[doc(hidden)]
-    /// Constructor intended to be used by macros. Avoid using this and prefer to use the generated
-    /// `new` for a specialized `KvStore`.
+    /// Constructor intended to be used by macros. Prefer to use the generated `new` for a
+    /// specialized `KvStore`.
     pub fn new_with_storage(storage: RwLock<storage::Storage<TableStorage>>) -> Self {
         KvStore { storage }
+    }
+
+    /// Create a new KvStore with the supplied notifier.
+    pub fn from_notifier(
+        notifier: Weak<dyn Notifier<Notification = TableStorage::Notification>>,
+    ) -> Self {
+        Self::new_with_storage(RwLock::new(storage::Storage::new(notifier)))
     }
 
     /// A convenience for operating on a KV store with a specified owner.
@@ -228,6 +237,19 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             .register_subscriber(owner)
     }
 
+    /// Remove a subscriber from the store, along with all of its subscriptions.
+    ///
+    /// The subscriber receives no further notifications and cannot subscribe again (subscribing
+    /// with a removed subscriber gives [`Error::UnknownSubscriber`]). Unsubscribing any of its
+    /// subscriptions is harmless but pointless.
+    ///
+    /// Does nothing if the subscriber is unknown (e.g., because it has already been removed).
+    pub fn remove_subscriber(&self, subscriber: Subscriber) {
+        self.get_read_lock()
+            .subscriptions
+            .remove_subscriber(subscriber)
+    }
+
     /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
     fn get_read_lock(&self) -> RwLockReadGuard<'_, storage::Storage<TableStorage>> {
         self.clear_lock_poison();
@@ -236,6 +258,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         if lock.current_txn().is_none() {
             return lock;
         }
+        drop(lock);
 
         let mut lock = self.storage.write().unwrap();
         lock.clear_transaction();
@@ -296,6 +319,11 @@ pub enum Error {
     /// The specified subscriber is not known to the store (either removed or never registered).
     #[error("Unknown subscriber")]
     UnknownSubscriber,
+    /// An attempt was made to subscribe to the store, but the store has no notifier, so subscriptions
+    /// would not be sent. This is likely because there is a reference to the store but not the notifier,
+    /// so the notifier has been dropped.
+    #[error("Store has no registered notifer")]
+    MissingNotifier,
 }
 
 /// `Result` alias for a KvStore [`Error`].

@@ -3,7 +3,7 @@ use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
     hash::Hash,
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use crate::{
@@ -37,7 +37,7 @@ pub struct Storage<TableStorage: schema::GeneratedStorage> {
 impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// Create a new storage with no data.
     #[allow(clippy::new_without_default)]
-    pub fn new(notifier: Arc<dyn Notifier<Notification = TableStorage::Notification>>) -> Self {
+    pub fn new(notifier: Weak<dyn Notifier<Notification = TableStorage::Notification>>) -> Self {
         Storage {
             tables: TableStorage::default(),
             committed: TxnId::FIRST,
@@ -1286,7 +1286,8 @@ mod txn_test {
 
     #[test]
     fn commit_with_mismatched_id_fails() {
-        let mut storage = Storage::<TableStorage>::new(NoOpNotifier::new());
+        let mut storage =
+            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
         // A commit must target the in-progress transaction.
         assert!(matches!(
@@ -1297,7 +1298,8 @@ mod txn_test {
 
     #[test]
     fn commit_then_recommit_fails() {
-        let mut storage = Storage::<TableStorage>::new(NoOpNotifier::new());
+        let mut storage =
+            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
         assert!(storage.commit_transaction(id).is_ok());
         // No transaction is pending after a successful commit.
@@ -1309,7 +1311,8 @@ mod txn_test {
 
     #[test]
     fn clear_transaction_rolls_back_and_frees_singleton_entry() {
-        let mut storage = Storage::<TableStorage>::new(NoOpNotifier::new());
+        let mut storage =
+            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
         storage.insert_singleton::<Count>(42, id);
         // Visible to the in-progress transaction.

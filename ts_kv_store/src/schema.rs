@@ -206,8 +206,8 @@ impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
 /// This should be considered a sealed trait and not implemented except by the macros in this module.
 /// Unfortunately it has to be public because of macro visibility hygiene.
 #[doc(hidden)]
-pub trait GeneratedStorage: Default {
-    type Notification: Clone + 'static;
+pub trait GeneratedStorage: Default + Send + Sync {
+    type Notification: Clone + Send + 'static;
     /// Commit a transaction by applying all tables' transaction state to their permanent data.
     ///
     /// This operation must be atomic. I.e., it will only fail without any tables committed, and if it
@@ -516,12 +516,19 @@ macro_rules! store {
             /// The store has a no-op notifier, so subscribers are never notified of changes.
             #[allow(dead_code, clippy::new_without_default)]
             pub fn new() -> Self {
-                Self::with_notifier($crate::NoOpNotifier::new())
+                // The store only holds a weak reference to its notifier, so downgrading a
+                // throwaway no-op notifier leaves the store with a dead weak reference. Upgrading it
+                // always fails, which means no notifications are ever sent.
+                Self::with_notifier(std::sync::Arc::downgrade(&$crate::NoOpNotifier::new()))
             }
 
             /// Create a new, empty KV store as described by the schema macros, which sends
             /// notifications of changes to `notifier`.
-            pub fn with_notifier(notifier: std::sync::Arc<dyn $crate::Notifier<Notification = <TableStorage as $crate::schema::GeneratedStorage>::Notification>>) -> Self {
+            ///
+            /// The store keeps only a weak reference to `notifier`, so the caller is responsible for
+            /// keeping the notifier alive (e.g. via the subscribers it hands out). Once the last
+            /// strong reference is dropped the store stops sending notifications.
+            pub fn with_notifier(notifier: std::sync::Weak<dyn $crate::Notifier<Notification = <TableStorage as $crate::schema::GeneratedStorage>::Notification>>) -> Self {
                 KvStore($crate::KvStore::new_with_storage(std::sync::RwLock::new($crate::storage::Storage::new(notifier))))
             }
         }

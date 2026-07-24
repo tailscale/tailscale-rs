@@ -1,0 +1,24 @@
+[package]
+name = "ts_kv_store_tokio"
+version.workspace = true
+description = "Tokio integration for ts_kv_store notifications"
+categories = ["data-structures", "asynchronous"]
+keywords = ["tailscale", "key-value", "tokio"]
+
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing.workspace = true
+ts_kv_store.workspace = true
+
+[dev-dependencies]
+# `test-util` enables paused/virtual time (`#[tokio::test(start_paused = true)]`) for the timing tests.
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

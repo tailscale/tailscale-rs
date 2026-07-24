@@ -22,6 +22,7 @@ members = [
     "ts_http_util",
     "ts_keys",
     "ts_kv_store",
+    "ts_kv_store_tokio",
     "ts_netcheck",
     "ts_netmon",
     "ts_netstack_smoltcp",
@@ -125,6 +126,7 @@ ts_dynbitset = { path = "ts_dynbitset", version = "0.4.0" }
 ts_hexdump = { path = "ts_hexdump", version = "0.4.0" }
 ts_keys = { path = "ts_keys", version = "0.4.0" }
 ts_kv_store = { path = "ts_kv_store", version = "0.4.0" }
+ts_kv_store_tokio = { path = "ts_kv_store_tokio", version = "0.4.0" }
 ts_netcheck = { path = "ts_netcheck", version = "0.4.0" }
 ts_netmon = { path = "ts_netmon", version = "0.4.0" }
 ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.4.0" }

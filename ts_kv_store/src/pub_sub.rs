@@ -21,7 +21,7 @@ use std::{
     hash::Hash,
     marker::PhantomData,
     num::NonZeroUsize,
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    sync::{Arc, Mutex, Weak, atomic::AtomicUsize},
 };
 
 use crate::{
@@ -41,6 +41,13 @@ pub struct Subscriber(NonZeroUsize);
 /// Users should not rely on the `Debug` implementation to identify a subscription.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Subscription(NonZeroUsize, Subscriber);
+
+impl Subscription {
+    /// The subscriber this subscription belongs to.
+    pub fn subscriber(&self) -> Subscriber {
+        self.1
+    }
+}
 
 /// A collection of notifications (mapped from a [`Subscription`]) for a notifier to distribute to
 /// subscribers.
@@ -180,7 +187,8 @@ pub trait Notifier: Send + Sync + std::fmt::Debug + 'static {
     /// Notify subscribers.
     ///
     /// `notifications` contains all notifications for all subscribers for a single transaction. There
-    /// is no grouping by subscriber.
+    /// is no grouping by subscriber. It is never empty: a transaction which produces no
+    /// notifications does not call this method at all.
     ///
     /// Implementers must not call back into the store because a read lock is held while this method
     /// is called.
@@ -229,13 +237,16 @@ pub struct Subscriptions<Notif: Clone> {
     /// Subscriptions to the whole store.
     all: Mutex<HashSet<Subscription>>,
     /// Subscription metadata for each table.
-    tables: Mutex<HashMap<TypeId, Box<dyn Any + Send>>>,
+    tables: Mutex<HashMap<TypeId, Box<dyn AnyTableSubscriptions>>>,
 
-    notifier: Arc<dyn Notifier<Notification = Notif>>,
+    /// A weak reference to the store's notifier. It is weak so that the notifier can hold a strong
+    /// reference back to the store without creating a reference cycle; upgrading fails (and
+    /// notifications are silently dropped) once the notifier has been dropped.
+    notifier: Weak<dyn Notifier<Notification = Notif>>,
 }
 
 impl<Notif: Clone + 'static> Subscriptions<Notif> {
-    pub(crate) fn new(notifier: Arc<dyn Notifier<Notification = Notif>>) -> Self {
+    pub(crate) fn new(notifier: Weak<dyn Notifier<Notification = Notif>>) -> Self {
         Subscriptions {
             cur_subscriber_id: Default::default(),
             cur_subscription_id: Default::default(),
@@ -247,9 +258,16 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         }
     }
 
-    /// Sends `notifications` to subscribers. Call after a successful commit.
-    pub(crate) fn on_commit(&self, notifications: Notifications<Notif>) {
-        self.notifier.notify(notifications);
+    /// Deliver `notifications` to the notifier, doing nothing if there is nothing to deliver or the
+    /// notifier has been dropped.
+    pub(crate) fn notify(&self, notifications: Notifications<Notif>) {
+        if notifications.0.is_empty() {
+            return;
+        }
+
+        if let Some(notifier) = self.notifier.upgrade() {
+            notifier.notify(notifications);
+        }
     }
 
     /// Whether there are subscribers to the table `D`.
@@ -265,7 +283,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         let Some(table) = tables.get(&TypeId::of::<D>()) else {
             return false;
         };
-        let table: &TableSubscriptions<D::Key> = table.downcast_ref().unwrap();
+        let table = table.downcast_ref::<D::Key>();
 
         !table.subscriptions_all.is_empty() || !table.subscriptions.is_empty()
     }
@@ -286,7 +304,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         let Some(table) = tables.get(&TypeId::of::<D>()) else {
             return;
         };
-        let table: &TableSubscriptions<D::Key> = table.downcast_ref().unwrap();
+        let table = table.downcast_ref::<D::Key>();
 
         for s in &table.subscriptions_all {
             notifications.append_notifications(*s, &all_events);
@@ -355,19 +373,32 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         result
     }
 
-    /// Create and remember a new subscription ID.
+    /// Create and remember a new subscription ID for `subscriber`.
     ///
-    /// Does not subscribe to anything.
-    fn register_subscription(&self, subscriber: Subscriber) -> Result<Subscription> {
-        self.subscribers
-            .lock()
-            .unwrap()
-            .get(&subscriber)
-            .ok_or(Error::UnknownSubscriber)?;
+    /// Holds the `subscribers` lock while `f` runs, so that [`Self::remove_subscriber`]
+    /// cannot remove the subscriber between checking that it exists and the subscription being
+    /// recorded (in `f`).
+    fn register_subscription(
+        &self,
+        subscriber: Subscriber,
+        f: impl FnOnce(Subscription),
+    ) -> Result<Subscription> {
+        let Some(_notifier) = self.notifier.upgrade() else {
+            return Err(Error::MissingNotifier);
+        };
+        let subscribers = self.subscribers.lock().unwrap();
+        if !subscribers.contains_key(&subscriber) {
+            return Err(Error::UnknownSubscriber);
+        }
+
         let id = self
             .cur_subscription_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Ok(Subscription(NonZeroUsize::new(id + 1).unwrap(), subscriber))
+        let subscription = Subscription(NonZeroUsize::new(id + 1).unwrap(), subscriber);
+
+        f(subscription);
+
+        Ok(subscription)
     }
 
     /// Associate a subscription ID with a singleton KV pair.
@@ -375,13 +406,14 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         &self,
         subscriber: Subscriber,
     ) -> Result<Subscription> {
-        let subscription = self.register_subscription(subscriber)?;
-        let mut singletons = self.singletons.lock().unwrap();
-        singletons
-            .entry(TypeId::of::<S>())
-            .or_default()
-            .insert(subscription);
-        Ok(subscription)
+        self.register_subscription(subscriber, |subscription| {
+            self.singletons
+                .lock()
+                .unwrap()
+                .entry(TypeId::of::<S>())
+                .or_default()
+                .insert(subscription);
+        })
     }
 
     /// Remove a subscription ID from watching a singleton KV pair.
@@ -399,10 +431,9 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         &self,
         subscriber: Subscriber,
     ) -> Result<Subscription> {
-        let subscription = self.register_subscription(subscriber)?;
-        let mut all = self.all.lock().unwrap();
-        all.insert(subscription);
-        Ok(subscription)
+        self.register_subscription(subscriber, |subscription| {
+            self.all.lock().unwrap().insert(subscription);
+        })
     }
 
     /// Remove a global subscription.
@@ -420,18 +451,18 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     where
         D::Key: Send,
     {
-        let subscription = self.register_subscription(subscriber)?;
-        let mut tables = self.tables.lock().unwrap();
-        tables
-            .entry(TypeId::of::<D>())
-            .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()))
-            .downcast_mut::<TableSubscriptions<D::Key>>()
-            .unwrap()
-            .subscriptions
-            .entry(key)
-            .or_default()
-            .insert(subscription);
-        Ok(subscription)
+        self.register_subscription(subscriber, |subscription| {
+            self.tables
+                .lock()
+                .unwrap()
+                .entry(TypeId::of::<D>())
+                .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()))
+                .downcast_mut::<D::Key>()
+                .subscriptions
+                .entry(key)
+                .or_default()
+                .insert(subscription);
+        })
     }
 
     /// Associate a subscription ID with a table (watching a single keys).
@@ -442,16 +473,16 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     where
         D::Key: Send,
     {
-        let subscription = self.register_subscription(subscriber)?;
-        let mut tables = self.tables.lock().unwrap();
-        tables
-            .entry(TypeId::of::<D>())
-            .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()))
-            .downcast_mut::<TableSubscriptions<D::Key>>()
-            .unwrap()
-            .subscriptions_all
-            .insert(subscription);
-        Ok(subscription)
+        self.register_subscription(subscriber, |subscription| {
+            self.tables
+                .lock()
+                .unwrap()
+                .entry(TypeId::of::<D>())
+                .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()))
+                .downcast_mut::<D::Key>()
+                .subscriptions_all
+                .insert(subscription);
+        })
     }
 
     /// Remove all subscriptions from a specific table (single-key and whole-table subscriptions).
@@ -461,11 +492,34 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
             return;
         };
 
-        let subs = subs.downcast_mut::<TableSubscriptions<D::Key>>().unwrap();
+        let subs = subs.downcast_mut::<D::Key>();
         subs.subscriptions_all.retain(|s| s != &subscription);
         subs.subscriptions
             .iter_mut()
             .for_each(|(_, s)| s.retain(|s| s != &subscription));
+    }
+
+    /// Forget a subscriber and remove all subscriptions belonging to it.
+    ///
+    /// Does nothing if `subscriber` is not registered.
+    pub(crate) fn remove_subscriber(&self, subscriber: Subscriber) {
+        // Take all locks before starting so that changes to subscriptions and subscribers are atomic.
+        let mut subscribers = self.subscribers.lock().unwrap();
+        let mut all = self.all.lock().unwrap();
+        let mut singletons = self.singletons.lock().unwrap();
+        let mut tables = self.tables.lock().unwrap();
+
+        subscribers.remove(&subscriber);
+        all.retain(|s| s.1 != subscriber);
+        for subs in singletons.values_mut() {
+            subs.retain(|s| s.1 != subscriber);
+        }
+        for table in tables.values_mut() {
+            table.remove_subscriber(subscriber);
+        }
+
+        // Hold the lock on `subscribers` until we're done.
+        drop(subscribers);
     }
 }
 
@@ -482,8 +536,7 @@ pub(crate) fn send_current<D: TableDesc>(
     };
     let value = D::clone_value_for_notification(value);
     let notification = D::make_notification(Event::KeyUpsert(key, value));
-    subs.notifier
-        .notify(Notifications::<_>::single(notification, subscription));
+    subs.notify(Notifications::<_>::single(notification, subscription));
 }
 
 /// Send a notification for the current value of a singleton to `subscription`.
@@ -496,12 +549,10 @@ pub(crate) fn send_current_singleton<S: Singleton>(
         return;
     };
     let notification = S::make_notification(SingletonEvent::Upsert(value));
-    subs.notifier
-        .notify(Notifications::<_>::single(notification, subscription));
+    subs.notify(Notifications::<_>::single(notification, subscription));
 }
 
 /// Internal storage of subscription metadata specific to a single table with key of type `K`.
-#[derive(Debug)]
 pub(crate) struct TableSubscriptions<K: Hash + Eq> {
     /// Subscribed to one key.
     subscriptions: HashMap<K, HashSet<Subscription>>,
@@ -514,6 +565,57 @@ impl<K: Hash + Eq> Default for TableSubscriptions<K> {
         Self {
             subscriptions: Default::default(),
             subscriptions_all: Default::default(),
+        }
+    }
+}
+
+// Not derived because table keys are not necessarily `Debug`.
+impl<K: Hash + Eq> fmt::Debug for TableSubscriptions<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TableSubscriptions")
+            .field("watched_keys", &self.subscriptions.len())
+            .field("subscriptions_all", &self.subscriptions_all)
+            .finish()
+    }
+}
+
+/// Type-erased access to a table's [`TableSubscriptions`].
+///
+/// A table's subscriptions are generic over its key type, but they are all stored together in
+/// `Subscriptions::tables` and some operations must be applied to every table without knowing any
+/// of their key types. Such operations go here; everything else downcasts to the concrete type.
+trait AnyTableSubscriptions: Any + Send + fmt::Debug {
+    /// Remove all of this table's subscriptions which belong to `subscriber`.
+    fn remove_subscriber(&mut self, subscriber: Subscriber);
+}
+
+impl dyn AnyTableSubscriptions {
+    /// The subscriptions as those of a table with key type `K`.
+    ///
+    /// Panics if `K` is not the key type of the table these subscriptions belong to. That would be
+    /// a bug: subscriptions are only ever found via the `TypeId` of their table.
+    fn downcast_ref<K: Hash + Eq + 'static>(&self) -> &TableSubscriptions<K> {
+        (self as &dyn Any).downcast_ref().unwrap()
+    }
+
+    /// Mutable version of [`Self::downcast_ref`], with the same panics.
+    fn downcast_mut<K: Hash + Eq + 'static>(&mut self) -> &mut TableSubscriptions<K> {
+        (self as &mut dyn Any).downcast_mut().unwrap()
+    }
+}
+
+impl<K: Clone + Hash + Eq + Send + 'static> AnyTableSubscriptions for TableSubscriptions<K> {
+    fn remove_subscriber(&mut self, subscriber: Subscriber) {
+        self.subscriptions_all.retain(|s| s.1 != subscriber);
+        let mut empty = Vec::new();
+        self.subscriptions.iter_mut().for_each(|(k, s)| {
+            s.retain(|s| s.1 != subscriber);
+            if s.is_empty() {
+                empty.push(k.clone());
+            }
+        });
+        for k in empty {
+            self.subscriptions.remove(&k);
         }
     }
 }
@@ -970,7 +1072,12 @@ mod tests {
     }
 
     fn new_subscriptions() -> Subscriptions<Notification> {
-        Subscriptions::new(NoOpNotifier::<Notification>::new())
+        // Leaked so that the weak reference stays live for the rest of the test: subscribing
+        // requires a notifier which has not been dropped.
+        let notifier = NoOpNotifier::<Notification>::new();
+        let subs = Subscriptions::new(Arc::downgrade(&notifier));
+        std::mem::forget(notifier);
+        subs
     }
 
     #[test]
@@ -986,7 +1093,7 @@ mod tests {
         let subs = new_subscriptions();
         let bogus = Subscriber(NonZeroUsize::new(1).unwrap());
         assert_eq!(
-            subs.register_subscription(bogus),
+            subs.register_subscription(bogus, |_| {}),
             Err(Error::UnknownSubscriber)
         );
     }
@@ -995,8 +1102,22 @@ mod tests {
     fn register_subscription_carries_its_subscriber() {
         let subs = new_subscriptions();
         let subscriber = subs.register_subscriber(OWNER);
-        let subscription = subs.register_subscription(subscriber).unwrap();
-        assert_eq!(subscription.1, subscriber);
+        let subscription = subs.register_subscription(subscriber, |_| {}).unwrap();
+        assert_eq!(subscription.subscriber(), subscriber);
+    }
+
+    #[test]
+    fn register_subscription_holds_the_subscribers_lock() {
+        let subs = new_subscriptions();
+        let subscriber = subs.register_subscriber(OWNER);
+
+        subs.register_subscription(subscriber, |_| {
+            // Recording the subscription must happen under the `subscribers` lock, otherwise a
+            // concurrent `remove_subscriber` could sweep between the check and the insert, leaving
+            // a subscription belonging to a subscriber the store has forgotten.
+            assert!(subs.subscribers.try_lock().is_err());
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1148,6 +1269,101 @@ mod tests {
     }
 
     #[test]
+    fn removed_subscriber_receives_nothing() {
+        let subs = new_subscriptions();
+        let gone = subs.register_subscriber(OWNER);
+        let kept = subs.register_subscriber(OWNER);
+
+        // Every kind of subscription, for both subscribers.
+        let gone_subs = [
+            subs.create_global_subscription(gone).unwrap(),
+            subs.create_singleton_subscription::<Count>(gone).unwrap(),
+            subs.create_table_subscription_all::<Items>(gone).unwrap(),
+            subs.create_table_subscription::<Items>(1, gone).unwrap(),
+        ];
+        let kept_subs = [
+            subs.create_global_subscription(kept).unwrap(),
+            subs.create_singleton_subscription::<Count>(kept).unwrap(),
+            subs.create_table_subscription_all::<Items>(kept).unwrap(),
+            subs.create_table_subscription::<Items>(1, kept).unwrap(),
+        ];
+
+        subs.remove_subscriber(gone);
+
+        let mut notifs = Notifications::default();
+        subs.collect_events::<Items>(&mut notifs, events(&[(1, upsert("a"))]));
+        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::U64(5));
+
+        let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
+        for s in gone_subs {
+            assert!(!map.contains_key(&s));
+        }
+        // Removing one subscriber must leave every other subscriber's subscriptions alone.
+        for s in kept_subs {
+            assert!(!map[&s].is_empty());
+        }
+    }
+
+    #[test]
+    fn removed_subscriber_cannot_subscribe_again() {
+        let subs = new_subscriptions();
+        let subscriber = subs.register_subscriber(OWNER);
+        subs.remove_subscriber(subscriber);
+
+        assert_eq!(
+            subs.create_global_subscription(subscriber),
+            Err(Error::UnknownSubscriber)
+        );
+        assert_eq!(
+            subs.create_singleton_subscription::<Count>(subscriber),
+            Err(Error::UnknownSubscriber)
+        );
+        assert_eq!(
+            subs.create_table_subscription_all::<Items>(subscriber),
+            Err(Error::UnknownSubscriber)
+        );
+        assert_eq!(
+            subs.create_table_subscription::<Items>(1, subscriber),
+            Err(Error::UnknownSubscriber)
+        );
+    }
+
+    #[test]
+    fn removing_an_unknown_subscriber_is_a_no_op() {
+        let subs = new_subscriptions();
+        let subscriber = subs.register_subscriber(OWNER);
+        let sub = subs
+            .create_table_subscription_all::<Items>(subscriber)
+            .unwrap();
+
+        // A subscriber which was never registered, and one which has already been removed.
+        subs.remove_subscriber(Subscriber(NonZeroUsize::new(99).unwrap()));
+        let removed = subs.register_subscriber(OWNER);
+        subs.remove_subscriber(removed);
+        subs.remove_subscriber(removed);
+
+        let mut notifs = Notifications::default();
+        subs.collect_events::<Items>(&mut notifs, events(&[(1, upsert("a"))]));
+        let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
+        assert!(!map[&sub].is_empty());
+    }
+
+    #[test]
+    fn has_subscribers_false_after_removing_subscriber() {
+        let subs = new_subscriptions();
+        let subscriber = subs.register_subscriber(OWNER);
+        subs.create_global_subscription(subscriber).unwrap();
+        subs.create_singleton_subscription::<Count>(subscriber)
+            .unwrap();
+        subs.create_table_subscription_all::<Items>(subscriber)
+            .unwrap();
+        subs.remove_subscriber(subscriber);
+
+        assert!(!subs.has_subscribers::<Items>());
+        assert!(!subs.has_singleton_subscribers::<Count>());
+    }
+
+    #[test]
     fn has_subscribers_false_when_no_subscriptions() {
         let subs = new_subscriptions();
         assert!(!subs.has_subscribers::<Items>());
@@ -1275,17 +1491,26 @@ mod tests {
     }
 
     #[test]
-    fn on_commit_forwards_to_notifier() {
+    fn notify_forwards_to_notifier() {
         let (notifier, rec) = RecordingNotifier::new();
-        let subs = Subscriptions::new(notifier);
-        subs.on_commit(Notifications::default());
+        let subs = Subscriptions::new(Arc::downgrade(&notifier));
+        let subscription = make_subscription(1);
+
+        let mut notifications = Notifications::default();
+        notifications.append_notifications(subscription, &[Notification::Items(Event::TableClear)]);
+        subs.notify(notifications);
+
         assert_eq!(rec.total_calls(), 1);
+        assert_eq!(
+            ItemsKind::from(&rec.notifications_for(subscription)[0]),
+            ItemsKind::TableClear
+        );
     }
 
     #[test]
     fn e2e_single_key_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
 
         // Pre-populate before subscribing so the table is non-empty (a first insert into an empty
@@ -1315,7 +1540,7 @@ mod tests {
     #[test]
     fn e2e_whole_table_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         rec.reset();
@@ -1339,7 +1564,7 @@ mod tests {
     #[test]
     fn e2e_global_subscription_sees_all_tables() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.subscribe_global(subscriber).unwrap();
         rec.reset();
@@ -1359,7 +1584,7 @@ mod tests {
     #[test]
     fn e2e_global_subscription_sees_singletons() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.subscribe_global(subscriber).unwrap();
         rec.reset();
@@ -1379,7 +1604,7 @@ mod tests {
     #[test]
     fn e2e_first_insert_into_empty_table_is_table_upsert() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         rec.reset();
@@ -1405,7 +1630,7 @@ mod tests {
     #[test]
     fn e2e_singleton_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.subscribe::<Count>(subscriber).unwrap();
         rec.reset();
@@ -1423,7 +1648,7 @@ mod tests {
     #[test]
     fn e2e_arc_singleton_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.subscribe::<Shared>(subscriber).unwrap();
         rec.reset();
@@ -1446,7 +1671,7 @@ mod tests {
     #[test]
     fn e2e_notifications_grouped_by_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber_a = store.register_subscriber(OWNER);
         let subscriber_b = store.register_subscriber(OWNER);
 
@@ -1479,7 +1704,7 @@ mod tests {
     #[test]
     fn e2e_unsubscribe_stops_notifications() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
 
@@ -1493,7 +1718,7 @@ mod tests {
     #[test]
     fn e2e_unsubscribe_global_stops_notifications() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let gone = store.subscribe_global(subscriber).unwrap();
         let kept = store.subscribe_global(subscriber).unwrap();
@@ -1510,6 +1735,56 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_eq!(ItemsKind::from(&kept[0]), ItemsKind::TableUpsert(vec![1]));
         assert_eq!(CountKind::from(&kept[1]), CountKind::Upsert(7));
+    }
+
+    #[test]
+    fn e2e_remove_subscriber_stops_notifications() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let gone = store.register_subscriber(OWNER);
+        let kept = store.register_subscriber(OWNER);
+
+        let table_sub = store.table::<Items>(OWNER).subscribe(gone).unwrap();
+        let singleton_sub = store.subscribe::<Count>(gone).unwrap();
+        let global_sub = store.subscribe_global(gone).unwrap();
+        let kept_sub = store.table::<Items>(OWNER).subscribe(kept).unwrap();
+
+        store.remove_subscriber(gone);
+        rec.reset();
+
+        store.table::<Items>(OWNER).insert(1, "a".to_owned());
+        store.insert::<Count>(OWNER, 7);
+
+        // All of the removed subscriber's subscriptions are dead, whatever they watched...
+        assert!(rec.notifications_for(table_sub).is_empty());
+        assert!(rec.notifications_for(singleton_sub).is_empty());
+        assert!(rec.notifications_for(global_sub).is_empty());
+        // ...but the other subscriber is unaffected.
+        assert_eq!(
+            rec.notifications_for(kept_sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::TableUpsert(vec![1])]
+        );
+    }
+
+    #[test]
+    fn e2e_removed_subscriber_cannot_subscribe_again() {
+        let (notifier, _rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+
+        store.remove_subscriber(subscriber);
+
+        assert_eq!(
+            store.table::<Items>(OWNER).subscribe(subscriber),
+            Err(Error::UnknownSubscriber)
+        );
+        assert_eq!(
+            store.subscribe::<Count>(subscriber),
+            Err(Error::UnknownSubscriber)
+        );
     }
 
     /// Seed `Items` with `keys` (mapping each key `k` to the value `"v{k}"`) in a committed
@@ -1529,7 +1804,7 @@ mod tests {
     #[test]
     fn e2e_iter_mut_notifies_visited_keys() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         seed_items(&store, &[1, 2]);
@@ -1552,7 +1827,7 @@ mod tests {
     #[test]
     fn e2e_iter_mut_notifies_key_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store
             .table::<Items>(OWNER)
@@ -1581,7 +1856,7 @@ mod tests {
     #[test]
     fn e2e_partial_iter_mut_notifies_only_visited_keys() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         seed_items(&store, &[1, 2]);
@@ -1609,7 +1884,7 @@ mod tests {
     #[test]
     fn e2e_iter_mut_with_remove_in_same_txn() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         seed_items(&store, &[1, 2, 3]);
@@ -1638,7 +1913,7 @@ mod tests {
     #[test]
     fn e2e_iter_mut_on_empty_table_notifies_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         rec.reset();
@@ -1656,7 +1931,7 @@ mod tests {
     #[test]
     fn e2e_rolled_back_transaction_notifies_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let _sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         rec.reset();
@@ -1673,7 +1948,7 @@ mod tests {
     #[test]
     fn e2e_mutations_coalesced_within_one_transaction() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         rec.reset();
@@ -1700,7 +1975,7 @@ mod tests {
     #[test]
     fn e2e_insert_then_remove_in_one_txn_notifies_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         // Seed an unrelated key so the table is non-empty and the transaction below is not an
@@ -1723,7 +1998,7 @@ mod tests {
     #[test]
     fn e2e_insert_then_remove_in_one_txn_still_reports_other_keys() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         seed_items(&store, &[9]);
@@ -1751,7 +2026,7 @@ mod tests {
     #[test]
     fn e2e_insert_then_clear_in_one_txn_notifies_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         rec.reset();
@@ -1772,7 +2047,7 @@ mod tests {
     #[test]
     fn e2e_clear_of_populated_table_still_notifies() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
         seed_items(&store, &[1]);
@@ -1800,7 +2075,7 @@ mod tests {
     #[test]
     fn e2e_subscribe_and_notify_singleton_sends_current_value() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         store.insert::<Count>(OWNER, 6);
         store.insert::<Count>(OWNER, 7);
@@ -1821,7 +2096,7 @@ mod tests {
     #[test]
     fn e2e_subscribe_and_notify_singleton_without_value_sends_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         rec.reset();
 
@@ -1835,7 +2110,7 @@ mod tests {
     #[test]
     fn e2e_subscribe_and_notify_singleton_then_receives_updates() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         store.insert::<Count>(OWNER, 7);
         rec.reset();
@@ -1861,7 +2136,7 @@ mod tests {
     #[test]
     fn e2e_subscribe_and_notify_arc_singleton_sends_current_value() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
         rec.reset();
@@ -1879,7 +2154,7 @@ mod tests {
     #[test]
     fn e2e_subscribe_key_and_notify_sends_current_value() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         store.table::<Items>(OWNER).insert(1, "one".to_owned());
         rec.reset();
@@ -1903,7 +2178,7 @@ mod tests {
     #[test]
     fn e2e_subscribe_key_and_notify_missing_key_sends_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         // The table is non-empty, but does not contain the key being subscribed to.
         store.table::<Items>(OWNER).insert(2, "two".to_owned());
@@ -1932,7 +2207,7 @@ mod tests {
     #[test]
     fn e2e_no_subscribers_commits_inserts_and_removes() {
         let (notifier, _rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
 
         store.table::<Items>(OWNER).insert(1, "a".to_owned());
         store.table::<Items>(OWNER).insert(2, "b".to_owned());
@@ -1946,7 +2221,7 @@ mod tests {
     #[test]
     fn e2e_no_subscribers_commits_mixed_mutations_in_one_txn() {
         let (notifier, _rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         seed_items(&store, &[1, 2, 3]);
 
         let mut txn = store.begin_transaction(OWNER);
@@ -1971,7 +2246,7 @@ mod tests {
     #[test]
     fn e2e_no_subscribers_commits_clear() {
         let (notifier, _rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         seed_items(&store, &[1, 2]);
 
         // Clear and re-insert within one transaction, so the commit takes the "clear everything,
@@ -1994,7 +2269,7 @@ mod tests {
     #[test]
     fn e2e_unwatched_table_commits_while_watched_table_notifies() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         // Only `Items` is watched; `Plain` is committed without collecting notifications.
         let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
@@ -2020,7 +2295,7 @@ mod tests {
     #[test]
     fn e2e_subscribing_after_unwatched_inserts_sees_per_key_upserts() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
 
         // Committed with no subscribers, so no events are collected for it...
@@ -2050,7 +2325,7 @@ mod tests {
     #[test]
     fn e2e_subscribing_after_unwatched_clear_sees_table_upsert() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
 
         seed_items(&store, &[1, 2]);
@@ -2075,7 +2350,7 @@ mod tests {
     #[test]
     fn e2e_no_singleton_subscribers_commits_value() {
         let (notifier, _rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
 
         store.insert::<Count>(OWNER, 7);
         assert_eq!(store.get::<Count>(OWNER), Some(7));
@@ -2087,7 +2362,7 @@ mod tests {
     #[test]
     fn e2e_unwatched_singleton_commits_while_watched_one_notifies() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.subscribe::<Count>(subscriber).unwrap();
         rec.reset();
@@ -2114,7 +2389,7 @@ mod tests {
     #[test]
     fn e2e_subscribing_after_unwatched_singleton_writes_sees_later_updates() {
         let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::with_notifier(notifier);
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
         let subscriber = store.register_subscriber(OWNER);
 
         store.insert::<Count>(OWNER, 7);
