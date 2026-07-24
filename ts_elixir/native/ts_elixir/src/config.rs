@@ -71,9 +71,9 @@ pub struct Keystate {
 impl From<tailscale::keys::PersistState> for Keystate {
     fn from(value: tailscale::keys::PersistState) -> Self {
         Self {
-            machine: value.machine_key.to_bytes().into(),
-            node: value.node_key.to_bytes().into(),
-            network_lock: value.network_lock_key.to_bytes().into(),
+            machine: value.machine_key.as_bytes().into(),
+            node: value.node_key.as_bytes().into(),
+            network_lock: value.network_lock_key.as_bytes().into(),
         }
     }
 }
@@ -82,17 +82,10 @@ impl TryFrom<Keystate> for tailscale::keys::PersistState {
     type Error = ();
 
     fn try_from(value: Keystate) -> Result<Self, ()> {
-        fn key<T>(v: Vec<u8>) -> Result<T, ()>
-        where
-            T: From<[u8; 32]>,
-        {
-            Ok(<[u8; 32]>::try_from(v).map_err(|_| ())?.into())
-        }
-
         Ok(Self {
-            machine_key: key(value.machine)?,
-            node_key: key(value.node)?,
-            network_lock_key: key(value.network_lock)?,
+            machine_key: value.machine.try_into()?,
+            node_key: value.node.try_into()?,
+            network_lock_key: value.network_lock.try_into()?,
         })
     }
 }

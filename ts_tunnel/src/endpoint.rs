@@ -2,7 +2,7 @@ use core::time::Duration;
 use std::{collections::HashMap, time::Instant};
 
 use itertools::Itertools;
-use ts_keys::{NodeKeyPair, NodePublicKey};
+use ts_keys::{NodeKey, Pair, Public};
 use ts_packet::PacketMut;
 use ts_time::{Handle, Scheduler, TimeRange};
 use zerocopy::IntoBytes;
@@ -335,7 +335,7 @@ pub struct Endpoint {
 }
 
 struct EndpointState {
-    my_key: NodeKeyPair,
+    my_key: Pair<NodeKey>,
 
     my_cookie: MACReceiver,
     ids: IdMap,
@@ -345,7 +345,7 @@ struct EndpointState {
 
 impl Endpoint {
     /// Construct a new endpoint with the given keypair.
-    pub fn new(my_key: NodeKeyPair) -> Self {
+    pub fn new(my_key: Pair<NodeKey>) -> Self {
         let my_cookie = MACReceiver::new(&my_key.public);
         Self {
             state: EndpointState {
@@ -366,7 +366,7 @@ impl Endpoint {
     ///
     /// # Panics
     ///
-    /// If the [`NodePublicKey`] in the new [`PeerConfig`] collides with an existing key
+    /// If the [`Public<NodeKey>`] in the new [`PeerConfig`] collides with an existing key
     /// for a different [`PeerId`].
     pub fn upsert_peer(&mut self, id: PeerId, mut cfg: PeerConfig) -> Option<PeerConfig> {
         match self.peers.get_mut(&id) {
@@ -542,13 +542,13 @@ impl Endpoint {
     }
 
     /// Return the node key for the selected peer.
-    pub fn peer_key(&self, id: PeerId) -> Option<NodePublicKey> {
+    pub fn peer_key(&self, id: PeerId) -> Option<Public<NodeKey>> {
         let peer = self.peers.get(&id)?;
         Some(peer.config.key)
     }
 
     /// Return the peer id that has the selected node key.
-    pub fn peer_id(&self, key: NodePublicKey) -> Option<PeerId> {
+    pub fn peer_id(&self, key: Public<NodeKey>) -> Option<PeerId> {
         self.state.ids.get_by_nodekey(&key)
     }
 }
@@ -711,8 +711,8 @@ mod tests {
 
     impl EndpointPair {
         pub fn new() -> Self {
-            let key_a = NodeKeyPair::new();
-            let key_b = NodeKeyPair::new();
+            let key_a = Pair::random();
+            let key_b = Pair::random();
             let mut a = Endpoint::new(key_a.clone());
             let mut b = Endpoint::new(key_b.clone());
             let psk = rand::random();

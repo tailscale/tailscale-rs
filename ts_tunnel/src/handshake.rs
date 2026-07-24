@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use ts_keys::{NodeKeyPair, NodePublicKey};
+use ts_keys::{NodeKey, Pair, Public};
 use ts_noise::ikpsk2;
 use ts_packet::PacketMut;
 use ts_time::Handle;
@@ -29,7 +29,7 @@ impl ReceivedHandshake {
     /// Process a peer's handshake initiation message.
     pub fn new(
         pkt: &mut HandshakeInitiation,
-        my_static: &NodeKeyPair,
+        my_static: &Pair<NodeKey>,
         macs: &MACReceiver,
     ) -> Option<ReceivedHandshake> {
         if !macs.verify_macs(pkt.as_bytes()) {
@@ -75,15 +75,15 @@ impl ReceivedHandshake {
         (session, pkt)
     }
 
-    pub fn peer_static(&self) -> NodePublicKey {
-        self.noise.peer_static_pub.to_bytes().into()
+    pub fn peer_static(&self) -> Public<NodeKey> {
+        self.noise.peer_static_pub.into()
     }
 }
 
 /// Generate a handshake initiation message for a peer.
 pub fn initiate_handshake(
-    endpoint_static: &NodeKeyPair,
-    peer_static: &NodePublicKey,
+    endpoint_static: &Pair<NodeKey>,
+    peer_static: &Public<NodeKey>,
     session_id: SessionId,
     timestamp: TAI64N,
 ) -> (SentHandshake, HandshakeInitiation) {
@@ -189,7 +189,7 @@ impl Handshake {
     pub(crate) fn finish(
         &mut self,
         packet: &mut HandshakeResponse,
-        endpoint_static: &NodeKeyPair,
+        endpoint_static: &Pair<NodeKey>,
         psk: &Psk,
         cookies: &MACReceiver,
         now: Instant,
@@ -261,7 +261,7 @@ impl Handshake {
 
 #[cfg(test)]
 mod tests {
-    use ts_keys::NodeKeyPair;
+    use ts_keys::Pair;
     use ts_time::Scheduler;
     use zerocopy::TryFromBytes;
 
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_handshake() {
-        let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
+        let (a_static, b_static) = (Pair::random(), Pair::random());
         let psk = rand::random();
 
         // Peer A sends a handshake initiation...

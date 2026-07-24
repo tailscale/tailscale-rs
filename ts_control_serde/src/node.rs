@@ -4,7 +4,7 @@ use core::net::{IpAddr, SocketAddr};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_capabilityversion::CapabilityVersion;
-use ts_keys::{DiscoPublicKey, MachinePublicKey, NodePublicKey};
+use ts_keys::{DiscoKey, MachineKey, NodeKey, Public};
 
 use crate::{DnsResolver, derp_map::RegionId, host_info::HostInfo, user::UserId};
 
@@ -63,18 +63,18 @@ pub struct Node<'a> {
     /// Unique ID of the user who shared this node, if non-zero and different from [`Node::user`].
     pub sharer: UserId,
 
-    /// If populated, the public key of the Tailscale node's [`NodeKeyPair`][ts_keys::NodeKeyPair].
-    pub key: NodePublicKey,
-    /// The date and time that the Tailscale node's [`NodeKeyPair`][ts_keys::NodeKeyPair] will expire.
+    /// If populated, the public key of the Tailscale node's [node keypair][ts_keys::Pair<ts_keys::NodeKey>].
+    pub key: Public<NodeKey>,
+    /// The date and time that the Tailscale node's node keypair will expire.
     pub key_expiry: Option<DateTime<Utc>>,
     /// If populated, a signature of the Tailnet Key Authority (TKA) key authorizing the Tailscale
     /// node to join the Tailnet.
     #[serde(borrow)]
     pub key_signature: Option<MarshaledSignature<'a>>,
-    /// If populated, the public key of the Tailscale node's [`MachineKeyPair`][ts_keys::MachineKeyPair].
-    pub machine: Option<MachinePublicKey>,
-    /// If populated, the public key of the Tailscale node's [`DiscoKeyPair`][ts_keys::DiscoKeyPair].
-    pub disco_key: Option<DiscoPublicKey>,
+    /// If populated, the public key of the Tailscale node's [machine keypair][ts_keys::Pair<ts_keys::MachineKey>].
+    pub machine: Option<Public<MachineKey>>,
+    /// If populated, the public key of the Tailscale node's [disco keypair][ts_keys::Pair<DiscoKey>].
+    pub disco_key: Option<Public<DiscoKey>>,
 
     /// The IP addresses of the Tailscale node in the Tailnet. There are exactly 2 addresses, and
     /// they are always in the same order: the first is the IPv4 address, the second is the IPv6

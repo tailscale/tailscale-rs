@@ -1,4 +1,4 @@
-use ts_keys::NodePublicKey;
+use ts_keys::{NodeKey, Public};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::frame::{Body, FrameType};
@@ -8,7 +8,7 @@ use crate::frame::{Body, FrameType};
 #[repr(C)]
 pub struct ClosePeer {
     /// The peer whose connection should be closed.
-    pub key: NodePublicKey,
+    pub key: Public<NodeKey>,
 }
 
 impl Body for ClosePeer {

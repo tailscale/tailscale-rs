@@ -1,6 +1,6 @@
 use core::fmt;
 
-use ts_keys::NodePublicKey;
+use ts_keys::{NodeKey, Public};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::frame;
@@ -12,7 +12,7 @@ use crate::frame;
 #[repr(C, packed)]
 pub struct PeerGone {
     /// The server that disconnected.
-    pub key: NodePublicKey,
+    pub key: Public<NodeKey>,
     /// The reason code for the peer disconnection.
     pub raw_reason: u8,
 }

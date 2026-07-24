@@ -1,4 +1,4 @@
-use ts_keys::DerpServerPublicKey;
+use ts_keys::{DerpServerKey, Public};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
@@ -19,7 +19,7 @@ pub struct ServerKey {
     pub magic: frame::Magic,
 
     /// The server's public key.
-    pub key: DerpServerPublicKey,
+    pub key: Public<DerpServerKey>,
 }
 
 impl ServerKey {

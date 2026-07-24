@@ -9,6 +9,7 @@ use tokio_util::future::FutureExt;
 use ts_bitset::BitsetDyn;
 use ts_capabilityversion::CapabilityVersion;
 use ts_http_util::{BytesBody, Http2};
+use ts_keys::{MachineKey, Pair};
 use url::Url;
 
 use crate::{DialCandidate, DialMode, DialPlan, Error, InternalErrorKind, Operation};
@@ -188,7 +189,7 @@ impl ControlDialer {
     pub async fn full_connect_next(
         &mut self,
         url: &Url,
-        machine_keys: &ts_keys::MachineKeyPair,
+        machine_keys: &Pair<MachineKey>,
     ) -> Result<Http2<BytesBody>, Error> {
         let next = self.next_dialer();
         tracing::trace!(selected_control_dialer = ?next);
@@ -221,7 +222,7 @@ impl ControlDialer {
 /// inner http2 connection.
 pub async fn complete_connection<Io>(
     url: &Url,
-    machine_keys: &ts_keys::MachineKeyPair,
+    machine_keys: &Pair<MachineKey>,
     stream: Io,
 ) -> Result<Http2<BytesBody>, Error>
 where

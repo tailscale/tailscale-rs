@@ -13,11 +13,11 @@ use tokio::{
     select,
     time::{interval_at, sleep_until},
 };
-use ts_keys::{NodePrivateKey, NodePublicKey};
+use ts_keys::{Export, Public};
 use ts_packet::PacketMut;
 use ts_time::TimeRange;
 use ts_tunnel::Endpoint;
-use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
+use zerocopy::{IntoBytes, TryFromBytes};
 // Minimal example config:
 //
 //     [Interface]
@@ -42,18 +42,18 @@ pub struct Args {
 
     /// Public key of the endpoint. Can be hex or base64.
     #[clap(long, value_parser = parse_key)]
-    pub peer_key: chacha20poly1305::Key,
+    pub peer_key: [u8; 32],
 
     /// Our private key. Can be hex or base64.
     #[clap(long, value_parser = parse_key)]
-    pub private_key: chacha20poly1305::Key,
+    pub private_key: [u8; 32],
 }
 
 type BoxResult<T> = Result<T, Box<dyn core::error::Error + Send + Sync>>;
 
-/// Parse a [`chacha20poly1305::Key`] from a string, trying hex (Tailscale-typical) and
+/// Parse a node key from a string, trying hex (Tailscale-typical) and
 /// base64 (WireGuard-typical) formats in succession.
-pub fn parse_key(s: &str) -> BoxResult<chacha20poly1305::Key> {
+pub fn parse_key(s: &str) -> BoxResult<[u8; 32]> {
     let s = s.trim().as_bytes();
 
     let key_bytes =
@@ -63,7 +63,7 @@ pub fn parse_key(s: &str) -> BoxResult<chacha20poly1305::Key> {
         .try_into()
         .map_err(|_v: Vec<u8>| "invalid key len")?;
 
-    Ok(key_bytes.into())
+    Ok(key_bytes)
 }
 
 #[tokio::main]
@@ -72,14 +72,13 @@ async fn main() -> BoxResult<()> {
 
     let args = Args::parse();
 
-    let privkey = NodePrivateKey::read_from_bytes(args.private_key.as_bytes())
-        .map_err(|_| "failed reading private key")?;
+    let privkey = Export::from(args.private_key).import();
     eprintln!(
         "my pubkey: {}",
         base64::engine::general_purpose::STANDARD.encode(privkey.public_key().as_bytes())
     );
 
-    let peer_key = *NodePublicKey::try_ref_from_bytes(args.peer_key.as_bytes())
+    let peer_key = *Public::try_ref_from_bytes(args.peer_key.as_bytes())
         .map_err(|_| "failed reading public key")?;
 
     let mut ep = Endpoint::new(privkey.into());

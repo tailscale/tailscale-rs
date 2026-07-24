@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::codec::Framed;
 use ts_hexdump::{AsHexExt, Case};
-use ts_keys::{MachineKeyPair, MachinePublicKey};
+use ts_keys::{MachineKey, Pair, Public};
 use ts_noise::ik::SentHandshake;
 use zerocopy::{IntoBytes, TryFromBytes};
 
@@ -31,14 +31,14 @@ impl Handshake {
     /// to the control server in order to start the handshake.
     pub fn initialize(
         prologue: &str,
-        node_machine_key: &MachineKeyPair,
-        control_public_key: &MachinePublicKey,
+        node_machine_key: &Pair<MachineKey>,
+        control_public_key: &Public<MachineKey>,
         capability_version: ts_capabilityversion::CapabilityVersion,
     ) -> (Self, String) {
         let mut ciphertext = [0; SentHandshake::INIT_SIZE];
         let state = SentHandshake::new(
             node_machine_key.into(),
-            control_public_key.into(),
+            &control_public_key.into(),
             prologue.as_bytes(),
             &mut ciphertext,
         );
@@ -55,7 +55,7 @@ impl Handshake {
     pub async fn complete<T: AsyncRead + Unpin>(
         mut self,
         mut conn: T,
-        node_machine_key: &MachineKeyPair,
+        node_machine_key: &Pair<MachineKey>,
     ) -> Result<WrappedIo<T>, Error> {
         let mut hdr_bytes = [0u8; 3];
         conn.read_exact(&mut hdr_bytes[..]).await?;
@@ -78,7 +78,7 @@ impl Handshake {
             return Err(Error::BadFormat);
         }
 
-        let session = match self.state.try_finish(&mut packet, node_machine_key.into()) {
+        let session = match self.state.try_finish(&mut packet, &node_machine_key.into()) {
             Ok(session) => session,
             Err(state) => {
                 self.state = state;

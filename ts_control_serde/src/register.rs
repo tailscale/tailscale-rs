@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use ts_keys::{NetworkLockPublicKey, NodePublicKey};
+use ts_keys::{NetworkLockKey, Public};
 use url::Url;
 
 use crate::{
@@ -77,14 +77,14 @@ pub struct RegisterRequest<'a> {
     /// The current public key of this Tailscale node. In the case of node key rotation, this is
     /// the "new" node public key, and [`RegisterRequest::old_node_key`] contains the expired
     /// public node key.
-    pub node_key: NodePublicKey,
+    pub node_key: Public<ts_keys::NodeKey>,
     /// The expired public key of this Tailscale node. Only populated when the node key has expired
     /// and needs to be rotated.
-    pub old_node_key: Option<NodePublicKey>,
+    pub old_node_key: Option<Public<ts_keys::NodeKey>>,
     /// The new Tailnet Lock public key for this Tailscale node. Only populated when the key has
     /// been changed, or has never been set for this node.
     #[serde(rename = "NLKey")]
-    pub nl_key: Option<NetworkLockPublicKey>,
+    pub nl_key: Option<Public<NetworkLockKey>>,
     /// Authentication information that allows this Tailscale node to register with the control
     /// plane and join a specific Tailnet.
     #[serde(borrow)]

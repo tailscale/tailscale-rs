@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use ts_keys::X25519KeyPair;
+use ts_keys::DalekPair;
 use zerocopy::FromBytes;
 
 use crate::{
@@ -35,7 +35,7 @@ impl ReceivedHandshake {
     pub fn new<'packet, P: Pod>(
         packet: &'packet mut [u8],
         prologue: &[u8],
-        my_static: X25519KeyPair,
+        my_static: DalekPair,
     ) -> Option<(Self, &'packet mut P)> {
         let packet: &mut Init<P> = Init::mut_from_bytes(packet).ok()?;
 
@@ -70,16 +70,11 @@ impl ReceivedHandshake {
     /// If `packet` is the wrong size.
     #[inline]
     pub fn finish(self, psk: &Psk, out: &mut [u8]) -> Session {
-        let ephemeral = X25519KeyPair::random();
+        let ephemeral = DalekPair::random();
         self.finish_with_ephemeral(psk, ephemeral, out)
     }
 
-    fn finish_with_ephemeral(
-        self,
-        psk: &Psk,
-        my_ephemeral: X25519KeyPair,
-        out: &mut [u8],
-    ) -> Session {
+    fn finish_with_ephemeral(self, psk: &Psk, my_ephemeral: DalekPair, out: &mut [u8]) -> Session {
         assert_eq!(out.len(), Self::RESP_SIZE);
         let response = Resp::mut_from_bytes(out).unwrap();
 
@@ -113,19 +108,19 @@ impl<P: Pod> SentHandshake<P> {
     /// If `packet` is not [`SentHandshake::INIT_SIZE`] bytes.
     #[inline]
     pub fn new(
-        my_static: X25519KeyPair,
+        my_static: DalekPair,
         peer_static: x25519_dalek::PublicKey,
         prologue: &[u8],
         payload: P,
         out: &mut [u8],
     ) -> Self {
-        let ephemeral = X25519KeyPair::random();
+        let ephemeral = DalekPair::random();
         Self::new_with_ephemeral(my_static, ephemeral, peer_static, prologue, payload, out)
     }
 
     fn new_with_ephemeral(
-        my_static: X25519KeyPair,
-        my_ephemeral: X25519KeyPair,
+        my_static: DalekPair,
+        my_ephemeral: DalekPair,
         peer_static: x25519_dalek::PublicKey,
         prologue: &[u8],
         payload: P,
@@ -162,7 +157,7 @@ impl<P: Pod> SentHandshake<P> {
     pub fn try_finish(
         self,
         packet: &mut [u8],
-        my_static: X25519KeyPair,
+        my_static: DalekPair,
         psk: &Psk,
     ) -> Result<Session, Self> {
         let Ok(packet) = Resp::mut_from_bytes(packet) else {
@@ -193,11 +188,11 @@ mod tests {
 
     use super::*;
 
-    fn test_key(r: Range<u8>) -> X25519KeyPair {
+    fn test_key(r: Range<u8>) -> DalekPair {
         assert_eq!(r.len(), 32);
         let private = x25519_dalek::StaticSecret::from(r.collect_array().unwrap());
         let public = x25519_dalek::PublicKey::from(&private);
-        X25519KeyPair { private, public }
+        DalekPair { private, public }
     }
 
     #[test]

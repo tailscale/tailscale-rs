@@ -1,4 +1,4 @@
-use ts_keys::NodePublicKey;
+use ts_keys::{NodeKey, Public};
 
 /// A handle for a wireguard peer.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
@@ -10,7 +10,7 @@ pub type Psk = ts_noise::core::Psk;
 /// The cryptographic configuration for a wireguard peer.
 pub struct PeerConfig {
     /// The peer's public key.
-    pub key: NodePublicKey,
+    pub key: Public<NodeKey>,
     /// The pre-shared key to use for the peer, for post-quantum resistance.
     pub psk: Psk,
 }

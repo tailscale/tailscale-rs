@@ -1,4 +1,4 @@
-use ts_keys::NodePublicKey;
+use ts_keys::{NodeKey, Public};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::frame::{Body, FrameType};
@@ -10,7 +10,7 @@ use crate::frame::{Body, FrameType};
 #[repr(C)]
 pub struct SendPacket {
     /// The peer to send the data to.
-    pub dest: NodePublicKey,
+    pub dest: Public<NodeKey>,
 }
 
 impl Body for SendPacket {

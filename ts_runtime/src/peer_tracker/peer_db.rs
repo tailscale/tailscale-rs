@@ -7,17 +7,19 @@ use std::{
 
 use ts_bart::{RouteModification, RoutingTable, RoutingTableExt};
 use ts_control::{Node, NodeUpdate, StableNodeId};
-use ts_keys::{DiscoPublicKey, NodePublicKey};
+use ts_keys::{DiscoKey, NodeKey, Public};
 use ts_transport::PeerId;
 
 mod private {
+    use ts_keys::{DiscoKey, Public};
+
     use super::*;
 
     pub trait Sealed {}
 
     impl Sealed for PeerId {}
-    impl Sealed for NodePublicKey {}
-    impl Sealed for DiscoPublicKey {}
+    impl Sealed for Public<NodeKey> {}
+    impl Sealed for Public<DiscoKey> {}
     impl Sealed for StableNodeId {}
     impl Sealed for ts_control::NodeId {}
     impl Sealed for PeerName {}
@@ -58,9 +60,9 @@ impl Debug for PeerDb {
 #[derive(Default, Clone)]
 struct IndexState {
     /// Index on the node's [`NodePublicKey`].
-    nk_idx: Index<NodePublicKey>,
+    nk_idx: Index<Public<NodeKey>>,
     /// Index on the [`DiscoPublicKey`], assuming it's known.
-    disco_idx: Index<DiscoPublicKey>,
+    disco_idx: Index<Public<DiscoKey>>,
     /// Index on the peer [`StableNodeId`].
     stableid_idx: Index<StableNodeId>,
     /// Index for the [`ts_control::NodeId`].
@@ -411,13 +413,13 @@ impl IndexedField for PeerId {
     }
 }
 
-impl IndexedField for NodePublicKey {
+impl IndexedField for Public<NodeKey> {
     fn lookup(&self, db: &PeerDb) -> Option<PeerId> {
         db.index_state.nk_idx.get(self).copied()
     }
 }
 
-impl IndexedField for DiscoPublicKey {
+impl IndexedField for Public<DiscoKey> {
     fn lookup(&self, db: &PeerDb) -> Option<PeerId> {
         db.index_state.disco_idx.get(self).copied()
     }
@@ -514,13 +516,9 @@ mod test {
                 ipv4: rand_ipv4(&mut rng).into(),
                 ipv6: rand_ipv6(&mut rng).into(),
             },
-            node_key: rng.random::<[u8; 32]>().into(),
-            disco_key: rng
-                .random::<bool>()
-                .then_some(rng.random::<[u8; 32]>().into()),
-            machine_key: rng
-                .random::<bool>()
-                .then_some(rng.random::<[u8; 32]>().into()),
+            node_key: Public::random(),
+            disco_key: rng.random::<bool>().then_some(Public::random()),
+            machine_key: rng.random::<bool>().then_some(Public::random()),
             id: rng.random(),
             accepted_routes: (0..rng.random_range(0..32))
                 .map(|_| rand_route(&mut rng))
