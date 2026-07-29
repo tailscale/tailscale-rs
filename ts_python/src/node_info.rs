@@ -1,5 +1,7 @@
 use std::net::IpAddr;
 
+use zerocopy::IntoBytes;
+
 /// Info about a tailscale node.
 ///
 /// Turned into a `dict` on the Python side via `IntoPyObject`.
@@ -35,7 +37,7 @@ impl From<&tailscale::NodeInfo> for NodeInfo {
             id: value.id,
             stable_id: value.stable_id.0.clone(),
             tags: value.tags.clone(),
-            node_key: value.node_key.to_bytes().to_vec(),
+            node_key: value.node_key.as_bytes().to_vec(),
 
             hostname: value.hostname.clone(),
             tailnet: value.tailnet.clone(),
@@ -45,8 +47,8 @@ impl From<&tailscale::NodeInfo> for NodeInfo {
             ],
             derp_region: value.derp_region.map(|x| x.0.get()),
 
-            machine_key: value.machine_key.as_ref().map(|x| x.to_bytes().to_vec()),
-            disco_key: value.disco_key.as_ref().map(|x| x.to_bytes().to_vec()),
+            machine_key: value.machine_key.as_ref().map(|x| x.as_bytes().to_vec()),
+            disco_key: value.disco_key.as_ref().map(|x| x.as_bytes().to_vec()),
             underlay_addresses: value
                 .underlay_addresses
                 .iter()

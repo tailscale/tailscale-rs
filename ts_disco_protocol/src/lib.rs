@@ -40,7 +40,7 @@ mod test {
         net::{Ipv6Addr, SocketAddrV6},
     };
 
-    use ts_keys::{DiscoPrivateKey, NodePrivateKey};
+    use ts_keys::{DiscoPrivateKey, DiscoPublicKey, NodePrivateKey};
     use zerocopy::IntoBytes;
 
     use super::*;
@@ -55,7 +55,7 @@ mod test {
     fn roundtrip_header() {
         let mut rng = rand::rng();
 
-        let header = Header::new(rand_array(&mut rng).into(), rand_array(&mut rng));
+        let header = Header::new(DiscoPublicKey::random(), rand_array(&mut rng));
         header.validate().unwrap();
 
         let mut out = alloc::vec::Vec::new();

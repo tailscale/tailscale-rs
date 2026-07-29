@@ -517,7 +517,7 @@ mod tests {
         let responder_session = ids.allocate_session(responder_cfg.id);
         let responder_session_id = responder_session.id();
         let now = Instant::now();
-        let mut endpoint = EndpointState::from(NodeKeyPair::new());
+        let mut endpoint = EndpointState::from(NodeKeyPair::random());
         // NOTE: this would be catastrophically insecure in non-test code, because it reuses the
         // same key in both directions, which leads to catastrophic nonce reuse. It's okay here
         // because (a) it's a test and (b) we only ever transmit in one direction.
@@ -571,7 +571,7 @@ mod tests {
     fn test_session_timers() {
         let k: [u8; 32] = rand::random();
         let mut ids = IdMap::default();
-        let mut endpoint = EndpointState::from(NodeKeyPair::new());
+        let mut endpoint = EndpointState::from(NodeKeyPair::random());
         let recv_cfg = PeerConfig::new(PeerId(1), NodePublicKey::default(), Psk::default());
         let recv_session = ids.allocate_session(recv_cfg.id);
         let recv_session_id = recv_session.id();

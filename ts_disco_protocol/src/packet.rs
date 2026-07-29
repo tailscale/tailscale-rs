@@ -191,7 +191,7 @@ impl Packet<Plaintext> {
         receiver: &DiscoPublicKey,
         nonce: [u8; Header::NONCE_LEN],
     ) -> Result<&mut Packet<Encrypted>, Error> {
-        let bx = crypto_box::SalsaBox::new(&receiver.into(), &secret.into());
+        let bx = crypto_box::SalsaBox::new(&receiver.to_crypto_box(), &secret.to_crypto_box());
 
         self.header = Header::new(secret.public_key(), nonce);
 
@@ -332,14 +332,17 @@ impl Packet<Encrypted> {
         &mut self,
         secret: &DiscoPrivateKey,
     ) -> Result<&mut Packet<Plaintext>, Error> {
-        crypto_box::SalsaBox::new(&self.header.sender_pub.into(), &secret.into())
-            .decrypt_in_place_detached(
-                &self.header.nonce.into(),
-                &[],
-                &mut self.payload.payload,
-                Tag::from_slice(&self.payload.tag),
-            )
-            .map_err(|_e| Error::CryptoFailed)?;
+        crypto_box::SalsaBox::new(
+            &self.header.sender_pub.to_crypto_box(),
+            &secret.to_crypto_box(),
+        )
+        .decrypt_in_place_detached(
+            &self.header.nonce.into(),
+            &[],
+            &mut self.payload.payload,
+            Tag::from_slice(&self.payload.tag),
+        )
+        .map_err(|_e| Error::CryptoFailed)?;
 
         let bs = self.as_mut_bytes();
         let ret = Packet::mut_from_bytes(bs)?;

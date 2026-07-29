@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use rustler::{Atom, NifResult, Term};
+use tailscale::keys::Export;
 
 mod atoms {
     rustler::atoms! {
@@ -71,9 +72,9 @@ pub struct Keystate {
 impl From<tailscale::keys::PersistState> for Keystate {
     fn from(value: tailscale::keys::PersistState) -> Self {
         Self {
-            machine: value.machine_key.to_bytes().into(),
-            node: value.node_key.to_bytes().into(),
-            network_lock: value.network_lock_key.to_bytes().into(),
+            machine: value.machine_key.as_bytes().into(),
+            node: value.node_key.as_bytes().into(),
+            network_lock: value.network_lock_key.as_bytes().into(),
         }
     }
 }
@@ -82,17 +83,14 @@ impl TryFrom<Keystate> for tailscale::keys::PersistState {
     type Error = ();
 
     fn try_from(value: Keystate) -> Result<Self, ()> {
-        fn key<T>(v: Vec<u8>) -> Result<T, ()>
-        where
-            T: From<[u8; 32]>,
-        {
-            Ok(<[u8; 32]>::try_from(v).map_err(|_| ())?.into())
-        }
+        let machine_key = Export::from_bytes(value.machine.try_into().map_err(|_| ())?);
+        let node_key = Export::from_bytes(value.node.try_into().map_err(|_| ())?);
+        let network_lock_key = Export::from_bytes(value.network_lock.try_into().map_err(|_| ())?);
 
         Ok(Self {
-            machine_key: key(value.machine)?,
-            node_key: key(value.node)?,
-            network_lock_key: key(value.network_lock)?,
+            machine_key,
+            node_key,
+            network_lock_key,
         })
     }
 }

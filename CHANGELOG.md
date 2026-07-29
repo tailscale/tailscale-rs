@@ -6,6 +6,15 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- **Breaking** (Rust API): changed the key types of `tailscale::keys::PersistState` to new "exportable" keys. This
+  should require no changes to code if you're just serializing/deserializing `PersistStates` without touching the
+  contents.
+- **Breaking** (Rust API): removed support for the "old" stored key format. State files produced by v0.1 and that
+  have not been loaded by a more recent version (up to v0.5 inclusive) will no longer load.
+- **Breaking** (ts_keys): removed a number of methods and trait impls from key types, to make it harder to accidentally
+  leak private keys through serialization and type-erasing conversions. In code that requires the ability to serialize
+  private keys (e.g. state storage), a new `Export` wrapper type and corresponding `export()` methods on private and
+  pair types allow code to explicitly opt into serializability.
 - Changed (Rust API, lang bindings): the `TS_RS_EXPERIMENT` environment variable is no longer required to use the
   library. The library logs a warning during initialization, as a reminder that it's still work-in-progress software.
 - Updated MSRV to 1.97.

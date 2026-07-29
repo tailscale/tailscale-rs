@@ -19,6 +19,7 @@ ts_keys.workspace = true
 smallbox = { version = "0.8", default-features = false }
 dyn-hash = "1.0"
 dyn-eq = "0.1"
+zerocopy.workspace = true
 
 [lints]
 workspace = true

@@ -40,11 +40,11 @@ async fn main() -> ts_cli_util::Result<()> {
 
     let peer = args
         .send_to_self
-        .then_some(config.key_state.node_key.public_key())
+        .then_some(config.key_state.node_key.import().public)
         .or(args.peer);
 
     tracing::info!(?region_id, "starting derp transport");
-    let derp = ts_derp::Client::connect(&derp_servers, &config.key_state.node_key.into()).await?;
+    let derp = ts_derp::Client::connect(&derp_servers, &config.key_state.node_key.import()).await?;
     let derp = Arc::new(derp);
 
     if let Some(peer) = peer {

@@ -686,8 +686,8 @@ mod tests {
 
     impl EndpointPair {
         pub fn new() -> Self {
-            let key_a = NodeKeyPair::new();
-            let key_b = NodeKeyPair::new();
+            let key_a = NodeKeyPair::random();
+            let key_b = NodeKeyPair::random();
             let mut a = Endpoint::new(key_a.clone());
             let mut b = Endpoint::new(key_b.clone());
             let psk = rand::random();

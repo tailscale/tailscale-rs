@@ -2,10 +2,7 @@
 
 use std::path::Path;
 
-use serde::Serializer;
 use ts_keys::PersistState;
-
-use crate::keys::NodeState;
 
 const CONTROL_URL_VAR: &str = "TS_CONTROL_URL";
 const HOSTNAME_VAR: &str = "TS_HOSTNAME";
@@ -104,66 +101,13 @@ pub async fn load_key_file(
 
     tracing::trace!(key_file = %p.display(), "loading key file");
 
-    let key_file = load_or_init::<KeyFile>(
-        &p,
-        Default::default,
-        |x| match x {
-            #[allow(deprecated)]
-            KeyFile::Old(old) => Some(KeyFile::New(KeyFileNew {
-                key_state: PersistState::from(&old.key_state),
-            })),
-            _ => None,
-        },
-        bad_format,
-    )
-    .await?;
-    Ok(key_file.key_state())
-}
-
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum KeyFile {
-    #[deprecated]
-    Old(KeyFileOld),
-    New(KeyFileNew),
-}
-
-impl KeyFile {
-    #[allow(deprecated)]
-    pub fn key_state(&self) -> PersistState {
-        match self {
-            Self::Old(old) => (&old.key_state).into(),
-            Self::New(new) => new.key_state.clone(),
-        }
-    }
-}
-
-impl Default for KeyFile {
-    fn default() -> Self {
-        KeyFile::New(KeyFileNew::default())
-    }
-}
-
-impl serde::Serialize for KeyFile {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        KeyFileNew {
-            key_state: self.key_state(),
-        }
-        .serialize(serializer)
-    }
+    let key_file = load_or_init::<KeyFile>(&p, Default::default, bad_format).await?;
+    Ok(key_file.key_state)
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
-struct KeyFileNew {
+struct KeyFile {
     key_state: PersistState,
-}
-
-#[derive(serde::Deserialize)]
-struct KeyFileOld {
-    key_state: NodeState,
 }
 
 impl From<&Config> for ts_control::Config {
@@ -210,7 +154,6 @@ pub enum BadFormatBehavior {
 async fn load_or_init<KeyState>(
     path: impl AsRef<Path>,
     default: impl FnOnce() -> KeyState,
-    migrate: impl FnOnce(&KeyState) -> Option<KeyState>,
     bad_format_behavior: BadFormatBehavior,
 ) -> Result<KeyState, crate::Error>
 where
@@ -227,21 +170,7 @@ where
 
     match tokio::fs::read(path).await {
         Ok(contents) => match serde_json::from_slice::<KeyState>(&contents) {
-            Ok(state) => {
-                if let Some(migrated) = migrate(&state) {
-                    match try_write(path, &migrated).await {
-                        Ok(_) => {
-                            tracing::info!("migrated key file to new disco-less format");
-                            return Ok(migrated);
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "unable to migrate key file");
-                        }
-                    }
-                }
-
-                return Ok(state);
-            }
+            Ok(state) => return Ok(state),
             Err(e) => match bad_format_behavior {
                 BadFormatBehavior::Error => {
                     tracing::error!(error = %e, "parsing key file");

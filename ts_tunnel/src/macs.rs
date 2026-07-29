@@ -34,13 +34,13 @@ struct Mac2Trailer {
 
 fn mac1_key(key: &NodePublicKey) -> [u8; 32] {
     let mut h = Blake2s256::new_with_prefix(MAC1_LABEL);
-    h.update(key.to_bytes());
+    h.update(key.as_bytes());
     h.finalize().into()
 }
 
 fn mac2_key(key: &NodePublicKey) -> [u8; 32] {
     let mut h = Blake2s256::new_with_prefix(MAC2_LABEL);
-    h.update(key.to_bytes());
+    h.update(key.as_bytes());
     h.finalize().into()
 }
 

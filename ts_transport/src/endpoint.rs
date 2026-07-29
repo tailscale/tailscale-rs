@@ -19,6 +19,7 @@ use core::{
 
 use dyn_eq::DynEq;
 use dyn_hash::DynHash;
+use zerocopy::IntoBytes;
 
 mod private {
     pub trait Sealed {}
@@ -223,7 +224,7 @@ impl Debug for DerpEndpoint {
         write!(
             f,
             "derp:{:02x}",
-            ts_hexdump::IterFmt::contiguous(&self.0.to_bytes())
+            ts_hexdump::IterFmt::contiguous(self.0.as_bytes())
         )
     }
 }

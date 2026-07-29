@@ -48,8 +48,11 @@ impl ReceivedHandshake {
             return None;
         };
 
-        let (noise, timestamp) =
-            ikpsk2::ReceivedHandshake::new::<TAI64N>(&mut init.noise, PROLOGUE, my_static.into())?;
+        let (noise, timestamp) = ikpsk2::ReceivedHandshake::new::<TAI64N>(
+            &mut init.noise,
+            PROLOGUE,
+            my_static.to_x25519_dalek(),
+        )?;
 
         Some(Self {
             responder_to_initiator_id: init.sender_id,
@@ -60,7 +63,7 @@ impl ReceivedHandshake {
 
     /// Return the peer's static public key.
     pub fn peer_static(&self) -> NodePublicKey {
-        self.noise.peer_static_pub.to_bytes().into()
+        NodePublicKey::from_bytes(self.noise.peer_static_pub.to_bytes())
     }
 }
 
@@ -240,8 +243,8 @@ impl Handshake {
         };
 
         let noise = ikpsk2::SentHandshake::new(
-            (&endpoint.my_key).into(),
-            peer.key.into(),
+            endpoint.my_key.to_x25519_dalek(),
+            peer.key.to_x25519_dalek(),
             PROLOGUE,
             endpoint.timestamps.now(),
             pkt.noise.as_mut_bytes(),
@@ -284,7 +287,7 @@ impl Handshake {
 
         let session_keys = match sent_handshake.noise.try_finish(
             &mut packet.noise,
-            (&endpoint.my_key).into(),
+            endpoint.my_key.to_x25519_dalek(),
             &peer.psk,
         ) {
             Ok(session_keys) => session_keys,
@@ -424,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_handshake() {
-        let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
+        let (a_static, b_static) = (NodeKeyPair::random(), NodeKeyPair::random());
         let psk = rand::random();
 
         // Peer A sends a handshake initiation...
@@ -470,7 +473,7 @@ mod tests {
     // Regression test for https://github.com/tailscale/tailscale-rs/issues/334
     #[test]
     fn test_invalid_response_ignored() {
-        let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
+        let (a_static, b_static) = (NodeKeyPair::random(), NodeKeyPair::random());
         let psk = rand::random();
 
         // A sends a handshake

@@ -37,8 +37,8 @@ impl Handshake {
     ) -> (Self, String) {
         let mut ciphertext = [0; SentHandshake::INIT_SIZE];
         let state = SentHandshake::new(
-            node_machine_key.into(),
-            control_public_key.into(),
+            node_machine_key.to_x25519_dalek(),
+            control_public_key.to_x25519_dalek(),
             prologue.as_bytes(),
             &mut ciphertext,
         );
@@ -78,7 +78,10 @@ impl Handshake {
             return Err(Error::BadFormat);
         }
 
-        let session = match self.state.try_finish(&mut packet, node_machine_key.into()) {
+        let session = match self
+            .state
+            .try_finish(&mut packet, node_machine_key.to_x25519_dalek())
+        {
             Ok(session) => session,
             Err(state) => {
                 self.state = state;

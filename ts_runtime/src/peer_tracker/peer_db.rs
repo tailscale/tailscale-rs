@@ -473,6 +473,7 @@ mod test {
     };
     use ts_capabilityversion::CapabilityVersion;
     use ts_control::{NodeLastSeen, NodeStatus, TailnetAddress};
+    use ts_keys::MachinePublicKey;
 
     use super::*;
 
@@ -514,13 +515,9 @@ mod test {
                 ipv4: rand_ipv4(&mut rng).into(),
                 ipv6: rand_ipv6(&mut rng).into(),
             },
-            node_key: rng.random::<[u8; 32]>().into(),
-            disco_key: rng
-                .random::<bool>()
-                .then_some(rng.random::<[u8; 32]>().into()),
-            machine_key: rng
-                .random::<bool>()
-                .then_some(rng.random::<[u8; 32]>().into()),
+            node_key: NodePublicKey::random(),
+            disco_key: rng.random::<bool>().then_some(DiscoPublicKey::random()),
+            machine_key: rng.random::<bool>().then_some(MachinePublicKey::random()),
             id: rng.random(),
             accepted_routes: (0..rng.random_range(0..32))
                 .map(|_| rand_route(&mut rng))
@@ -836,9 +833,9 @@ mod test {
                     tailnet: has_tailnet.then_some(tailnet),
 
                     status,
-                    node_key: node_key.into(),
-                    disco_key: disco_key.map(Into::into),
-                    machine_key: machine_key.map(Into::into),
+                    node_key: NodePublicKey::from_bytes(node_key),
+                    disco_key: disco_key.map(DiscoPublicKey::from_bytes),
+                    machine_key: machine_key.map(MachinePublicKey::from_bytes),
                     tailnet_lock_key_signature: tailnet_lock_key_signature.map(Into::into),
 
                     node_key_expiry: None,

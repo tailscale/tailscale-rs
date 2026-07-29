@@ -236,7 +236,10 @@ fn make_clientinfo(
     node_keypair: &NodeKeyPair,
     server_key: &ts_keys::DerpServerPublicKey,
 ) -> Result<(ClientInfo, Vec<u8>), Error> {
-    let cbox = crypto_box::SalsaBox::new(&server_key.into(), &node_keypair.into());
+    let cbox = crypto_box::SalsaBox::new(
+        &server_key.to_crypto_box(),
+        &node_keypair.private.to_crypto_box(),
+    );
     let nonce = crypto_box::SalsaBox::generate_nonce(&mut OsRng);
 
     let json = serde_json::to_vec(&frame::ClientInfoPayload {
@@ -266,7 +269,10 @@ fn decrypt_server_info(
 ) -> Result<frame::ServerInfoPayload, Error> {
     let mut payload = PacketMut::from(payload);
 
-    let mut cbox = crypto_box::SalsaBox::new(&sk.key.into(), &node_keypair.into());
+    let mut cbox = crypto_box::SalsaBox::new(
+        &sk.key.to_crypto_box(),
+        &node_keypair.private.to_crypto_box(),
+    );
     cbox.decrypt_in_place(&server_info.nonce.into(), &[], &mut payload)
         .map_err(|e| frame::Error::DecryptionFailed(format!("err: {e}")))?;
 

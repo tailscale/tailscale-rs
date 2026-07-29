@@ -6304,6 +6304,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "tailscale",
  "tracing-subscriber",
+ "zerocopy",
 ]
 
 [[package]]
@@ -6383,6 +6384,7 @@ dependencies = [
  "ts_hexdump",
  "ts_keys",
  "ts_packet",
+ "zerocopy",
 ]
 
 [[package]]

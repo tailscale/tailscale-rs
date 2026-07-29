@@ -69,7 +69,7 @@ impl CommonArgs {
 
         let conn = ts_control::connect(
             &config.control_server_url,
-            &config.key_state.machine_key.clone().into(),
+            &config.key_state.machine_key.import(),
         )
         .await?;
 
