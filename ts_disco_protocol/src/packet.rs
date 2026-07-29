@@ -5,7 +5,7 @@ use core::{
 
 use aead::{AeadInPlace, generic_array::GenericArray};
 use crypto_box::Tag;
-use ts_keys::{DiscoKey, Private, Public};
+use ts_keys::{Disco, PrivateKey, PublicKey};
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, TryFromBytes};
 
 use crate::{Error, Header, Message, message_type::MessageType};
@@ -129,7 +129,7 @@ where
     }
 
     /// Get a ref to the sender's disco public key.
-    pub const fn sender_pubkey(&self) -> &Public<DiscoKey> {
+    pub const fn sender_pubkey(&self) -> &PublicKey<Disco> {
         &self.header.sender_pub
     }
 }
@@ -187,8 +187,8 @@ impl Packet<Plaintext> {
     /// Encrypt this packet, converting it to a [`Packet<Encrypted>`].
     pub fn encrypt_in_place(
         &mut self,
-        secret: &Private<DiscoKey>,
-        receiver: &Public<DiscoKey>,
+        secret: &PrivateKey<Disco>,
+        receiver: &PublicKey<Disco>,
         nonce: [u8; Header::NONCE_LEN],
     ) -> Result<&mut Packet<Encrypted>, Error> {
         let bx = crypto_box::SalsaBox::new(&receiver.into(), &secret.into());
@@ -330,7 +330,7 @@ impl Packet<Encrypted> {
     /// Decrypt this packet, turning it into a [`Packet<Plaintext>`].
     pub fn decrypt_in_place(
         &mut self,
-        secret: &Private<DiscoKey>,
+        secret: &PrivateKey<Disco>,
     ) -> Result<&mut Packet<Plaintext>, Error> {
         crypto_box::SalsaBox::new(&self.header.sender_pub.into(), &secret.into())
             .decrypt_in_place_detached(

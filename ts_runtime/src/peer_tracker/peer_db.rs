@@ -7,19 +7,19 @@ use std::{
 
 use ts_bart::{RouteModification, RoutingTable, RoutingTableExt};
 use ts_control::{Node, NodeUpdate, StableNodeId};
-use ts_keys::{DiscoKey, NodeKey, Public};
+use ts_keys::{Disco, Node as NodeKey, PublicKey};
 use ts_transport::PeerId;
 
 mod private {
-    use ts_keys::{DiscoKey, Public};
+    use ts_keys::{Disco, PublicKey};
 
     use super::*;
 
     pub trait Sealed {}
 
     impl Sealed for PeerId {}
-    impl Sealed for Public<NodeKey> {}
-    impl Sealed for Public<DiscoKey> {}
+    impl Sealed for PublicKey<NodeKey> {}
+    impl Sealed for PublicKey<Disco> {}
     impl Sealed for StableNodeId {}
     impl Sealed for ts_control::NodeId {}
     impl Sealed for PeerName {}
@@ -60,9 +60,9 @@ impl Debug for PeerDb {
 #[derive(Default, Clone)]
 struct IndexState {
     /// Index on the node's [`NodePublicKey`].
-    nk_idx: Index<Public<NodeKey>>,
+    nk_idx: Index<PublicKey<NodeKey>>,
     /// Index on the [`DiscoPublicKey`], assuming it's known.
-    disco_idx: Index<Public<DiscoKey>>,
+    disco_idx: Index<PublicKey<Disco>>,
     /// Index on the peer [`StableNodeId`].
     stableid_idx: Index<StableNodeId>,
     /// Index for the [`ts_control::NodeId`].
@@ -413,13 +413,13 @@ impl IndexedField for PeerId {
     }
 }
 
-impl IndexedField for Public<NodeKey> {
+impl IndexedField for PublicKey<NodeKey> {
     fn lookup(&self, db: &PeerDb) -> Option<PeerId> {
         db.index_state.nk_idx.get(self).copied()
     }
 }
 
-impl IndexedField for Public<DiscoKey> {
+impl IndexedField for PublicKey<Disco> {
     fn lookup(&self, db: &PeerDb) -> Option<PeerId> {
         db.index_state.disco_idx.get(self).copied()
     }
@@ -516,9 +516,9 @@ mod test {
                 ipv4: rand_ipv4(&mut rng).into(),
                 ipv6: rand_ipv6(&mut rng).into(),
             },
-            node_key: Public::random(),
-            disco_key: rng.random::<bool>().then_some(Public::random()),
-            machine_key: rng.random::<bool>().then_some(Public::random()),
+            node_key: PublicKey::random(),
+            disco_key: rng.random::<bool>().then_some(PublicKey::random()),
+            machine_key: rng.random::<bool>().then_some(PublicKey::random()),
             id: rng.random(),
             accepted_routes: (0..rng.random_range(0..32))
                 .map(|_| rand_route(&mut rng))

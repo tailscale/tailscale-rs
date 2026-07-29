@@ -1,4 +1,4 @@
-use ts_keys::{NodeKey, Public};
+use ts_keys::{Node, PublicKey};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 #[repr(C)]
 pub struct ClientInfo {
     /// The client's public key.
-    pub key: Public<NodeKey>,
+    pub key: PublicKey<Node>,
     /// A nonce to decrypt the payload.
     pub nonce: Nonce,
 }

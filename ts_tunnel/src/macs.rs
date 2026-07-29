@@ -6,7 +6,7 @@ use std::{
 use aead::{Aead, Payload, consts::U16};
 use blake2::{Blake2s256, Blake2sMac, Digest, digest::FixedOutput};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305};
-use ts_keys::{NodeKey, Public};
+use ts_keys::{Node, PublicKey};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned};
 
 use crate::messages::CookieReply;
@@ -32,13 +32,13 @@ struct Mac2Trailer {
     mac2: Mac,
 }
 
-fn mac1_key(key: &Public<NodeKey>) -> [u8; 32] {
+fn mac1_key(key: &PublicKey<Node>) -> [u8; 32] {
     let mut h = Blake2s256::new_with_prefix(MAC1_LABEL);
     h.update(key.as_bytes());
     h.finalize().into()
 }
 
-fn mac2_key(key: &Public<NodeKey>) -> [u8; 32] {
+fn mac2_key(key: &PublicKey<Node>) -> [u8; 32] {
     let mut h = Blake2s256::new_with_prefix(MAC2_LABEL);
     h.update(key.as_bytes());
     h.finalize().into()
@@ -59,7 +59,7 @@ pub struct MACSender {
 
 impl MACSender {
     /// Create a MAC sender for the given peer.
-    pub fn new(peer_key: &Public<NodeKey>) -> Self {
+    pub fn new(peer_key: &PublicKey<Node>) -> Self {
         Self {
             mac1_key: mac1_key(peer_key),
             mac2_key: mac2_key(peer_key),
@@ -124,7 +124,7 @@ pub struct MACReceiver {
 
 impl MACReceiver {
     /// Creates a MAC receiver.
-    pub fn new(my_key: &Public<NodeKey>) -> Self {
+    pub fn new(my_key: &PublicKey<Node>) -> Self {
         Self {
             mac1_key: mac1_key(my_key),
         }

@@ -4,7 +4,7 @@ use core::net::SocketAddr;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use ts_capabilityversion::CapabilityVersion;
-use ts_keys::{DiscoKey, Public};
+use ts_keys::{Disco, PublicKey};
 
 use crate::{
     DerpRegionId, DnsConfig, MarshaledSignature,
@@ -50,10 +50,10 @@ pub struct MapRequest<'a> {
     pub keep_alive: bool,
 
     /// The public key of this Tailscale node.
-    pub node_key: Public<ts_keys::NodeKey>,
+    pub node_key: PublicKey<ts_keys::Node>,
     /// The public key this Tailscale node will use with the Disco protocol to establish direct
     /// connections with peer nodes in the Tailnet.
-    pub disco_key: Public<DiscoKey>,
+    pub disco_key: PublicKey<Disco>,
 
     /// If populated, the public key of the node's hardware-backed identity attestation key.
     pub hardware_attestation_key: Option<Vec<u8>>,
@@ -487,14 +487,14 @@ pub struct PeerChange<'a> {
     pub endpoints: Option<Vec<SocketAddr>>,
 
     /// If present, the node's wireguard public key has changed.
-    pub key: Option<Public<ts_keys::NodeKey>>,
+    pub key: Option<PublicKey<ts_keys::Node>>,
 
     /// If present, the signature of the node's wireguard public key has changed.
     #[serde(borrow)]
     pub key_signature: Option<MarshaledSignature<'a>>,
 
     /// If present, the node's disco key has changed.
-    pub disco_key: Option<Public<DiscoKey>>,
+    pub disco_key: Option<PublicKey<Disco>>,
     /// If present, the node's online status changed.
     pub online: Option<bool>,
     /// If present, the node's last seen time changed.

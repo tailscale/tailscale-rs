@@ -13,7 +13,7 @@ use tokio::{
     select,
     time::{interval_at, sleep_until},
 };
-use ts_keys::{Export, Public};
+use ts_keys::{ExportableKey, PublicKey};
 use ts_packet::PacketMut;
 use ts_time::TimeRange;
 use ts_tunnel::Endpoint;
@@ -72,13 +72,13 @@ async fn main() -> BoxResult<()> {
 
     let args = Args::parse();
 
-    let privkey = Export::from(args.private_key).import();
+    let privkey = ExportableKey::from(args.private_key).import();
     eprintln!(
         "my pubkey: {}",
         base64::engine::general_purpose::STANDARD.encode(privkey.public_key().as_bytes())
     );
 
-    let peer_key = *Public::try_ref_from_bytes(args.peer_key.as_bytes())
+    let peer_key = *PublicKey::try_ref_from_bytes(args.peer_key.as_bytes())
         .map_err(|_| "failed reading public key")?;
 
     let mut ep = Endpoint::new(privkey.into());

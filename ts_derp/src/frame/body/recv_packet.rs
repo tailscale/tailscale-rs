@@ -1,4 +1,4 @@
-use ts_keys::{NodeKey, Public};
+use ts_keys::{Node, PublicKey};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::frame::{Body, FrameType};
@@ -12,7 +12,7 @@ use crate::frame::{Body, FrameType};
 #[repr(C, packed)]
 pub struct RecvPacket {
     /// The sender's public key.
-    pub src: Public<NodeKey>,
+    pub src: PublicKey<Node>,
 }
 
 impl Body for RecvPacket {

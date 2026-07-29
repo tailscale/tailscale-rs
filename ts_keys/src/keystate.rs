@@ -1,6 +1,6 @@
 use core::fmt::{Debug, Display, Formatter};
 
-use crate::{DiscoKey, Export, MachineKey, NetworkLockKey, NodeKey, Pair};
+use crate::{Disco, ExportableKey, KeyPair, Machine, NetworkLock, Node};
 
 /// The portion of the key state that should be retained between runs of the same device.
 ///
@@ -10,13 +10,13 @@ use crate::{DiscoKey, Export, MachineKey, NetworkLockKey, NodeKey, Pair};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PersistState {
     /// The machine private key for the hardware this Tailnet peer runs on.
-    pub machine_key: Export<MachineKey>,
+    pub machine_key: ExportableKey<Machine>,
 
     /// The network lock private key for this Tailnet peer, for use with Tailnet Lock.
-    pub network_lock_key: Export<NetworkLockKey>,
+    pub network_lock_key: ExportableKey<NetworkLock>,
 
     /// The node private key for this Tailnet peer.
-    pub node_key: Export<NodeKey>,
+    pub node_key: ExportableKey<Node>,
 }
 
 impl From<&NodeState> for PersistState {
@@ -38,9 +38,9 @@ impl From<NodeState> for PersistState {
 impl Default for PersistState {
     fn default() -> Self {
         Self {
-            machine_key: Export::random(),
-            network_lock_key: Export::random(),
-            node_key: Export::random(),
+            machine_key: ExportableKey::random(),
+            network_lock_key: ExportableKey::random(),
+            node_key: ExportableKey::random(),
         }
     }
 }
@@ -52,16 +52,16 @@ pub struct NodeState {
     /// The disco keypair this Tailnet peer uses for the Disco protocol.
     ///
     /// These should be randomly generated for each run of a Tailscale device.
-    pub disco_keys: Pair<DiscoKey>,
+    pub disco_keys: KeyPair<Disco>,
 
     /// The machine keypair for the hardware this Tailnet peer runs on.
-    pub machine_keys: Pair<MachineKey>,
+    pub machine_keys: KeyPair<Machine>,
 
     /// The network lock keypair for this Tailnet peer, for use with Tailnet Lock.
-    pub network_lock_keys: Pair<NetworkLockKey>,
+    pub network_lock_keys: KeyPair<NetworkLock>,
 
     /// The node keypair for this Tailnet peer.
-    pub node_keys: Pair<NodeKey>,
+    pub node_keys: KeyPair<Node>,
 }
 
 impl Debug for NodeState {

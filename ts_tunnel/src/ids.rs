@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ts_keys::{NodeKey, Public};
+use ts_keys::{Node, PublicKey};
 
 use crate::{PeerId, handshake::Handshake, messages::SessionId};
 
@@ -10,12 +10,12 @@ pub struct IdMap {
     sessions: HashMap<SessionId, PeerId>,
     // TODO: track recently abandoned session IDs, avoid reusing them for
     // one or two session lifetimes to avoid confusion with reordered packets.
-    node_keys: HashMap<Public<NodeKey>, PeerId>,
+    node_keys: HashMap<PublicKey<Node>, PeerId>,
 }
 
 impl IdMap {
     /// Return the peer handle for a node public key, if any.
-    pub fn get_by_nodekey(&self, key: &Public<NodeKey>) -> Option<PeerId> {
+    pub fn get_by_nodekey(&self, key: &PublicKey<Node>) -> Option<PeerId> {
         self.node_keys.get(key).copied()
     }
 
@@ -27,7 +27,7 @@ impl IdMap {
     /// Add a peer handle for communicating with the given peer pubkey.
     ///
     /// Returns `false` if a peer already exists for the key.
-    pub fn add_peer(&mut self, id: PeerId, key: &Public<NodeKey>) -> bool {
+    pub fn add_peer(&mut self, id: PeerId, key: &PublicKey<Node>) -> bool {
         if self.node_keys.contains_key(key) {
             return false;
         }
@@ -69,7 +69,7 @@ impl IdMap {
     /// Delete the peer handle for the given key.
     ///
     /// Panics if there is no peer currently using that key.
-    pub fn remove_peer(&mut self, key: &Public<NodeKey>) {
+    pub fn remove_peer(&mut self, key: &PublicKey<Node>) {
         self.node_keys.remove(key).unwrap();
     }
 }

@@ -3,7 +3,7 @@
 use std::{collections::HashMap, convert::Infallible, ops::DerefMut, sync::atomic::AtomicU32};
 
 use tokio::sync::{Mutex, mpsc};
-use ts_keys::{NodeKey, Pair};
+use ts_keys::{KeyPair, Node};
 use ts_packet::PacketMut;
 use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
 
@@ -86,7 +86,7 @@ impl DataPlane {
     ///
     /// The second and third elements of the return tuple are output queues for disco and
     /// STUN messages, respectively.
-    pub fn new(my_key: Pair<NodeKey>) -> (Self, Rx<DiscoBatch>, Rx<StunBatch>) {
+    pub fn new(my_key: KeyPair<Node>) -> (Self, Rx<DiscoBatch>, Rx<StunBatch>) {
         let (overlay_up, overlay_down) = mpsc::unbounded_channel();
         let (underlay_down, underlay_up) = mpsc::unbounded_channel();
 

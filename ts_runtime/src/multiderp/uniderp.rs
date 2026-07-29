@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, watch};
 use ts_control::DerpRegion;
 use ts_dataplane::async_tokio::{FromUnderlay, Rx, ToUnderlay, Tx};
 use ts_derp::RegionId;
-use ts_keys::{NodeKey, Pair, Public};
+use ts_keys::{KeyPair, Node as NodeKey, PublicKey};
 use ts_packet::PacketMut;
 use ts_transport::{
     BatchRecvIter, PeerId, UnderlayTransport, UnderlayTransportExt, UnderlayTransportId,
@@ -225,7 +225,7 @@ struct Runner {
     to_dataplane: Tx<FromUnderlay>,
     from_dataplane: Arc<Mutex<Rx<ToUnderlay>>>,
     peer_db: Arc<RwLock<Option<Arc<PeerDb>>>>,
-    keys: Pair<NodeKey>,
+    keys: KeyPair<NodeKey>,
 }
 
 impl Runner {
@@ -344,8 +344,8 @@ impl Runner {
 
 struct PeerDbLookup(Arc<RwLock<Option<Arc<PeerDb>>>>);
 
-impl ts_transport::PeerLookup<PeerId, Public<NodeKey>> for PeerDbLookup {
-    fn lookup_key(&self, id: PeerId) -> Option<Public<NodeKey>> {
+impl ts_transport::PeerLookup<PeerId, PublicKey<NodeKey>> for PeerDbLookup {
+    fn lookup_key(&self, id: PeerId) -> Option<PublicKey<NodeKey>> {
         let db = self.0.read().unwrap();
         let db = db.as_ref()?;
 
@@ -354,8 +354,8 @@ impl ts_transport::PeerLookup<PeerId, Public<NodeKey>> for PeerDbLookup {
     }
 }
 
-impl ts_transport::PeerLookup<Public<NodeKey>, PeerId> for PeerDbLookup {
-    fn lookup_key(&self, key: Public<NodeKey>) -> Option<PeerId> {
+impl ts_transport::PeerLookup<PublicKey<NodeKey>, PeerId> for PeerDbLookup {
+    fn lookup_key(&self, key: PublicKey<NodeKey>) -> Option<PeerId> {
         let db = self.0.read().unwrap();
         let db = db.as_ref()?;
 

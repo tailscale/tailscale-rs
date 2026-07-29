@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use ts_keys::{NodeKey, Pair, Public};
+use ts_keys::{KeyPair, Node, PublicKey};
 use ts_noise::ikpsk2;
 use ts_packet::PacketMut;
 use ts_time::Handle;
@@ -20,7 +20,7 @@ const PROLOGUE: &[u8] = b"WireGuard v1 zx2c4 Jason@zx2c4.com";
 /// A partially completed incoming handshake.
 pub struct ReceivedHandshake {
     responder_to_initiator_id: SessionId,
-    noise: ikpsk2::ReceivedHandshake,
+    noise: ikpsk2::ReceivedHandshake<Node>,
     // Info decrypted from the HandshakeInitiation
     pub timestamp: TAI64N,
 }
@@ -29,7 +29,7 @@ impl ReceivedHandshake {
     /// Process a peer's handshake initiation message.
     pub fn new(
         pkt: &mut HandshakeInitiation,
-        my_static: &Pair<NodeKey>,
+        my_static: &KeyPair<Node>,
         macs: &MACReceiver,
     ) -> Option<ReceivedHandshake> {
         if !macs.verify_macs(pkt.as_bytes()) {
@@ -37,7 +37,7 @@ impl ReceivedHandshake {
         };
 
         let (noise, timestamp) =
-            ikpsk2::ReceivedHandshake::new(&mut pkt.noise, PROLOGUE, my_static.into())?;
+            ikpsk2::ReceivedHandshake::new(&mut pkt.noise, PROLOGUE, my_static)?;
 
         Some(ReceivedHandshake {
             responder_to_initiator_id: pkt.sender_id,
@@ -75,15 +75,15 @@ impl ReceivedHandshake {
         (session, pkt)
     }
 
-    pub fn peer_static(&self) -> Public<NodeKey> {
+    pub fn peer_static(&self) -> PublicKey<Node> {
         self.noise.peer_static_pub.into()
     }
 }
 
 /// Generate a handshake initiation message for a peer.
 pub fn initiate_handshake(
-    endpoint_static: &Pair<NodeKey>,
-    peer_static: &Public<NodeKey>,
+    endpoint_static: &KeyPair<Node>,
+    peer_static: &PublicKey<Node>,
     session_id: SessionId,
     timestamp: TAI64N,
 ) -> (SentHandshake, HandshakeInitiation) {
@@ -93,8 +93,8 @@ pub fn initiate_handshake(
     };
 
     let noise = ikpsk2::SentHandshake::new(
-        endpoint_static.into(),
-        peer_static.into(),
+        endpoint_static,
+        peer_static,
         PROLOGUE,
         timestamp,
         pkt.noise.as_mut_bytes(),
@@ -111,7 +111,7 @@ pub fn initiate_handshake(
 /// A partially completed sent handshake.
 pub struct SentHandshake {
     pub responder_to_initiator_id: SessionId,
-    noise: ikpsk2::SentHandshake<TAI64N>,
+    noise: ikpsk2::SentHandshake<TAI64N, Node>,
 }
 
 /// A handshake with a peer.
@@ -189,7 +189,7 @@ impl Handshake {
     pub(crate) fn finish(
         &mut self,
         packet: &mut HandshakeResponse,
-        endpoint_static: &Pair<NodeKey>,
+        endpoint_static: &KeyPair<Node>,
         psk: &Psk,
         cookies: &MACReceiver,
         now: Instant,
@@ -203,7 +203,7 @@ impl Handshake {
         let session_keys =
             match sent_handshake
                 .noise
-                .try_finish(&mut packet.noise, endpoint_static.into(), psk)
+                .try_finish(&mut packet.noise, &endpoint_static.private, psk)
             {
                 Ok(session_keys) => session_keys,
                 Err(handshake) => {
@@ -261,7 +261,7 @@ impl Handshake {
 
 #[cfg(test)]
 mod tests {
-    use ts_keys::Pair;
+    use ts_keys::KeyPair;
     use ts_time::Scheduler;
     use zerocopy::TryFromBytes;
 
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_handshake() {
-        let (a_static, b_static) = (Pair::random(), Pair::random());
+        let (a_static, b_static) = (KeyPair::random(), KeyPair::random());
         let psk = rand::random();
 
         // Peer A sends a handshake initiation...

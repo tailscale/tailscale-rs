@@ -1,4 +1,4 @@
-use ts_keys::{NodeKey, Public};
+use ts_keys::{Node, PublicKey};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::frame::{Body, FrameType};
@@ -10,9 +10,9 @@ use crate::frame::{Body, FrameType};
 #[repr(C)]
 pub struct ForwardPacket {
     /// Sender on behalf of which we're forwarding the packet.
-    pub src: Public<NodeKey>,
+    pub src: PublicKey<Node>,
     /// The peer to which the packet should be sent.
-    pub dest: Public<NodeKey>,
+    pub dest: PublicKey<Node>,
 }
 
 impl Body for ForwardPacket {

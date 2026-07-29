@@ -40,7 +40,7 @@ mod test {
         net::{Ipv6Addr, SocketAddrV6},
     };
 
-    use ts_keys::{Private, Public};
+    use ts_keys::{PrivateKey, PublicKey};
     use zerocopy::IntoBytes;
 
     use super::*;
@@ -55,7 +55,7 @@ mod test {
     fn roundtrip_header() {
         let mut rng = rand::rng();
 
-        let header = Header::new(Public::random(), rand_array(&mut rng));
+        let header = Header::new(PublicKey::random(), rand_array(&mut rng));
         header.validate().unwrap();
 
         let mut out = alloc::vec::Vec::new();
@@ -84,8 +84,8 @@ mod test {
         let init = pkt.as_bytes().to_vec();
         let init = unsafe { Packet::from_bytes_unchecked(&init) }.unwrap();
 
-        let sender_key = Private::random();
-        let receiver_key = Private::random();
+        let sender_key = PrivateKey::random();
+        let receiver_key = PrivateKey::random();
         let nonce = rand_array(&mut rng);
 
         let pkt = pkt
@@ -106,7 +106,7 @@ mod test {
         let mut rng = rand::rng();
 
         roundtrip_msg::<Ping>(Ping::size_with_padding(0), |ping| {
-            ping.node_key = Public::random();
+            ping.node_key = PublicKey::random();
             ping.tx_id = rand_array(&mut rng);
         });
     }

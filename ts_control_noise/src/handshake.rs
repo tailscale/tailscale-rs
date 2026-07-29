@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::codec::Framed;
 use ts_hexdump::{AsHexExt, Case};
-use ts_keys::{MachineKey, Pair, Public};
+use ts_keys::{KeyPair, Machine, PublicKey};
 use ts_noise::ik::SentHandshake;
 use zerocopy::{IntoBytes, TryFromBytes};
 
@@ -19,7 +19,7 @@ type WrappedIo<T> = FramedIo<NoiseFramed<T>, BytesMut>;
 
 /// Noise handshake state.
 pub struct Handshake {
-    state: SentHandshake,
+    state: SentHandshake<Machine>,
 }
 
 impl Handshake {
@@ -31,20 +31,20 @@ impl Handshake {
     /// to the control server in order to start the handshake.
     pub fn initialize(
         prologue: &str,
-        node_machine_key: &Pair<MachineKey>,
-        control_public_key: &Public<MachineKey>,
+        node_machine_key: &KeyPair<Machine>,
+        control_public_key: &PublicKey<Machine>,
         capability_version: ts_capabilityversion::CapabilityVersion,
     ) -> (Self, String) {
-        let mut ciphertext = [0; SentHandshake::INIT_SIZE];
+        let mut ciphertext = [0; SentHandshake::<Machine>::INIT_SIZE];
         let state = SentHandshake::new(
-            node_machine_key.into(),
-            &control_public_key.into(),
+            node_machine_key,
+            control_public_key,
             prologue.as_bytes(),
             &mut ciphertext,
         );
         let init_msg = Initiation::new(
             capability_version.into(),
-            SentHandshake::INIT_SIZE as u16,
+            SentHandshake::<Machine>::INIT_SIZE as u16,
             ciphertext,
         );
 
@@ -55,7 +55,7 @@ impl Handshake {
     pub async fn complete<T: AsyncRead + Unpin>(
         mut self,
         mut conn: T,
-        node_machine_key: &Pair<MachineKey>,
+        node_machine_key: &KeyPair<Machine>,
     ) -> Result<WrappedIo<T>, Error> {
         let mut hdr_bytes = [0u8; 3];
         conn.read_exact(&mut hdr_bytes[..]).await?;
@@ -78,7 +78,10 @@ impl Handshake {
             return Err(Error::BadFormat);
         }
 
-        let session = match self.state.try_finish(&mut packet, &node_machine_key.into()) {
+        let session = match self
+            .state
+            .try_finish(&mut packet, &node_machine_key.private)
+        {
             Ok(session) => session,
             Err(state) => {
                 self.state = state;

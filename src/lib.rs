@@ -371,8 +371,7 @@ pub mod netstack {
 pub mod keys {
     #[doc(inline)]
     pub use ts_keys::{
-        DiscoKey, MachineKey, NetworkLockKey, NodeKey, NodeState, Pair, PersistState, Private,
-        Public,
+        Disco, KeyPair, Machine, NetworkLock, Node, NodeState, PersistState, PrivateKey, PublicKey,
     };
 }
 

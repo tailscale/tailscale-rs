@@ -17,7 +17,7 @@ pub mod async_tokio;
 mod packet_ident;
 
 pub use packet_ident::{PacketIdent, PacketType};
-use ts_keys::{NodeKey, Pair};
+use ts_keys::{KeyPair, Node};
 
 /// A data plane subsystem that can be the subject of timer events.
 pub enum Subsystem {
@@ -52,7 +52,7 @@ pub struct DataPlane {
 
 impl DataPlane {
     /// Creates a new data plane for a wireguard node key.
-    pub fn new(my_key: Pair<NodeKey>) -> Self {
+    pub fn new(my_key: KeyPair<Node>) -> Self {
         DataPlane {
             wireguard: Endpoint::new(my_key),
             or_out: Default::default(),

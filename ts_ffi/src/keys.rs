@@ -5,16 +5,21 @@ use std::{
 
 use crate::TOKIO_RUNTIME;
 
+/// A private key.
+#[derive(Default)]
+#[repr(transparent)]
+pub struct key([u8; 32]);
+
 /// Tailscale key state for running a device.
 #[derive(Default)]
 #[repr(C)]
 pub struct persisted_key_state {
     /// Private key for the node (device) identity.
-    pub node_private_key: [u8; 32],
+    pub node_private_key: key,
     /// Private key for the machine.
-    pub machine_private_key: [u8; 32],
+    pub machine_private_key: key,
     /// Private key for tailnet lock.
-    pub network_lock_private_key: [u8; 32],
+    pub network_lock_private_key: key,
 }
 
 impl From<persisted_key_state> for ts_keys::PersistState {
@@ -26,9 +31,9 @@ impl From<persisted_key_state> for ts_keys::PersistState {
 impl From<&persisted_key_state> for ts_keys::PersistState {
     fn from(value: &persisted_key_state) -> Self {
         ts_keys::PersistState {
-            machine_key: value.machine_private_key.into(),
-            network_lock_key: value.network_lock_private_key.into(),
-            node_key: value.node_private_key.into(),
+            machine_key: value.machine_private_key.0.into(),
+            network_lock_key: value.network_lock_private_key.0.into(),
+            node_key: value.node_private_key.0.into(),
         }
     }
 }
@@ -36,9 +41,9 @@ impl From<&persisted_key_state> for ts_keys::PersistState {
 impl From<ts_keys::PersistState> for persisted_key_state {
     fn from(value: ts_keys::PersistState) -> Self {
         Self {
-            machine_private_key: value.machine_key.as_bytes(),
-            network_lock_private_key: value.network_lock_key.as_bytes(),
-            node_private_key: value.node_key.as_bytes(),
+            machine_private_key: key(value.machine_key.as_bytes()),
+            network_lock_private_key: key(value.network_lock_key.as_bytes()),
+            node_private_key: key(value.node_key.as_bytes()),
         }
     }
 }

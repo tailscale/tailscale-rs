@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use tokio::task::JoinSet;
-use ts_keys::{NodeKey, Pair, Public};
+use ts_keys::{KeyPair, Node, PublicKey};
 
 /// Authenticate with control, load the derp map, and attempt to exchange derp pings with
 /// a selected peer.
@@ -14,7 +14,7 @@ use ts_keys::{NodeKey, Pair, Public};
 struct Args {
     /// The key of the peer to ping. If missing, just print received pings.
     #[arg(short, long)]
-    peer: Option<Public<NodeKey>>,
+    peer: Option<PublicKey<Node>>,
 
     /// Send pings to this node.
     #[arg(short = 's', long = "self")]
@@ -40,7 +40,7 @@ async fn main() -> ts_cli_util::Result<()> {
 
     let peer = args
         .send_to_self
-        .then_some(Pair::from(&config.key_state.node_key).public)
+        .then_some(KeyPair::from(&config.key_state.node_key).public)
         .or(args.peer);
 
     tracing::info!(?region_id, "starting derp transport");
@@ -82,7 +82,7 @@ async fn derp_receive_ping(derp: impl Borrow<ts_derp::DefaultClient>) {
 }
 
 #[tracing::instrument(skip(derp), fields(%peer))]
-async fn derp_send_ping(peer: Public<NodeKey>, derp: impl Borrow<ts_derp::DefaultClient>) {
+async fn derp_send_ping(peer: PublicKey<Node>, derp: impl Borrow<ts_derp::DefaultClient>) {
     use bytes::BufMut;
 
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
