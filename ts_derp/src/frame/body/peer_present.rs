@@ -1,4 +1,4 @@
-use ts_keys::NodePublicKey;
+use ts_keys::{Node, PublicKey};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, network_endian::U16};
 
 use crate::frame::{Body, FrameType, Ip};
@@ -8,7 +8,7 @@ use crate::frame::{Body, FrameType, Ip};
 #[repr(C)]
 pub struct PeerPresent {
     /// The connected peer's public key.
-    pub key: NodePublicKey,
+    pub key: PublicKey<Node>,
     /// The IP of the connected peer.
     pub ip: Ip,
     /// The port on which the peer connected.

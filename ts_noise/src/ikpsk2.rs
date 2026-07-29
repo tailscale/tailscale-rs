@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use ts_keys::X25519KeyPair;
+use ts_keys::{KeyPair, PrivateKey, PublicKey, X25519Private, dalek::DalekKeyPair};
 use zerocopy::FromBytes;
 
 use crate::{
@@ -17,14 +17,15 @@ use crate::{
 const PROTOCOL: &[u8] = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s";
 
 /// A partially completed handshake, where the peer is the handshake's initiator.
-pub struct ReceivedHandshake {
+pub struct ReceivedHandshake<T: X25519Private> {
     state: State,
     peer_ephemeral_pub: x25519_dalek::PublicKey,
     /// The peer's static identity.
     pub peer_static_pub: x25519_dalek::PublicKey,
+    _marker: PhantomData<T>,
 }
 
-impl ReceivedHandshake {
+impl<T: X25519Private> ReceivedHandshake<T> {
     /// Size of the packet expected by [`ReceivedHandshake::finish`].
     pub const RESP_SIZE: usize = size_of::<Resp>();
 
@@ -35,9 +36,11 @@ impl ReceivedHandshake {
     pub fn new<'packet, P: Pod>(
         packet: &'packet mut [u8],
         prologue: &[u8],
-        my_static: X25519KeyPair,
+        my_static: &KeyPair<T>,
     ) -> Option<(Self, &'packet mut P)> {
         let packet: &mut Init<P> = Init::mut_from_bytes(packet).ok()?;
+
+        let my_static = DalekKeyPair::from(my_static);
 
         let peer_ephemeral_pub = x25519_dalek::PublicKey::from(packet.ephemeral_pub);
 
@@ -55,6 +58,7 @@ impl ReceivedHandshake {
                 state: handshake,
                 peer_ephemeral_pub,
                 peer_static_pub: packet.static_pub.into(),
+                _marker: PhantomData,
             },
             &mut packet.payload,
         ))
@@ -70,14 +74,14 @@ impl ReceivedHandshake {
     /// If `packet` is the wrong size.
     #[inline]
     pub fn finish(self, psk: &Psk, out: &mut [u8]) -> Session {
-        let ephemeral = X25519KeyPair::random();
+        let ephemeral = DalekKeyPair::random();
         self.finish_with_ephemeral(psk, ephemeral, out)
     }
 
     fn finish_with_ephemeral(
         self,
         psk: &Psk,
-        my_ephemeral: X25519KeyPair,
+        my_ephemeral: DalekKeyPair,
         out: &mut [u8],
     ) -> Session {
         assert_eq!(out.len(), Self::RESP_SIZE);
@@ -96,13 +100,14 @@ impl ReceivedHandshake {
 }
 
 /// A partially completed handshake, where the peer is the handshake's responder.
-pub struct SentHandshake<P: Pod> {
+pub struct SentHandshake<P: Pod, T: X25519Private> {
     state: State,
     my_ephemeral: x25519_dalek::StaticSecret,
-    _phantom: PhantomData<P>,
+    _payload: PhantomData<P>,
+    _marker: PhantomData<T>,
 }
 
-impl<P: Pod> SentHandshake<P> {
+impl<P: Pod, T: X25519Private> SentHandshake<P, T> {
     /// Size of the output packet to be provided to [`SentHandshake::new`].
     pub const INIT_SIZE: usize = size_of::<Init<P>>();
 
@@ -113,26 +118,29 @@ impl<P: Pod> SentHandshake<P> {
     /// If `packet` is not [`SentHandshake::INIT_SIZE`] bytes.
     #[inline]
     pub fn new(
-        my_static: X25519KeyPair,
-        peer_static: x25519_dalek::PublicKey,
+        my_static: &KeyPair<T>,
+        peer_static: &PublicKey<T>,
         prologue: &[u8],
         payload: P,
         out: &mut [u8],
     ) -> Self {
-        let ephemeral = X25519KeyPair::random();
+        let ephemeral = DalekKeyPair::random();
         Self::new_with_ephemeral(my_static, ephemeral, peer_static, prologue, payload, out)
     }
 
     fn new_with_ephemeral(
-        my_static: X25519KeyPair,
-        my_ephemeral: X25519KeyPair,
-        peer_static: x25519_dalek::PublicKey,
+        my_static: &KeyPair<T>,
+        my_ephemeral: DalekKeyPair,
+        peer_static: &PublicKey<T>,
         prologue: &[u8],
         payload: P,
         out: &mut [u8],
     ) -> Self {
         assert_eq!(out.len(), Self::INIT_SIZE);
         let out: &mut Init<P> = Init::mut_from_bytes(out).unwrap();
+
+        let my_static = DalekKeyPair::from(my_static);
+        let peer_static = x25519_dalek::PublicKey::from(peer_static);
 
         out.ephemeral_pub = my_ephemeral.public.to_bytes();
         out.static_pub = my_static.public.to_bytes();
@@ -150,7 +158,8 @@ impl<P: Pod> SentHandshake<P> {
         SentHandshake {
             state,
             my_ephemeral: my_ephemeral.private,
-            _phantom: PhantomData,
+            _payload: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -162,12 +171,14 @@ impl<P: Pod> SentHandshake<P> {
     pub fn try_finish(
         self,
         packet: &mut [u8],
-        my_static: X25519KeyPair,
+        my_static: &PrivateKey<T>,
         psk: &Psk,
     ) -> Result<Session, Self> {
         let Ok(packet) = Resp::mut_from_bytes(packet) else {
             return Err(self);
         };
+
+        let my_static = x25519_dalek::StaticSecret::from(my_static);
 
         let peer_ephemeral_pub = x25519_dalek::PublicKey::from(packet.ephemeral_pub);
         let state = self.state.clone();
@@ -175,7 +186,7 @@ impl<P: Pod> SentHandshake<P> {
         let ret = state
             .mix_hash_and_key(&peer_ephemeral_pub) // e
             .mix_dh(&self.my_ephemeral, &peer_ephemeral_pub) // ee
-            .mix_dh(&my_static.private, &peer_ephemeral_pub) // se
+            .mix_dh(&my_static, &peer_ephemeral_pub) // se
             .mix_psk(psk) // psk
             .open(&mut [], &packet.auth_tag)
             .ok_or(self)?
@@ -190,14 +201,14 @@ mod tests {
     use std::ops::Range;
 
     use itertools::Itertools;
+    use ts_keys::{ExportableKey, Node};
 
     use super::*;
 
-    fn test_key(r: Range<u8>) -> X25519KeyPair {
+    fn test_key(r: Range<u8>) -> KeyPair<Node> {
         assert_eq!(r.len(), 32);
-        let private = x25519_dalek::StaticSecret::from(r.collect_array().unwrap());
-        let public = x25519_dalek::PublicKey::from(&private);
-        X25519KeyPair { private, public }
+        let private = ExportableKey::from(r.collect_array().unwrap()).import();
+        KeyPair::from(private)
     }
 
     #[test]
@@ -218,11 +229,11 @@ mod tests {
         let expected_init_packet = hex::decode("358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd1662544df99f4e2d9c658302e247ec71c206e70c31df074049bd3d8ab636b27d8a20c512e4beeec758c4b2bee13e5d6c4a6abfe18cb917c010702e44515036af229780d44f50cf68cf7cdaabd81372").unwrap();
         let expected_resp_packet = hex::decode("675dd574ed7789310b3d2e7681f3790b466c773b1521fecf36577958371ea52f1d31e903c203fe7ca9187d9ef4059b09").unwrap();
 
-        let mut init_packet = [0; SentHandshake::<[u8; 12]>::INIT_SIZE];
-        let init_sent = SentHandshake::<[u8; 12]>::new_with_ephemeral(
-            init_static.clone(),
-            init_ephemeral,
-            resp_static.public,
+        let mut init_packet = [0; SentHandshake::<[u8; 12], Node>::INIT_SIZE];
+        let init_sent = SentHandshake::<[u8; 12], Node>::new_with_ephemeral(
+            &init_static,
+            init_ephemeral.into(),
+            &resp_static.public,
             PROLOGUE,
             *PAYLOAD,
             &mut init_packet,
@@ -230,15 +241,17 @@ mod tests {
         assert_eq!(init_packet, expected_init_packet.as_ref());
 
         let (resp_recv, resp_payload) =
-            ReceivedHandshake::new::<[u8; 12]>(&mut init_packet, PROLOGUE, resp_static).unwrap();
-        assert_eq!(resp_recv.peer_static_pub, init_static.public);
+            ReceivedHandshake::new::<[u8; 12]>(&mut init_packet, PROLOGUE, &resp_static).unwrap();
+        assert_eq!(resp_recv.peer_static_pub, init_static.public.into());
         assert_eq!(resp_payload, PAYLOAD);
 
-        let mut resp_packet = [0; ReceivedHandshake::RESP_SIZE];
-        let resp_session = resp_recv.finish_with_ephemeral(&psk, resp_ephemeral, &mut resp_packet);
+        let mut resp_packet = [0; ReceivedHandshake::<Node>::RESP_SIZE];
+        let resp_session =
+            resp_recv.finish_with_ephemeral(&psk, resp_ephemeral.into(), &mut resp_packet);
         assert_eq!(resp_packet, expected_resp_packet.as_ref());
 
-        let Ok(init_session) = init_sent.try_finish(&mut resp_packet, init_static, &psk) else {
+        let Ok(init_session) = init_sent.try_finish(&mut resp_packet, &init_static.private, &psk)
+        else {
             panic!("initiator failed to finalize handshake");
         };
 

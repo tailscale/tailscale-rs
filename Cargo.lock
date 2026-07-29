@@ -5942,6 +5942,7 @@ dependencies = [
  "tracing",
  "ts_bart",
  "ts_disco_protocol",
+ "ts_keys",
  "ts_overlay_router",
  "ts_packet",
  "ts_packetfilter",

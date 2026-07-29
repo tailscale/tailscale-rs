@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tokio::task::JoinSet;
-use ts_keys::NodeKeyPair;
+use ts_keys::KeyPair;
 
 mod common;
 
@@ -14,7 +14,7 @@ async fn main() -> ts_cli_util::Result<()> {
     let derp_map = common::load_derp_map().await;
     let region = derp_map.get(&common::REGION_1).unwrap();
 
-    let keypair = NodeKeyPair::new();
+    let keypair = KeyPair::random();
 
     let client = ts_derp::Client::connect(region, &keypair).await?;
     tracing::info!("derp handshake done");

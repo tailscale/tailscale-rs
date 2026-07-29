@@ -25,6 +25,7 @@ ts_underlay_router.workspace = true
 ts_tunnel.workspace = true
 ts_bart.workspace = true
 ts_disco_protocol.workspace = true
+ts_keys.workspace = true
 
 # Unconditionally required dependencies.
 bytes.workspace = true

@@ -3,7 +3,7 @@ use core::{
     hash::{Hash, Hasher},
 };
 
-use ts_keys::NodePublicKey;
+use ts_keys::{Node, PublicKey};
 
 use crate::{Message, MessageType};
 
@@ -26,7 +26,7 @@ pub struct Ping {
     ///
     /// It shouldn't be trusted by itself, but can be combined with netmap data to reduce
     /// the discokey:nodekey relation from 1:N to 1:1.
-    pub node_key: NodePublicKey,
+    pub node_key: PublicKey<Node>,
 
     /// Zero bytes at the end of the message used to probe path MTU.
     pub padding: [u8],
@@ -39,7 +39,7 @@ impl Message for Ping {
 impl Ping {
     /// The size of a ping message with `n` bytes of padding.
     pub const fn size_with_padding(n: usize) -> usize {
-        12 + size_of::<NodePublicKey>() + n
+        12 + size_of::<PublicKey<Node>>() + n
     }
 }
 

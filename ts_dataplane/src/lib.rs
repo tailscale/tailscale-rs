@@ -10,13 +10,14 @@ use ts_packet::PacketMut;
 use ts_packetfilter::{FilterExt, IpProto};
 use ts_time::{Handle, Scheduler};
 use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
-use ts_tunnel::{Endpoint, NodeKeyPair};
+use ts_tunnel::Endpoint;
 use ts_underlay_router as ur;
 
 pub mod async_tokio;
 mod packet_ident;
 
 pub use packet_ident::{PacketIdent, PacketType};
+use ts_keys::{KeyPair, Node};
 
 /// A data plane subsystem that can be the subject of timer events.
 pub enum Subsystem {
@@ -51,7 +52,7 @@ pub struct DataPlane {
 
 impl DataPlane {
     /// Creates a new data plane for a wireguard node key.
-    pub fn new(my_key: NodeKeyPair) -> Self {
+    pub fn new(my_key: KeyPair<Node>) -> Self {
         DataPlane {
             wireguard: Endpoint::new(my_key),
             or_out: Default::default(),

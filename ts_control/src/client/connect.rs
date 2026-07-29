@@ -5,7 +5,7 @@ use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use ts_capabilityversion::CapabilityVersion;
 use ts_http_util::{BytesBody, ClientExt, EmptyBody, HeaderName, HeaderValue, Http2, ResponseExt};
-use ts_keys::{MachineKeyPair, MachinePublicKey};
+use ts_keys::{KeyPair, Machine, PublicKey};
 use url::Url;
 use zerocopy::network_endian::U32;
 
@@ -143,8 +143,8 @@ impl From<InternalErrorKind> for crate::InternalErrorKind {
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ControlPublicKeys {
-    legacy_public_key: MachinePublicKey,
-    public_key: MachinePublicKey,
+    legacy_public_key: PublicKey<Machine>,
+    public_key: PublicKey<Machine>,
 }
 
 impl fmt::Display for ControlPublicKeys {
@@ -160,7 +160,7 @@ impl fmt::Display for ControlPublicKeys {
 #[tracing::instrument(skip_all, fields(%control_url), err)]
 pub async fn connect(
     control_url: &Url,
-    machine_keys: &MachineKeyPair,
+    machine_keys: &KeyPair<Machine>,
 ) -> Result<Http2<BytesBody>, ConnectionError> {
     let h1_client = connect_h1(control_url).await?;
 
@@ -195,15 +195,15 @@ async fn connect_h1(url: &Url) -> Result<ts_http_util::Http1<EmptyBody>, Connect
     }
 }
 
-/// Fetch the control server's [`MachinePublicKey`], which is used to encrypt the Noise connection
-/// to the control server.
+/// Fetch the control server's [machine public key][PublicKey<Machine>], which is
+/// used to encrypt the Noise connection to the control server.
 ///
 /// If the `insecure-keyfetch` feature flag is not enabled, this forces the key url scheme to HTTPS
 /// and validates the server's certificate. This is a critical, load-bearing requirement for
 /// security: if the control server key is MITMed, it's game over. `insecure-keyfetch` is provided
 /// ONLY for integration testing, where it's not practical to issue valid certs.
 #[tracing::instrument(skip_all, fields(%control_url), ret, err, level = "trace")]
-pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, ConnectionError> {
+pub async fn fetch_control_key(control_url: &Url) -> Result<PublicKey<Machine>, ConnectionError> {
     let mut key_url = control_url.join("/key")?;
 
     #[cfg(not(feature = "insecure-keyfetch"))]
@@ -242,7 +242,7 @@ pub async fn upgrade_ts2021(
     control_url: &Url,
     init_msg: &str,
     handshake: ts_control_noise::Handshake,
-    machine_key: &MachineKeyPair,
+    machine_key: &KeyPair<Machine>,
     h1_client: impl ts_http_util::Client<EmptyBody>,
 ) -> Result<impl AsyncRead + AsyncWrite + Unpin + 'static, ConnectionError> {
     let ts2021_url = control_url.join("/ts2021")?;

@@ -6,7 +6,7 @@ use core::{
 
 use chrono::{DateTime, Utc};
 use ts_capabilityversion::CapabilityVersion;
-use ts_keys::{DiscoPublicKey, MachinePublicKey, NodePublicKey};
+use ts_keys::{Disco, Machine, Node as NodeKey, PublicKey};
 
 const LAST_SEEN_FORMAT: &str = "%F %T %Z";
 
@@ -170,15 +170,15 @@ pub struct Node {
     /// The address of the node in the tailnet.
     pub tailnet_address: TailnetAddress,
 
-    /// The node's [`NodePublicKey`].
-    pub node_key: NodePublicKey,
+    /// The node's node public key.
+    pub node_key: PublicKey<NodeKey>,
     /// The node key's expiration.
     pub node_key_expiry: Option<DateTime<Utc>>,
 
-    /// The node's [`MachinePublicKey`], if known.
-    pub machine_key: Option<MachinePublicKey>,
-    /// The node's [`DiscoPublicKey`], if known.
-    pub disco_key: Option<DiscoPublicKey>,
+    /// The node's machine public key, if known.
+    pub machine_key: Option<PublicKey<Machine>>,
+    /// The node's disco public key, if known.
+    pub disco_key: Option<PublicKey<Disco>>,
     /// The signature of the node's public key with the Tailnet Lock signing key, if Tailnet Lock
     /// is enabled and the signature is known.
     pub tailnet_lock_key_signature: Option<Vec<u8>>,
@@ -400,13 +400,13 @@ pub struct NodeUpdate {
     /// The node's capabilities (node caps, not peer caps). If `None`, has not changed.
     pub cap_map: Option<BTreeMap<String, Vec<String>>>,
 
-    /// The node's [`NodePublicKey`]. If `None`, has not changed.
-    pub node_key: Option<NodePublicKey>,
+    /// The node's node public key. If `None`, has not changed.
+    pub node_key: Option<PublicKey<NodeKey>>,
     /// The node key's expiration. If `None`, has not changed.
     pub node_key_expiry: Option<DateTime<Utc>>,
 
-    /// The node's [`DiscoPublicKey`]. If `None`, has not changed.
-    pub disco_key: Option<DiscoPublicKey>,
+    /// The node's disco public key. If `None`, has not changed.
+    pub disco_key: Option<PublicKey<Disco>>,
 
     /// The node's key signature for Tailnet Lock. If `None`, has not changed.
     pub tailnet_lock_key_signature: Option<Vec<u8>>,

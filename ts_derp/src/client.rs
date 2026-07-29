@@ -8,7 +8,7 @@ use tokio::{
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
 use ts_http_util::Client as _;
-use ts_keys::{NodeKeyPair, NodePublicKey};
+use ts_keys::{DerpServer, KeyPair, Node, PublicKey};
 use ts_packet::PacketMut;
 use ts_transport::{BatchRecvIter, BatchSendIter, UnderlayTransport};
 use url::Url;
@@ -60,7 +60,7 @@ where
 {
     /// Perform a derp handshake over the given transport and return a [`Client`].
     #[tracing::instrument(skip_all)]
-    pub async fn handshake(conn: Io, node_keypair: &NodeKeyPair) -> Result<Self, Error> {
+    pub async fn handshake(conn: Io, node_keypair: &KeyPair<Node>) -> Result<Self, Error> {
         let (read_conn, write_conn) = tokio::io::split(conn);
 
         let mut fw = FramedWrite::new(write_conn, frame::Codec);
@@ -118,7 +118,7 @@ where
     }
 
     /// Send a message to a nodekey on the derp server.
-    pub async fn send_one(&self, node_key: NodePublicKey, msg: &[u8]) -> Result<(), Error> {
+    pub async fn send_one(&self, node_key: PublicKey<Node>, msg: &[u8]) -> Result<(), Error> {
         self.send_frame_with_extra(&frame::SendPacket { dest: node_key }, msg)
             .await
     }
@@ -149,7 +149,7 @@ where
 
     /// Waits for a single data packet from a peer to arrive via this DERP server and returns it.
     /// DERP control messages (KeepAlive, Ping, etc) are handled inline and are not returned.
-    pub async fn recv_one(&self) -> Result<(NodePublicKey, PacketMut), Error> {
+    pub async fn recv_one(&self) -> Result<(PublicKey<Node>, PacketMut), Error> {
         // DERP exchanges control messages (KeepAlives, Pings, etc) in-band with data messages
         // (SendPacket, RecvPacket, etc). The caller only cares about the payloads of data
         // messages, so we recv_one_raw() in a loop to handle any control messages while waiting
@@ -212,7 +212,7 @@ impl Client<DefaultIo> {
     /// Connect to and handshake with the derp server with the given URL over HTTP.
     pub async fn connect<'c>(
         region: impl IntoIterator<Item = &'c ServerConnInfo>,
-        node_keypair: &NodeKeyPair,
+        node_keypair: &KeyPair<Node>,
     ) -> Result<Self, Error> {
         let conn = connect(region).await?.unwrap();
 
@@ -233,8 +233,8 @@ impl<Io> fmt::Display for Client<Io> {
 }
 
 fn make_clientinfo(
-    node_keypair: &NodeKeyPair,
-    server_key: &ts_keys::DerpServerPublicKey,
+    node_keypair: &KeyPair<Node>,
+    server_key: &PublicKey<DerpServer>,
 ) -> Result<(ClientInfo, Vec<u8>), Error> {
     let cbox = crypto_box::SalsaBox::new(&server_key.into(), &node_keypair.into());
     let nonce = crypto_box::SalsaBox::generate_nonce(&mut OsRng);
@@ -259,7 +259,7 @@ fn make_clientinfo(
 }
 
 fn decrypt_server_info(
-    node_keypair: &NodeKeyPair,
+    node_keypair: &KeyPair<Node>,
     sk: &ServerKey,
     server_info: &ServerInfo,
     payload: &[u8],
@@ -285,7 +285,7 @@ impl<Io> UnderlayTransport for Client<Io>
 where
     Io: AsyncRead + AsyncWrite + Send,
 {
-    type PeerKey = NodePublicKey;
+    type PeerKey = PublicKey<Node>;
     type Error = Error;
 
     async fn send(

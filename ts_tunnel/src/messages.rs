@@ -1,5 +1,6 @@
 use core::fmt::{Debug, Formatter};
 
+use ts_keys::Node;
 use ts_noise::ikpsk2;
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
@@ -63,7 +64,7 @@ pub struct HandshakeInitiation {
     pub msg_type: MessageType,
     pub _reserved: [u8; 3],
     pub sender_id: SessionId,
-    pub noise: [u8; ikpsk2::SentHandshake::<TAI64N>::INIT_SIZE],
+    pub noise: [u8; ikpsk2::SentHandshake::<TAI64N, Node>::INIT_SIZE],
     pub mac1: [u8; 16],
     pub mac2: [u8; 16],
 }
@@ -74,7 +75,7 @@ impl Default for HandshakeInitiation {
             msg_type: MessageType::HandshakeInitiation,
             _reserved: Default::default(),
             sender_id: Default::default(),
-            noise: [0; ikpsk2::SentHandshake::<TAI64N>::INIT_SIZE],
+            noise: [0; ikpsk2::SentHandshake::<TAI64N, Node>::INIT_SIZE],
             mac1: Default::default(),
             mac2: Default::default(),
         }
@@ -88,7 +89,7 @@ pub struct HandshakeResponse {
     pub _reserved: [u8; 3],
     pub sender_id: SessionId,
     pub receiver_id: SessionId,
-    pub noise: [u8; ikpsk2::ReceivedHandshake::RESP_SIZE],
+    pub noise: [u8; ikpsk2::ReceivedHandshake::<Node>::RESP_SIZE],
     pub mac1: [u8; 16],
     pub mac2: [u8; 16],
 }
@@ -100,7 +101,7 @@ impl Default for HandshakeResponse {
             _reserved: Default::default(),
             sender_id: Default::default(),
             receiver_id: Default::default(),
-            noise: [0; ikpsk2::ReceivedHandshake::RESP_SIZE],
+            noise: [0; ikpsk2::ReceivedHandshake::<Node>::RESP_SIZE],
             mac1: Default::default(),
             mac2: Default::default(),
         }

@@ -1,4 +1,4 @@
-use ts_keys::DiscoPublicKey;
+use ts_keys::{Disco, PublicKey};
 use zerocopy::TryFromBytes;
 
 use crate::Error;
@@ -22,7 +22,7 @@ use crate::Error;
 #[repr(C, packed)]
 pub struct Header {
     magic: [u8; Header::MAGIC.len()],
-    pub(crate) sender_pub: DiscoPublicKey,
+    pub(crate) sender_pub: PublicKey<Disco>,
     pub(crate) nonce: [u8; Header::NONCE_LEN],
 }
 
@@ -35,7 +35,7 @@ impl Header {
     pub const NONCE_LEN: usize = 24;
 
     /// Construct a new [`Header`] with the given pubkey and nonce.
-    pub const fn new(sender_pub: DiscoPublicKey, nonce: [u8; 24]) -> Self {
+    pub const fn new(sender_pub: PublicKey<Disco>, nonce: [u8; 24]) -> Self {
         Self {
             magic: Self::MAGIC,
             sender_pub,
