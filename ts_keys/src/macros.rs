@@ -1,364 +1,281 @@
 /// Generates a struct that implements all the fields/methods needed by both public and private
 /// X25519 keys. Used by `create_x25519_{public_key, private_key, keypair}_type{s}` macros, not
 /// intended to be used by itself.
-macro_rules! _create_x25519_base_key_type {
-    ($(#[$attr:meta])* $key_name:ident, $key_prefix:literal) => {
-        $(#[$attr])*
-        #[derive(Clone, Eq, PartialEq, ::zerocopy::FromBytes, ::zerocopy::Immutable, ::zerocopy::IntoBytes, ::zerocopy::KnownLayout)]
-        pub struct $key_name(
-            [u8; $key_name::KEY_LEN_BYTES]
-        );
-
-        impl $key_name {
-            /// The length of this key type, in bytes.
-            pub const KEY_LEN_BYTES: usize = 32;
-            /// The length of a hexidecimal string representation of this key, excluding the
-            /// prefix and colon.
-            pub const KEY_LEN_HEX_STR: usize = $key_name::KEY_LEN_BYTES * 2;
-            /// The length of a hexidecimal string representation of this key, including the
-            /// prefix and colon.
-            pub const KEY_LEN_FULL_STR: usize = $key_name::KEY_LEN_HEX_STR + $key_name::KEY_PREFIX.len() + 1;
-            /// The prefix placed in front of string representations of this key type, such
-            /// as "$key_prefix:abcd..."
-            pub const KEY_PREFIX: &'static str = $key_prefix;
-
-            /// Return this key as a `u8` byte array.
-            pub fn to_bytes(&self) -> [u8; $key_name::KEY_LEN_BYTES] {
-                self.0
-            }
-
-            fn write_key_str(&self, out: &mut impl ::alloc::fmt::Write) -> ::core::fmt::Result {
-                ::core::write!(out, "{}:", Self::KEY_PREFIX)?;
-                for b in self.0.iter() {
-                    ::core::write!(out, "{b:02x}")?;
-                }
-                Ok(())
-            }
-
-            /// Return this key as a hex-encoded string.
-            ///
-            /// This method exists instead of a Display/ToString impl because the latter makes it
-            /// very easy to inadvertently print secret key material indirectly, through derived
-            /// impls that delegate to the standard traits.
-            ///
-            /// This method exists for situations where a key truly does need to be formatted as
-            /// a hex string, e.g. for credential storage.
-            pub fn to_key_str(&self) -> ::alloc::string::String {
-                let mut ret = ::alloc::string::String::with_capacity(Self::KEY_LEN_FULL_STR);
-                self.write_key_str(&mut ret).unwrap();
-                ret
-            }
-        }
-
-        impl ::core::str::FromStr for $key_name {
-            type Err = $crate::ParseError;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                if s.len() != $key_name::KEY_LEN_FULL_STR {
-                    return Err($crate::ParseError::WrongLength);
-                }
-
-                let mut parts = s.split(':');
-                let Some(prefix) = parts.next() else {
-                    return Err($crate::ParseError::InvalidFormat);
-                };
-                if prefix != $key_name::KEY_PREFIX {
-                    return Err($crate::ParseError::BadPrefix);
-                }
-
-                let Some(hex_str) = parts.next() else {
-                    return Err($crate::ParseError::WrongLength);
-                };
-                if hex_str.len() != $key_name::KEY_LEN_HEX_STR {
-                    return Err($crate::ParseError::WrongLength);
-                }
-
-                // s.split(':') should only return 2 parts: the prefix and the hex string. If
-                // the string contained additional colons, it's malformed and not a valid key
-                // string.
-                if parts.next().is_some() {
-                    return Err($crate::ParseError::InvalidFormat)
-                }
-
-                let mut key = $key_name([0u8; $key_name::KEY_LEN_BYTES]);
-                for i in (0..$key_name::KEY_LEN_HEX_STR).step_by(2) {
-                    let slice = hex_str.get(i..i + 2).unwrap();
-                    let keyidx = i / 2;
-                    let x = u8::from_str_radix(slice, 16).map_err(|_| $crate::ParseError::InvalidFormat)?;
-                    key.0[keyidx] = x;
-                }
-                Ok(key)
-            }
-        }
-
-        impl From<[u8; $key_name::KEY_LEN_BYTES]> for $key_name {
-            fn from(v: [u8; $key_name::KEY_LEN_BYTES]) -> Self {
-                $key_name(v)
-            }
-        }
-
-        impl From<$key_name> for [u8; $key_name::KEY_LEN_BYTES] {
-            fn from(v: $key_name) -> [u8; $key_name::KEY_LEN_BYTES] {
-                v.0
-            }
-        }
-
-        impl From<&$key_name> for [u8; $key_name::KEY_LEN_BYTES] {
-            fn from(v: &$key_name) -> [u8; $key_name::KEY_LEN_BYTES] {
-                v.0
-            }
-        }
-
-        #[cfg(feature = "serde")]
-        impl<'de> ::serde::Deserialize<'de> for $key_name {
-            fn deserialize<D>(deserializer: D) -> ::core::result::Result<$key_name, D::Error> where D: ::serde::Deserializer<'de> {
-                use ::core::str::FromStr;
-
-                struct KeyVisitor;
-
-                impl<'a> ::serde::de::Visitor<'a> for KeyVisitor {
-                    type Value = $key_name;
-
-                    fn expecting(&self, formatter: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
-                        ::core::write!(
-                            formatter,
-                            "a {}-character string with the prefix '{}:' followed by {} hex characters",
-                            $key_name::KEY_LEN_FULL_STR, $key_name::KEY_PREFIX, $key_name::KEY_LEN_HEX_STR
-                        )
-                    }
-
-                    fn visit_str<E>(self, value: &str) -> ::core::result::Result<Self::Value, E> where E: ::serde::de::Error {
-                        $key_name::from_str(value).map_err(|e| ::serde::de::Error::custom(e))
-                    }
-                }
-
-                deserializer.deserialize_str(KeyVisitor)
-            }
-        }
-
-        #[cfg(feature = "serde")]
-        impl ::serde::Serialize for $key_name {
-            fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error> where S: ::serde::Serializer {
-                serializer.serialize_str(&self.to_key_str())
-            }
-        }
-    }
-}
-
-/// Generates a struct that implements all the fields/methods needed by X25519 public keys.
 macro_rules! create_x25519_public_key_type {
     ($(#[$attr:meta])* $public_name:ident, $key_prefix:literal) => {
-        _create_x25519_base_key_type!($(#[$attr])* #[derive(Copy, Default, Hash, PartialOrd, Ord)] $public_name, $key_prefix);
+        $(#[$attr])*
+        #[derive(
+            Clone,
+            Eq,
+            PartialEq,
+            Ord,
+            PartialOrd,
+            Hash,
+            ::zerocopy::Immutable,
+            ::zerocopy::FromBytes,
+            ::zerocopy::IntoBytes,
+            ::zerocopy::KnownLayout,
+            ::zerocopy::Unaligned,
+        )]
+        #[repr(C)]
+        pub struct $public_name([u8; 32]);
 
-        impl From<$public_name> for ::x25519_dalek::PublicKey {
-            fn from(v: $public_name) -> Self {
-                v.0.into()
+        impl $public_name {
+            /// Create a new random public key.
+            ///
+            /// The corresponding private key is discarded, so this is only useful for tests
+            /// that need a public key that will never be used for communication.
+            pub fn random() -> Self {
+                Self($crate::util::random_x25519_public())
+            }
+
+            /// Convert the key to a `crypto_box` [`::crypto_box::PublicKey`], to perform cryptographic operations.
+            ///
+            /// The `crypto_box` type does not preserve the key's Tailscale purpose. You should convert
+            /// keys to the `crypto_box` type as close as possible to the cryptographic operations.
+            pub fn to_crypto_box(&self) -> ::crypto_box::PublicKey {
+                self.0.into()
+            }
+
+            /// Convert the key to an `x25519_dalek` [`::x25519_dalek::PublicKey`], to perform cryptographic operations.
+            ///
+            /// The `x25519_dalek` type does not preserve the key's Tailscale purpose. You should
+            /// convert keys to the `x25519_dalek` type as close as possible to the cryptographic operations.
+            pub fn to_x25519_dalek(&self) -> ::x25519_dalek::PublicKey {
+                self.0.into()
+            }
+
+            /// Create a key from a raw byte array.
+            ///
+            /// Use this sparingly, as it makes it easy to convert bytes into the wrong type of key.
+            /// For serialization, prefer embedding the key type directly into a struct, and relying
+            /// on zerocopy or serde serialization.
+            pub fn from_bytes(b: [u8; 32]) -> Self {
+                Self(b)
             }
         }
 
-        impl From<$public_name> for ::crypto_box::PublicKey {
-            fn from(v: $public_name) -> Self {
-                v.0.into()
+        // TODO: get rid of this default impl. Primary user is ts_control_serde's MapRequest/MapResponse.
+        impl ::core::default::Default for $public_name {
+            fn default() -> Self {
+                Self::random()
             }
         }
 
-        impl From<&$public_name> for ::x25519_dalek::PublicKey {
-            fn from(v: &$public_name) -> Self {
-                v.0.into()
+        // TODO: get rid of the copy trait. It encourages too much silent copying for a type of marginal size.
+        impl ::core::marker::Copy for $public_name {}
+
+        impl $crate::private::SealedExportable for $public_name {
+            const KEY_PREFIX: &'static str = $key_prefix;
+
+            fn as_bytes(&self) -> &[u8; 32] {
+                &self.0
+            }
+
+            fn from_bytes(bytes: [u8; 32]) -> Self {
+                $public_name(bytes)
             }
         }
 
-        impl From<&$public_name> for ::crypto_box::PublicKey {
-            fn from(v: &$public_name) -> Self {
-                v.0.into()
+        impl ::core::str::FromStr for $public_name {
+            type Err = $crate::util::ParseError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                $crate::util::parse_hex(s, $key_prefix).map($public_name)
             }
         }
 
         impl ::core::fmt::Debug for $public_name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                ::core::write!(f, "{self}")
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                $crate::util::write_hex(&self.0, $key_prefix, f)
             }
         }
 
         impl ::core::fmt::Display for $public_name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                self.write_key_str(f)
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                $crate::util::write_hex(&self.0, $key_prefix, f)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> ::serde::Deserialize<'de> for $public_name {
+            fn deserialize<D>(deserializer: D) -> ::core::result::Result<$public_name, D::Error> where D: ::serde::Deserializer<'de> {
+                let s = <&str>::deserialize(deserializer)?;
+                $crate::util::parse_hex(s, $key_prefix).map_err(::serde::de::Error::custom).map($public_name)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl ::serde::Serialize for $public_name {
+            fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error> where S: ::serde::Serializer {
+                serializer.serialize_str(&$crate::util::to_hex_string(&self.0, $key_prefix))
             }
         }
     }
 }
 
-/// Generates a struct that implements all the fields/methods needed by X25519 private keys.
 macro_rules! create_x25519_private_key_type {
-    ($(#[$attr:meta])* $private_name:ident, $public_name:ident, $key_prefix:literal) => {
-        _create_x25519_base_key_type!($(#[$attr])* #[derive(::zeroize::ZeroizeOnDrop)] $private_name, $key_prefix);
+    ($(#[$attr:meta])* $private_name:ident, $key_prefix:literal, $public_name:ident, $pair_name:ident) => {
+        $(#[$attr])*
+        #[doc = concat!("If you need both the public and private components of the key, use ", stringify!($pair_name), " to avoid repeated recomputation of the public key.")]
+        #[derive(Clone, Eq, PartialEq, ::zeroize::ZeroizeOnDrop)]
+        pub struct $private_name([u8; 32]);
 
         impl $private_name {
-            /// Generate a new X25519 private key.
+            /// Create a new random private key.
             pub fn random() -> Self {
-                $private_name(::x25519_dalek::StaticSecret::random().to_bytes())
+                Self($crate::util::random_x25519_private())
             }
 
-            /// Calculate the corresponding public key for this private key.
+            /// Compute the public key counterpart of this private key.
+            #[doc = concat!("Consider instead converting the private key to a ", stringify!($pair_name), ", which caches the public key computation.")]
             pub fn public_key(&self) -> $public_name {
-                ::crypto_box::SecretKey::from(self).public_key().to_bytes().into()
+                let private = self.to_x25519_dalek();
+                let public = ::x25519_dalek::PublicKey::from(&private);
+                $public_name(public.to_bytes())
+            }
+
+            /// Convert the key to a `crypto_box` [`::crypto_box::SecretKey`], to perform cryptographic operations.
+            ///
+            /// The `crypto_box` type does not preserve the key's Tailscale purpose. You should convert
+            /// keys to the `crypto_box` type as close as possible to the cryptographic operations.
+            pub fn to_crypto_box(&self) -> ::crypto_box::SecretKey {
+                self.0.into()
+            }
+
+            /// Convert the key to an `x25519_dalek` [`::x25519_dalek::StaticSecret`], to perform cryptographic operations.
+            ///
+            /// The `x25519_dalek` type does not preserve the key's Tailscale purpose. You should
+            /// convert keys to the `x25519_dalek` type as close as possible to the cryptographic operations.
+            pub fn to_x25519_dalek(&self) -> ::x25519_dalek::StaticSecret {
+                self.0.into()
             }
         }
 
-        impl From<$private_name> for ::x25519_dalek::StaticSecret {
-            fn from(v: $private_name) -> Self {
-                v.0.into()
+        impl $crate::private::SealedExportable for $private_name {
+            const KEY_PREFIX: &'static str = $key_prefix;
+
+            fn as_bytes(&self) -> &[u8; 32] {
+                &self.0
+            }
+
+            fn from_bytes(bytes: [u8; 32]) -> Self {
+                $private_name(bytes)
             }
         }
 
-        impl From<&$private_name> for ::x25519_dalek::StaticSecret {
-            fn from(v: &$private_name) -> Self {
-                v.0.into()
-            }
-        }
+        impl ::core::str::FromStr for $private_name {
+            type Err = $crate::util::ParseError;
 
-        impl From<$private_name> for ::crypto_box::SecretKey {
-            fn from(v: $private_name) -> Self {
-                v.0.into()
-            }
-        }
-
-        impl From<&$private_name> for ::crypto_box::SecretKey {
-            fn from(v: &$private_name) -> Self {
-                v.0.into()
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                $crate::util::parse_hex(s, $key_prefix).map($private_name)
             }
         }
 
         impl ::core::fmt::Debug for $private_name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                ::core::write!(f, "[redacted]")
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                ::core::write!(f, "{}:[redacted]", $key_prefix)
+            }
+        }
+
+        impl ::core::fmt::Display for $private_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                ::core::write!(f, "{}:[redacted]", $key_prefix)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> ::serde::Deserialize<'de> for $private_name {
+            fn deserialize<D>(deserializer: D) -> ::core::result::Result<$private_name, D::Error> where D: ::serde::Deserializer<'de> {
+                let s = <&str>::deserialize(deserializer)?;
+                $crate::util::parse_hex(s, $key_prefix).map_err(::serde::de::Error::custom).map($private_name)
             }
         }
     }
 }
 
-/// Generates the public key, private key, and key pair structs with all the fields/methods needed
-/// to work with X25519 keys.
 macro_rules! create_x25519_keypair_types {
-    ($(#[$public_attr:meta])* $public_name:ident, $public_prefix:literal, $(#[$private_attr:meta])* $private_name:ident, $private_prefix:literal, $(#[$pair_attr:meta])* $keypair_name:ident) => {
-        create_x25519_public_key_type! { $(#[$public_attr])* $public_name, $public_prefix }
-        create_x25519_private_key_type! { $(#[$private_attr])* $private_name, $public_name, $private_prefix }
-
-        impl From<$private_name> for $public_name {
-            fn from(v: $private_name) -> Self {
-                let private = ::x25519_dalek::StaticSecret::from(v.0);
-                let public = ::x25519_dalek::PublicKey::from(&private);
-                $public_name(public.to_bytes())
-            }
-        }
+    (
+        $(#[$public_attr:meta])*
+        $public_name:ident,
+        $public_prefix:literal,
+        $(#[$private_attr:meta])*
+        $private_name:ident,
+        $private_prefix:literal,
+        $(#[$pair_attr:meta])*
+        $pair_name:ident
+    ) => {
+        create_x25519_public_key_type!($(#[$public_attr])* $public_name, $public_prefix);
+        create_x25519_private_key_type!($(#[$private_attr])* $private_name, $private_prefix, $public_name, $pair_name);
 
         $(#[$pair_attr])*
-        #[cfg_attr(feature = "serde", derive(::serde::Deserialize, ::serde::Serialize))]
-        #[derive(Clone, Debug, Eq, PartialEq, ::zerocopy::FromBytes, ::zerocopy::Immutable, ::zerocopy::IntoBytes, ::zerocopy::KnownLayout)]
-        pub struct $keypair_name {
-            /// This keypair's public key.
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct $pair_name {
+            /// The public half of the key pair.
             pub public: $public_name,
-            /// This keypair's private key.
+            /// The private half of the key pair.
             pub private: $private_name,
         }
 
-        impl $keypair_name {
-            /// Generate a new X25519 public/private key pair.
-            pub fn new() -> Self {
-                let private = $private_name::random();
-                let public = private.public_key();
-                Self {
-                    private,
-                    public,
+        impl $pair_name {
+            /// Create a new random keypair.
+            pub fn random() -> Self {
+                $private_name::random().into()
+            }
+
+            /// Convert the key to an `x25519_dalek` keypair, to perform cryptographic operations.
+            ///
+            /// The `x25519_dalek` type does not preserve the key's Tailscale purpose. You should
+            /// convert keys to the `x25519_dalek` type as close as possible to the cryptographic operations.
+            pub fn to_x25519_dalek(&self) -> $crate::dalek::X25519KeyPair {
+                $crate::dalek::X25519KeyPair{
+                    public: self.public.to_x25519_dalek(),
+                    private: self.private.to_x25519_dalek(),
                 }
             }
         }
 
-        impl Default for $keypair_name {
-            fn default() -> Self {
-                Self::new()
+        impl $crate::private::SealedExportable for $pair_name {
+            const KEY_PREFIX: &'static str = $private_prefix;
+
+            fn as_bytes(&self) -> &[u8; 32] {
+                self.private.as_bytes()
+            }
+
+            fn from_bytes(bytes: [u8; 32]) -> Self {
+                $private_name(bytes).into()
             }
         }
 
-        impl From<$private_name> for $keypair_name {
+        impl ::core::str::FromStr for $pair_name {
+            type Err = $crate::util::ParseError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                $private_name::from_str(s).map(Self::from)
+            }
+        }
+
+        impl From<$private_name> for $pair_name {
             fn from(private: $private_name) -> Self {
                 let public = private.public_key();
-                Self {
-                    private,
-                    public,
-                }
+                Self { public, private }
             }
         }
 
-        impl From<$keypair_name> for X25519KeyPair {
-            fn from(v: $keypair_name) -> Self {
-                X25519KeyPair{
-                    public: v.public.into(),
-                    private: v.private.into(),
-                }
+        impl AsRef<$public_name> for $pair_name {
+            fn as_ref(&self) -> &$public_name {
+                &self.public
             }
         }
 
-        impl From<&$keypair_name> for X25519KeyPair {
-            fn from(v: &$keypair_name) -> Self {
-                X25519KeyPair{
-                    public: (&v.public).into(),
-                    private: (&v.private).into(),
-                }
+        impl AsRef<$private_name> for $pair_name {
+            fn as_ref(&self) -> &$private_name {
+                &self.private
             }
         }
-
-        impl From<$keypair_name> for ::x25519_dalek::PublicKey {
-            fn from(v: $keypair_name) -> Self {
-                v.public.into()
-            }
-        }
-
-        impl From<&$keypair_name> for ::x25519_dalek::PublicKey {
-            fn from(v: &$keypair_name) -> Self {
-                v.public.into()
-            }
-        }
-
-        impl From<$keypair_name> for ::crypto_box::PublicKey {
-            fn from(v: $keypair_name) -> Self {
-                v.public.into()
-            }
-        }
-
-        impl From<&$keypair_name> for ::crypto_box::PublicKey {
-            fn from(v: &$keypair_name) -> Self {
-                v.public.into()
-            }
-        }
-
-        impl From<$keypair_name> for ::x25519_dalek::StaticSecret {
-            fn from(v: $keypair_name) -> Self {
-                v.private.into()
-            }
-        }
-
-        impl From<&$keypair_name> for ::x25519_dalek::StaticSecret {
-            fn from(v: &$keypair_name) -> Self {
-                (&v.private).into()
-            }
-        }
-
-        impl From<$keypair_name> for ::crypto_box::SecretKey {
-            fn from(v: $keypair_name) -> Self {
-                v.private.into()
-            }
-        }
-
-        impl From<&$keypair_name> for ::crypto_box::SecretKey {
-            fn from(v: &$keypair_name) -> Self {
-                (&v.private).into()
-            }
-        }
-    }
+    };
 }
 
-pub(crate) use _create_x25519_base_key_type;
 pub(crate) use create_x25519_keypair_types;
 pub(crate) use create_x25519_private_key_type;
 pub(crate) use create_x25519_public_key_type;

@@ -3,51 +3,125 @@
 
 extern crate alloc;
 
+pub mod dalek;
 mod keystate;
 mod macros;
+mod util;
 
+use alloc::string::ToString;
+use core::{
+    fmt,
+    fmt::{Debug, Display, Formatter},
+    str::FromStr,
+};
+
+pub use dalek::X25519KeyPair;
 #[doc(inline)]
 pub use keystate::{NodeState, PersistState};
 use macros::{
-    _create_x25519_base_key_type, create_x25519_keypair_types, create_x25519_private_key_type,
-    create_x25519_public_key_type,
+    create_x25519_keypair_types, create_x25519_private_key_type, create_x25519_public_key_type,
 };
+#[cfg(feature = "serde")]
+use serde::de::Error;
 
-/// Errors that may occur when parsing a string into a key type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ParseError {
-    /// Key string was formatted incorrectly.
-    #[error("key string was formatted incorrectly")]
-    InvalidFormat,
+use crate::util::write_hex;
 
-    /// Key was the wrong length.
-    #[error("key was the wrong length")]
-    WrongLength,
+mod private {
+    use core::{fmt::Debug, str::FromStr};
 
-    /// Parsed prefix did not match the key type.
-    #[error("parsed prefix did not match the key type")]
-    BadPrefix,
+    use crate::util::ParseError;
+
+    pub trait SealedExportable: Clone + Debug + FromStr<Err = ParseError> {
+        const KEY_PREFIX: &'static str;
+
+        fn as_bytes(&self) -> &[u8; 32];
+
+        fn from_bytes(bytes: [u8; 32]) -> Self;
+    }
 }
 
-/// An x25519_dalek private key, and its associated public key.
+/// A key that can be exported for serialization.
+pub trait ExportableKey: private::SealedExportable {
+    /// Convert the key to its serializable form.
+    fn export(&self) -> Export<Self>;
+}
+
+impl<T: private::SealedExportable> ExportableKey for T {
+    fn export(&self) -> Export<Self> {
+        Export(self.clone())
+    }
+}
+
+/// A wrapped key that can be serialized, but not used for cryptographic operations.
 ///
-/// This exists because the x25519_dalek crate doesn't have a pair type, which results in
-/// awkward APIs and pubkey recomputations when we have a strongly typed keypair of our own that
-/// we want to convert cheaply for crypto ops.
+/// This type exists as a guard against accidentally serializing private keys: the regular
+/// key type can be used for cryptographic operations, but cannot be serialized. Conversely,
+/// this wrapper can be serialized, but not used for cryptography without first converting it
+/// back to the underlying key type using [`Export::import`].
+///
+/// Keys should be converted to exportable form as close as possible to the point of
+/// serialization, to make it harder to accidentally serialize the key at an unexpected point.
 #[derive(Clone)]
-pub struct X25519KeyPair {
-    /// The keypair's public key.
-    pub public: ::x25519_dalek::PublicKey,
-    /// The keypair's private key.
-    pub private: ::x25519_dalek::StaticSecret,
+pub struct Export<T: ExportableKey>(T);
+
+impl<T: ExportableKey> Export<T> {
+    /// Remove the export wrapper, returning the underlying key that can be used for
+    /// cryptographic operations.
+    pub fn import(&self) -> T {
+        self.0.clone()
+    }
+
+    /// Create a key from its raw byte representation.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(T::from_bytes(bytes))
+    }
+
+    /// Return the raw byte representation of the key.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
+    }
 }
 
-impl X25519KeyPair {
-    /// Return a new random keypair.
-    pub fn random() -> Self {
-        let private = ::x25519_dalek::StaticSecret::random();
-        let public = ::x25519_dalek::PublicKey::from(&private);
-        Self { public, private }
+impl<T: ExportableKey> Debug for Export<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // The debug impl is redacted even for exportable keys. It's never correct to dump a private
+        // key into logs.
+        Debug::fmt(&self.0, f)
+    }
+}
+
+impl<T: ExportableKey> Display for Export<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_hex(self.0.as_bytes(), T::KEY_PREFIX, f)
+    }
+}
+
+impl<T: ExportableKey> FromStr for Export<T> {
+    type Err = <T as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        <T as FromStr>::from_str(s).map(Export)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: ExportableKey> serde::Deserialize<'de> for Export<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        let s = <&str>::deserialize(deserializer)?;
+        T::from_str(s).map_err(D::Error::custom).map(Self)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: ExportableKey> ::serde::Serialize for Export<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -59,13 +133,12 @@ create_x25519_public_key_type!(
     "chalpub"
 );
 
-// The client never handles DERP server private keys, so we only create a public key type rather
-// than public/private/keypair types.
 create_x25519_public_key_type!(
     /// The X25519 public key of a DERP server.
     DerpServerPublicKey,
     "derp"
 );
+
 create_x25519_keypair_types!(
     /// The X25519 public key a Tailscale node uses for the Disco protocol.
     DiscoPublicKey,
