@@ -6,6 +6,9 @@ on:
     tags:
       - v*
   pull_request:
+  schedule:
+    # Nightly run; execute daily at 06:37 AM UTC on main (default branch).
+    - cron: "37 6 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +25,9 @@ jobs:
 
     strategy:
       matrix:
+        is_pr_or_push:
+          - ${{github.event_name == 'pull_request' || github.event_name == 'push'}}
+
         rust_toolchain:
           - version: 1.95.0
             label: latest
@@ -36,6 +42,11 @@ jobs:
           # macos uses clang, not working yet
           # - triple: aarch64-apple-darwin
           #        runner: macos-26
+
+        exclude:
+          - is_pr_or_push: true
+            build:
+              triple: x86_64-pc-windows-gnu
 
     defaults:
       run:

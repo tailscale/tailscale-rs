@@ -5,11 +5,11 @@ on:
     branches:
       - main
     tags:
-      - 'v*'
+      - "v*"
   pull_request:
   schedule:
     # Nightly run; execute daily at 06:37 AM UTC on main (default branch).
-    - cron: '37 6 * * *'
+    - cron: "37 6 * * *"
 
   workflow_dispatch:
     inputs:
@@ -40,7 +40,6 @@ env:
 
   prev_rust: &prev_rust 1.94.1
   latest_rust: &latest_rust 1.95.0
-
 
 defaults:
   run:
@@ -74,6 +73,10 @@ jobs:
           - is_pr_or_push: true
             target:
               triple: aarch64-apple-darwin
+          # Same for `*-windows-gnu`
+          - is_pr_or_push: true
+            target:
+              triple: x86_64-pc-windows-gnu
     # The name needs to remain stable for the "Require status checks to pass" feature of our branch
     # protection rules to work, thus the "toolchain.label" field in the matrix. Unfortunately the
     # status check matching on job name doesn't support regexes, just an exact job name match.
