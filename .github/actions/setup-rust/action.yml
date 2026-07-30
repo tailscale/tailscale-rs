@@ -26,50 +26,48 @@ inputs:
 
 outputs:
   toolchain_cache_hit:
-    description: Did the toolchain cache hit?
-    value: ${{ steps.cache-rust-toolchain.outputs.cache-hit }}
+    description: Did the rustup toolchain cache hit exactly?
+    value: ${{ steps.cache-toolchain.outputs.cache-hit }}
 
-  target_cache_hit:
-    description: Did the target cache hit?
-    value: ${{ steps.cache-rust-target.outputs.cache-hit }}
+  cache_hit:
+    description: Did the cargo registry + `target/` cache hit exactly?
+    value: ${{ steps.cache-rust.outputs.cache-hit }}
 
 runs:
   using: composite
 
   steps:
     - name: Cache Rust toolchain
-      id: cache-rust-toolchain
+      id: cache-toolchain
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          ~/.rustup/toolchains
+        path: ~/.rustup/toolchains
         key: rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=${{ inputs.targets }}-components=${{ case(inputs.components == '', 'none', inputs.components) }}
-        restore-keys:
+        restore-keys: |
           rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=${{ inputs.targets }}-components=
           rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=
 
     - name: Install Rust toolchain
       id: install-toolchain
-      if: steps.cache-rust-toolchain.outputs.cache-hit != 'true' || inputs.toolchain-version == 'nightly' || inputs.toolchain-version == 'beta' || inputs.toolchain-version == 'stable'
       uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 4/22/2026
       with:
         toolchain: ${{ inputs.toolchain-version }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.builder-triple }},${{ inputs.targets }}
 
-    - name: Cache target/
-      id: cache-rust-target
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-      with:
-        path: |
-          target/
-        key: rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-
-
     - name: Set toolchain override
       shell: bash
       run: rustup override set ${{ inputs.toolchain-version }}
+
+    - name: Limit dev-profile debug info
+      shell: bash
+      run: echo CARGO_PROFILE_DEV_DEBUG=line-tables-only >> $GITHUB_ENV
+
+    - name: Cache cargo registry and target/
+      id: cache-rust
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
+        prefix-key: rust-${{ inputs.cache-key }}
+        key: ${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}
+        cache-workspace-crates: true
+        save-if: ${{ github.ref == 'refs/heads/main' }}
