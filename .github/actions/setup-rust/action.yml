@@ -47,14 +47,14 @@ runs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           ~/.rustup/toolchains
-        key: rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=${{ env.targets }}-components=${{ case(inputs.components == '', 'none', inputs.components) }}
+        key: rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=${{ inputs.targets }}-components=${{ case(inputs.components == '', 'none', inputs.components) }}
         restore-keys:
-          rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=${{ env.targets }}-components=
+          rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=${{ inputs.targets }}-components=
           rust-toolchain-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-targets=
 
     - name: Install Rust toolchain
       id: install-toolchain
-      if: steps.cache-rust-toolchain.outputs.cache-hit != 'true' || inputs.builder-triple == 'nightly' || inputs.builder-triple == 'beta' || inputs.builder-triple == 'stable'
+      if: steps.cache-rust-toolchain.outputs.cache-hit != 'true' || inputs.toolchain-version == 'nightly' || inputs.toolchain-version == 'beta' || inputs.toolchain-version == 'stable'
       uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 4/22/2026
       with:
         toolchain: ${{ inputs.toolchain-version }}
@@ -68,8 +68,7 @@ runs:
         path: |
           target/
         key: rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys:
-          rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-
+        restore-keys: rust-target-${{ inputs.cache-key }}-${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}-
 
     - name: Set toolchain override
       shell: bash
