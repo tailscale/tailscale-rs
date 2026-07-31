@@ -53,16 +53,24 @@ jobs:
         is_pr_or_push:
           - ${{github.event_name == 'pull_request' || github.event_name == 'push'}}
         target:
+          # `msrv_on_pr: false` drops this target's MSRV job from PR/push runs; see the
+          # exclude rule below. The nightly workflow ignores the field and builds MSRV
+          # everywhere.
           - triple: x86_64-unknown-linux-gnu
             runner: linux-x86_64-16cpu
+            msrv_on_pr: true
           - triple: aarch64-unknown-linux-gnu
             runner: linux-arm64-16cpu
+            msrv_on_pr: false
           - triple: aarch64-apple-darwin
             runner: macos-26
+            msrv_on_pr: false
           - triple: x86_64-pc-windows-gnu
             runner: windows-8vcpu
+            msrv_on_pr: false
           - triple: x86_64-pc-windows-msvc
             runner: windows-8vcpu
+            msrv_on_pr: false
         toolchain:
           - version: *prev_rust
             label: prev
@@ -77,6 +85,12 @@ jobs:
           - is_pr_or_push: true
             target:
               triple: x86_64-pc-windows-gnu
+          # Same for the MSRV toolchain, except on the targets flagged `msrv_on_pr` above.
+          - is_pr_or_push: true
+            toolchain:
+              label: prev
+            target:
+              msrv_on_pr: false
     # The name needs to remain stable for the "Require status checks to pass" feature of our branch
     # protection rules to work, thus the "toolchain.label" field in the matrix. Unfortunately the
     # status check matching on job name doesn't support regexes, just an exact job name match.
