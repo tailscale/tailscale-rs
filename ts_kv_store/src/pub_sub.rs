@@ -813,6 +813,13 @@ mod tests {
     use super::*;
     use crate::{Error, storage::SinValue, store};
 
+    /// A value type with an indexed field, for exercising mutation through an index.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Row {
+        pub name: String,
+        pub count: u32,
+    }
+
     store!(
         kvs: {
             Count(u64; OWNER),
@@ -821,6 +828,7 @@ mod tests {
         tables: {
             Items(u32 => String; OWNER; notify(Clone)),
             Plain(u32 => String; OWNER),
+            Rows(u32 => Row; OWNER; index(name: String); notify(Clone)),
         }
     );
 
@@ -918,6 +926,40 @@ mod tests {
                     ItemsKind::TableRemove(ks)
                 }
                 Event::TableClear => ItemsKind::TableClear,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// A comparable projection of a `Rows` notification.
+    #[derive(Debug, PartialEq)]
+    enum RowsKind {
+        KeyUpsert(u32, Row),
+        KeyRemove(u32),
+        TableUpsert(Vec<u32>),
+        TableRemove(Vec<u32>),
+        TableClear,
+    }
+
+    impl From<&Notification> for RowsKind {
+        fn from(n: &Notification) -> RowsKind {
+            let Notification::Rows(e) = n else {
+                panic!();
+            };
+            match e {
+                Event::KeyUpsert(k, v) => RowsKind::KeyUpsert(*k, v.clone()),
+                Event::KeyRemove(k) => RowsKind::KeyRemove(*k),
+                Event::TableUpsert(ks) => {
+                    let mut ks = ks.clone();
+                    ks.sort();
+                    RowsKind::TableUpsert(ks)
+                }
+                Event::TableRemove(ks) => {
+                    let mut ks = ks.clone();
+                    ks.sort();
+                    RowsKind::TableRemove(ks)
+                }
+                Event::TableClear => RowsKind::TableClear,
                 _ => unreachable!(),
             }
         }
@@ -2405,5 +2447,406 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![CountKind::Upsert(8)]
         );
+    }
+
+    /// Seed `Rows` with `(key, name)` pairs (each row's `count` starts at 0) in a committed
+    /// transaction. Names must be distinct, since `name` is an index key.
+    fn seed_rows(store: &KvStore, rows: &[(u32, &str)]) {
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Rows>();
+            for (k, name) in rows {
+                t.insert(
+                    *k,
+                    Row {
+                        name: (*name).to_owned(),
+                        count: 0,
+                    },
+                );
+            }
+        }
+        txn.commit().unwrap();
+    }
+
+    #[test]
+    fn e2e_with_mut_without_change_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        // The closure only reads through its mutable reference.
+        assert_eq!(store.table::<Items>(OWNER).with_mut(&1, |v| v.len()), Ok(2));
+
+        assert!(rec.notifications_for(sub).is_empty());
+        // A transaction with nothing to report doesn't reach the notifier at all.
+        assert_eq!(rec.total_calls(), 0);
+        assert_eq!(store.table::<Items>(OWNER).get(&1), Some("v1".to_owned()));
+    }
+
+    #[test]
+    fn e2e_with_mut_writing_same_value_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1]);
+        rec.reset();
+
+        // Written to, but with a value equal to the one already there.
+        store
+            .table::<Items>(OWNER)
+            .with_mut(&1, |v| *v = "v1".to_owned())
+            .unwrap();
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(rec.total_calls(), 0);
+    }
+
+    #[test]
+    fn e2e_with_mut_changing_value_still_notifies() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1]);
+        rec.reset();
+
+        store
+            .table::<Items>(OWNER)
+            .with_mut(&1, |v| v.push('!'))
+            .unwrap();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyUpsert(1, "v1!".to_owned())]
+        );
+    }
+
+    #[test]
+    fn e2e_mutate_and_revert_in_one_txn_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1]);
+        rec.reset();
+
+        // Only the net effect of a transaction is notifiable, so a change which is undone before
+        // the commit is not reported.
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.with_mut(&1, |v| v.push('!'));
+            t.with_mut(&1, |v| {
+                v.pop();
+            });
+        }
+        txn.commit().unwrap();
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(store.table::<Items>(OWNER).get(&1), Some("v1".to_owned()));
+    }
+
+    #[test]
+    fn e2e_iter_mut_without_mutation_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2, 3]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            // Every row is visited (and so de-indexed and re-indexed), but none is changed.
+            assert_eq!(t.iter_mut().count(), 3);
+        }
+        txn.commit().unwrap();
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(rec.total_calls(), 0);
+    }
+
+    #[test]
+    fn e2e_iter_mut_notifies_only_mutated_keys() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2, 3]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            for (k, v) in t.iter_mut() {
+                if *k == 2 {
+                    v.push('!');
+                }
+            }
+        }
+        txn.commit().unwrap();
+
+        // The iterator handed out a `&mut` for all three rows, but only key 2 changed.
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyUpsert(2, "v2!".to_owned())]
+        );
+    }
+
+    #[test]
+    fn e2e_values_mut_without_mutation_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            let total: usize = t.values_mut().map(|v| v.len()).sum();
+            assert_eq!(total, 4);
+        }
+        txn.commit().unwrap();
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(rec.total_calls(), 0);
+    }
+
+    #[test]
+    fn e2e_no_op_mutation_does_not_mask_other_keys() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.with_mut(&1, |v| v.len());
+            t.with_mut(&2, |v| v.push('!'));
+        }
+        txn.commit().unwrap();
+
+        // Filtering key 1 out must leave key 2's upsert alone (and, since only one key remains,
+        // must still report it as a single-key event).
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyUpsert(2, "v2!".to_owned())]
+        );
+    }
+
+    #[test]
+    fn e2e_no_op_mutation_with_remove_notifies_only_remove() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.with_mut(&1, |v| v.len());
+            t.remove(&2);
+        }
+        txn.commit().unwrap();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyRemove(2)]
+        );
+    }
+
+    #[test]
+    fn e2e_no_op_mutation_of_removed_key_notifies_only_remove() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        // The same key is mutated and then removed; the removal wins.
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.with_mut(&1, |v| v.push('!'));
+            t.remove(&1);
+        }
+        txn.commit().unwrap();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyRemove(1)]
+        );
+    }
+
+    #[test]
+    fn e2e_no_op_mutation_of_watched_key_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store
+            .table::<Items>(OWNER)
+            .subscribe_key(subscriber, 1)
+            .unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.with_mut(&1, |v| v.len());
+            t.with_mut(&2, |v| v.push('!'));
+        }
+        txn.commit().unwrap();
+
+        // The watched key didn't change, and the key which did change isn't watched.
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_insert_of_identical_value_still_notifies() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1]);
+        rec.reset();
+
+        // Precision applies to mutation through a `&mut`, not to writes: an insert is always
+        // reported, even if it writes the value which was already there.
+        store.table::<Items>(OWNER).insert(1, "v1".to_owned());
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyUpsert(1, "v1".to_owned())]
+        );
+    }
+
+    #[test]
+    fn e2e_no_op_mutation_after_clear_still_notifies() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.clear();
+            t.insert(2, "b".to_owned());
+            t.with_mut(&2, |v| v.len());
+        }
+        txn.commit().unwrap();
+
+        // Clearing the table replaces its contents wholesale, so every surviving key is reported
+        // regardless of what the mutable-reference tracking recorded.
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::TableClear, ItemsKind::TableUpsert(vec![2])]
+        );
+    }
+
+    #[test]
+    fn e2e_index_with_mut_without_change_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Rows>(OWNER).subscribe(subscriber).unwrap();
+        seed_rows(&store, &[(1, "a"), (2, "b")]);
+        rec.reset();
+
+        assert_eq!(
+            store
+                .table_by::<index::Rows::name>(OWNER)
+                .with_mut("a", |k, v| (*k, v.count)),
+            Ok((1, 0))
+        );
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(rec.total_calls(), 0);
+    }
+
+    #[test]
+    fn e2e_index_with_mut_changing_value_notifies_base_table() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Rows>(OWNER).subscribe(subscriber).unwrap();
+        seed_rows(&store, &[(1, "a"), (2, "b")]);
+        rec.reset();
+
+        store
+            .table_by::<index::Rows::name>(OWNER)
+            .with_mut("a", |_, v| v.count += 1)
+            .unwrap();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(RowsKind::from)
+                .collect::<Vec<_>>(),
+            vec![RowsKind::KeyUpsert(
+                1,
+                Row {
+                    name: "a".to_owned(),
+                    count: 1,
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn e2e_index_iter_mut_without_mutation_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Rows>(OWNER).subscribe(subscriber).unwrap();
+        seed_rows(&store, &[(1, "a"), (2, "b")]);
+        rec.reset();
+
+        // Iterating an index takes its mutable references via a different path (`Table::get_mut`)
+        // to the one `iter_mut` on a plain table uses.
+        let visited = store
+            .table_by::<index::Rows::name>(OWNER)
+            .with_iter_mut(|it| it.count());
+        assert_eq!(visited, 2);
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(rec.total_calls(), 0);
     }
 }

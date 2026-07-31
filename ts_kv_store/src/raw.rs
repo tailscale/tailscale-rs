@@ -369,7 +369,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };
@@ -413,7 +413,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     pub fn with_iter_mut<F, T>(&self, mut f: F) -> T
     where
         F: for<'a> FnMut(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactional::<D> { txn: &mut txn };

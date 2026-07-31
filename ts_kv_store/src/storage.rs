@@ -9,7 +9,7 @@ use std::{
 use crate::{
     Error, Notifier, Owner, Result,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
-    schema::{self, IndexStorage},
+    schema::{self, IndexStorage, TableDesc},
     transactions::TxnId,
 };
 
@@ -294,6 +294,17 @@ impl<T> VersionedValue<T> {
         }
     }
 
+    fn was_mutated<D: TableDesc<Value = T>>(&self) -> bool {
+        if self.slot_a.is_none() || self.slot_b.is_none() {
+            return false;
+        }
+
+        !D::value_eq(
+            &self.slot_a.as_ref().unwrap().1,
+            &self.slot_b.as_ref().unwrap().1,
+        )
+    }
+
     pub(crate) fn get(&self, id: TxnId) -> Option<&T> {
         // This could be expressed more simply with a match, but that doesn't work for `get_mut` because
         // of mutable borrows. Since the functions do the same thing, I use the more complex code
@@ -539,9 +550,7 @@ pub struct Table<D: schema::TableDesc, I> {
     data: HashMap<D::Key, VersionedValue<D::Value>>,
     /// A mask of deleted rows in the table. Should be checked before reading from `data`.
     delete_mask: DeleteMask<D::Key, D::Value>,
-    /// A list of keys modified (includes inserts, but not deletes) by the given transaction.
-    ///
-    /// Can be an over-approximation, but not an under-approximation.
+    /// Keys modified (includes inserts, but not deletes) by the given transaction.
     modified: Option<TxnMutations<D::Key>>,
     /// A flag indicating if the table has become inconsistent.
     ///
@@ -598,7 +607,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             "Found mismatched modified set to GC"
         );
 
-        for k in &modified.keys {
+        for k in modified.keys.iter().chain(&modified.ref_keys) {
             if let Some(value) = self.data.get_mut(k) {
                 value.gc_txn(txn_id);
 
@@ -650,9 +659,16 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         txn_id: TxnId,
         collect_notifications: bool,
     ) -> HashMap<D::Key, WatchedEvent<D::NotificationValue>> {
-        let modified = self.modified.take().map(|m| {
+        let modified = self.modified.take().and_then(|mut m| {
             assert_eq!(m.txn_id, txn_id);
-            m.keys
+            // The modified set is only used for notifications, so don't pay for filtering the
+            // mutable refs if there is nobody to notify.
+            if !collect_notifications {
+                return None;
+            }
+            self.filter_mutated_refs(&mut m.ref_keys);
+            m.keys.extend(m.ref_keys);
+            Some(m.keys)
         });
 
         match std::mem::take(&mut self.delete_mask) {
@@ -743,6 +759,28 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         }
     }
 
+    /// Takes a set of keys which may have been mutated and removes any keys where the values are unchanged
+    /// in the most recent transaction.
+    fn filter_mutated_refs(&self, refs: &mut HashSet<D::Key>) {
+        match &self.delete_mask {
+            DeleteMask::None => {}
+            DeleteMask::All(..) => {
+                refs.clear();
+                return;
+            }
+            DeleteMask::Some(_, removed_keys) => {
+                refs.retain(|k| !removed_keys.contains(k));
+            }
+        }
+
+        refs.retain(|k| {
+            self.data
+                .get(k)
+                .map(|vv| vv.was_mutated::<D>())
+                .unwrap_or(false)
+        });
+    }
+
     pub(crate) fn len(&self, txn_id: TxnId) -> usize {
         match &self.delete_mask {
             DeleteMask::None => self.iter_data(txn_id).count(),
@@ -787,8 +825,12 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         key: &D::Key,
         txn_id: TxnId,
         max_committed_id: TxnId,
-    ) {
-        record_mutation(&mut self.modified, key, txn_id, max_committed_id);
+    ) where
+        // Required because committing a recorded key compares values using `D::value_eq`, which
+        // panics for value types without `PartialEq`.
+        D::Value: PartialEq,
+    {
+        record_mut_ref(&mut self.modified, key, txn_id, max_committed_id);
     }
 
     /// Get a mutable iterator over the table. Does not keep indexes up to date, nor record mutations.
@@ -840,10 +882,10 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
-        record_mutation(&mut self.modified, key, txn_id, max_committed_id);
+        record_mut_ref(&mut self.modified, key, txn_id, max_committed_id);
         self.indexes.on_remove(value, txn_id, max_committed_id);
 
         Some(value)
@@ -859,10 +901,12 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
-        record_mutation(&mut self.modified, key, txn_id, max_committed_id);
+        // Recorded before calling `f` so that if `f` panics, the (already cloned) value is still
+        // rolled back by `gc_txn`.
+        record_mut_ref(&mut self.modified, key, txn_id, max_committed_id);
         self.indexes.on_remove(value, txn_id, max_committed_id);
         let result = f(value);
         self.indexes.on_insert(key, value, txn_id, max_committed_id);
@@ -982,6 +1026,30 @@ where
 struct TxnMutations<K> {
     txn_id: TxnId,
     keys: HashSet<K>,
+    // Keys where we've returned a mutable reference to that key to the user. We don't know for sure
+    // if the corresponding value was modified, so we'll check at commit time for notifications.
+    // For indexing, we'll just assume they've been modified. For rollback, we need to rollback
+    // whether or not the value was mutated because we will have cloned the value in any case.
+    ref_keys: HashSet<K>,
+}
+
+fn with_mutations<K>(
+    modified: &mut Option<TxnMutations<K>>,
+    txn_id: TxnId,
+    max_committed_id: TxnId,
+    f: impl FnOnce(&mut TxnMutations<K>),
+) {
+    if txn_id == max_committed_id {
+        return;
+    }
+
+    let modified = modified.get_or_insert_with(|| TxnMutations {
+        txn_id,
+        keys: HashSet::new(),
+        ref_keys: HashSet::new(),
+    });
+    assert_eq!(modified.txn_id, txn_id);
+    f(modified);
 }
 
 fn record_mutation<K, Q>(
@@ -993,16 +1061,23 @@ fn record_mutation<K, Q>(
     K: Borrow<Q> + Hash + Eq,
     Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
 {
-    if txn_id == max_committed_id {
-        return;
-    }
-
-    let modified = modified.get_or_insert_with(|| TxnMutations {
-        txn_id,
-        keys: HashSet::new(),
+    with_mutations(modified, txn_id, max_committed_id, |m| {
+        m.keys.insert(key.to_owned());
     });
-    assert_eq!(modified.txn_id, txn_id);
-    modified.keys.insert(key.to_owned());
+}
+
+fn record_mut_ref<K, Q>(
+    modified: &mut Option<TxnMutations<K>>,
+    key: &Q,
+    txn_id: TxnId,
+    max_committed_id: TxnId,
+) where
+    K: Borrow<Q> + Hash + Eq,
+    Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
+{
+    with_mutations(modified, txn_id, max_committed_id, |m| {
+        m.ref_keys.insert(key.to_owned());
+    });
 }
 
 /// Iterate the key-value pairs in a table.
@@ -1059,7 +1134,7 @@ pub(crate) struct TableIteratorMut<'a, D: schema::TableDesc, I> {
 impl<'a, D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Iterator
     for TableIteratorMut<'a, D, I>
 where
-    D::Value: Clone,
+    D::Value: Clone + PartialEq,
 {
     type Item = (&'a D::Key, &'a mut D::Value);
 

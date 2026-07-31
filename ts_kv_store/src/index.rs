@@ -127,7 +127,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
+        BaseValue<D>: Clone + PartialEq,
         IndexValue<D>: Eq + Hash,
     {
         let mut txn = self.store.begin_transaction(self.owner);
@@ -191,7 +191,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
             &mut dyn Iterator<Item = (&D::Key, &'a BaseKey<D>, &'a mut BaseValue<D>)>,
         ) -> T,
         IndexValue<D>: Eq + Hash + Clone,
-        BaseValue<D>: Clone,
+        BaseValue<D>: Clone + PartialEq,
     {
         let mut txn = self.store.begin_transaction(self.owner);
         let mut txn_table = KvTableTransactionalIndex::<D> { txn: &mut txn };
@@ -318,7 +318,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
+        BaseValue<D>: Clone + PartialEq,
         IndexValue<D>: Eq + Hash,
     {
         <&mut Self as IndexedOpsMut<_>>::with_mut::<Q, T>(self, key, f, self.txn.owner)
@@ -367,7 +367,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &mut BaseValue<D>)>
     where
         IndexValue<D>: Eq + Hash + Clone,
-        BaseValue<D>: Clone,
+        BaseValue<D>: Clone + PartialEq,
     {
         let owner = self.txn.owner;
         IndexedOpsMut::iter_mut(self, owner)
@@ -376,7 +376,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
     /// Iterate all the values in a table.
     pub fn iter_base_mut(&mut self) -> impl Iterator<Item = (&BaseKey<D>, &mut BaseValue<D>)>
     where
-        BaseValue<D>: Clone,
+        BaseValue<D>: Clone + PartialEq,
     {
         let owner = self.txn.owner;
         IndexedOpsMut::values_mut(self, owner)
@@ -947,6 +947,59 @@ mod test {
         assert_eq!(index.get("Zara").unwrap(), (1, row("Zara")));
         // Bob was visited but not modified; its index entry must be intact.
         assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    #[test]
+    fn index_with_mut_without_change_keeps_index_intact() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.table::<Users>(OWNER).insert(2, row("Bob"));
+
+        store
+            .table_by::<index::Users::name>(OWNER)
+            .with_mut("Alice", |_, v| v.name.len())
+            .unwrap();
+
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.get("Alice").unwrap(), (1, row("Alice")));
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+        assert_eq!(store.table::<Users>(OWNER).get(&1), Some(row("Alice")));
+    }
+
+    #[test]
+    fn index_with_iter_mut_without_mutation_keeps_index_intact() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.table::<Users>(OWNER).insert(2, row("Bob"));
+
+        // Every row is de-indexed as it is yielded and re-indexed when the iterator is dropped,
+        // even though none of them changed.
+        let visited = store
+            .table_by::<index::Users::name>(OWNER)
+            .with_iter_mut(|i| i.count());
+        assert_eq!(visited, 2);
+
+        let index = store.table_by::<index::Users::name>(OWNER);
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.get("Alice").unwrap(), (1, row("Alice")));
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    #[test]
+    fn index_table_used_directly_supports_with_mut() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.table::<Users>(OWNER).insert(2, row("Bob"));
+
+        let index_table = store.table::<index::Users::name>(OWNER);
+        assert_eq!(index_table.get("Alice"), Some(1));
+        // Repointing the index entry at the other base row.
+        assert_eq!(
+            index_table.with_mut("Alice", |k| std::mem::replace(k, 2)),
+            Ok(1)
+        );
+        assert_eq!(index_table.get("Alice"), Some(2));
     }
 
     #[test]

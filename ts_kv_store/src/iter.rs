@@ -102,6 +102,8 @@ impl<'guard, Guard, D: TableDesc, Kind> Drop for TableIterator<'guard, Guard, D,
 
 /// An iterator giving mutable access to values.
 pub struct TableIteratorMut<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: TableDesc, Kind>
+where
+    D::Value: PartialEq,
 {
     /// Guard on the KV store's storage (all of it).
     guard: Guard,
@@ -118,7 +120,7 @@ pub struct TableIteratorMut<'guard, Guard: StorageGuardMut<D::Storage> + 'guard,
 impl<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: TableDesc, Kind>
     TableIteratorMut<'guard, Guard, D, Kind>
 where
-    D::Value: Clone,
+    D::Value: Clone + PartialEq,
 {
     /// Create an iterator over the table described by `D`.
     pub(crate) fn new(guard: Guard, owner: Owner) -> Self
@@ -152,6 +154,8 @@ where
 
 impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc, Kind> Drop
     for TableIteratorMut<'guard, Guard, D, Kind>
+where
+    D::Value: PartialEq,
 {
     fn drop(&mut self) {
         let storage = self.guard.storage();
@@ -170,7 +174,7 @@ impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc, Kind> Drop
 impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc> Iterator
     for TableIteratorMut<'guard, Guard, D, KeysAndValues>
 where
-    D::Value: Clone,
+    D::Value: Clone + PartialEq,
 {
     type Item = (&'guard D::Key, &'guard mut D::Value);
 
@@ -182,7 +186,7 @@ where
 impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc> Iterator
     for TableIteratorMut<'guard, Guard, D, Values>
 where
-    D::Value: Clone,
+    D::Value: Clone + PartialEq,
 {
     type Item = &'guard mut D::Value;
 
@@ -350,7 +354,7 @@ impl<'guard, Guard: StorageGuardMut<D::Storage>, D: IndexDesc> Iterator
     for IndexIteratorMut<'guard, Guard, D>
 where
     D::Value: Clone + Hash + Eq,
-    <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone,
+    <<D as IndexDesc>::BaseTable as TableDesc>::Value: Clone + PartialEq,
 {
     type Item = (
         &'guard D::Key,

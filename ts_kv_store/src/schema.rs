@@ -114,6 +114,10 @@ pub trait TableDesc: Sized + 'static {
     ) -> <Self::Storage as GeneratedStorage>::Notification;
     /// Create a value for a notification, possibly by cloning `value`.
     fn clone_value_for_notification(value: &Self::Value) -> Self::NotificationValue;
+
+    /// Compare two references to this table's value type, returns `true` if the value type impls
+    /// `PartialEq` and the values are equal. **Panics** if `Self::Value` does not impl `PartialEq`.
+    fn value_eq(a: &Self::Value, b: &Self::Value) -> bool;
 }
 
 /// Similar to `TableDesc::get_table_mut`, but allows for getting two different tables at one time.
@@ -352,6 +356,8 @@ macro_rules! store {
                 fn clone_value_for_notification(_value: &Self::Value) -> Self::NotificationValue {
                     $crate::table_notification_clone_value!(_value $(; notify($notif))?)
                 }
+
+                $crate::value_eq!(Self::Value);
             }
 
             $(
@@ -375,12 +381,15 @@ macro_rules! store {
                         unreachable!();
                     }
                     fn clone_value_for_notification(_value: &Self::Value) -> Self::NotificationValue {}
+
+                    $crate::value_eq!(Self::Value);
                 }
 
                 impl $crate::schema::IndexDesc for index::$name::$field {
                     type BaseTable = $name;
                 }
             )*
+
         )*)?
 
         /// Macro-generated storage for all tabular data.
@@ -607,6 +616,39 @@ macro_rules! on_insert_each {
             } else {
                 $self.$field.set_poisoned($txn_id);
             }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! value_eq {
+    ($t:ty) => {
+        fn value_eq(a: &$t, b: &$t) -> bool {
+            // Use the 'autoref specialization' trick (https://github.com/dtolnay/case-studies/tree/master/autoref-specialization)
+            // to compare values if possible and panic if not. Panicking is safe here because
+            // this method is only called for possibly mutated values, and values can only be
+            // mutated if they impl `PartialEq`.
+            #[allow(dead_code)]
+            trait HasEq {
+                fn veq(&self, other: &Self) -> bool;
+            }
+            #[allow(dead_code)]
+            trait MaybeEq {
+                fn veq(&self, other: Self) -> bool;
+            }
+            impl<T: core::cmp::PartialEq> HasEq for T {
+                fn veq(&self, other: &Self) -> bool {
+                    self == other
+                }
+            }
+            impl<T> MaybeEq for &T {
+                fn veq(&self, _other: Self) -> bool {
+                    unreachable!();
+                }
+            }
+
+            a.veq(b)
         }
     };
 }

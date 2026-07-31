@@ -377,7 +377,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         <&mut Self as TabularOpsMut<_>>::with_mut(self, key, f, self.txn.owner)
     }
@@ -409,7 +409,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
     /// Iterate all the key/value pairs in a table.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&D::Key, &mut D::Value)>
     where
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         let owner = self.txn.owner;
         TabularOpsMut::iter_mut(self, owner)
@@ -418,7 +418,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
     /// Iterate all the values in a table.
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut D::Value>
     where
-        D::Value: Clone,
+        D::Value: Clone + PartialEq,
     {
         let owner = self.txn.owner;
         TabularOpsMut::values_mut(self, owner)
@@ -1071,6 +1071,59 @@ mod test {
     }
 
     #[test]
+    fn txn_no_op_with_mut_commit_leaves_value_unchanged() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("k", "a".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        assert_eq!(txn.table::<Items>().with_mut(&"k", |v| v.len()), Some(1));
+        txn.commit().unwrap();
+
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("a".to_owned()));
+    }
+
+    #[test]
+    fn txn_no_op_with_mut_then_rollback_preserves_value() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("k", "a".to_owned());
+
+        // Take a mutable reference to the row but change nothing, then roll back.
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table::<Items>().with_mut(&"k", |_| {});
+        }
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("a".to_owned()));
+
+        // A second rolled-back transaction, this one writing to the same row.
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table::<Items>().insert("k", "b".to_owned());
+        }
+
+        // Neither transaction committed, so the row must still hold its committed value.
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("a".to_owned()));
+    }
+
+    #[test]
+    fn txn_no_op_iter_mut_then_rollback_preserves_value() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("k", "a".to_owned());
+
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            assert_eq!(txn.table::<Items>().iter_mut().count(), 1);
+        }
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("a".to_owned()));
+
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table::<Items>().insert("k", "b".to_owned());
+        }
+
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("a".to_owned()));
+    }
+
+    #[test]
     fn txn_table_iter_keys_cloned_empty() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
@@ -1593,6 +1646,27 @@ mod test {
 
         // The panicked transaction must have rolled back to the pre-transaction value.
         assert_eq!(store.get::<Count>(OWNER), Some(1));
+    }
+
+    #[test]
+    fn panic_in_with_mut_rolls_back() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("k", "a".to_owned());
+
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.table::<Items>().with_mut(&"k", |v| {
+                *v = "b".to_owned();
+                panic!();
+            });
+        }))
+        .unwrap_err();
+
+        // The mutation must be rolled back, both for the store itself and for the next
+        // transaction (which is handed the same transaction id as the panicked one).
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("a".to_owned()));
+        let mut txn = store.begin_transaction(OWNER);
+        assert_eq!(txn.table::<Items>().get(&"k"), Some("a".to_owned()));
     }
 
     #[test]
