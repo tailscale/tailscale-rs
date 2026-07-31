@@ -150,10 +150,10 @@ jobs:
         name: binstall
         uses: cargo-bins/cargo-binstall@dc19f1e48450eefe5a29b8da6c6b00a87d730b37 #v1.18.1
       - name: Install cargo-deny
-        run: command -v cargo-deny || cargo binstall --no-confirm cargo-deny
+        run: command -v cargo-deny || cargo binstall --no-confirm --force cargo-deny
       - &cargo_ws
         name: Install cargo-workspaces
-        run: command -v cargo-workspaces || cargo binstall --no-confirm cargo-workspaces
+        run: command -v cargo-workspaces || cargo binstall --no-confirm --force cargo-workspaces
       - name: Check for unused dependencies (cargo machete)
         uses: bnjbvr/cargo-machete@main
         with:

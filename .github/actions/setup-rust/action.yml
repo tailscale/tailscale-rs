@@ -71,3 +71,4 @@ runs:
         key: ${{ inputs.builder-triple }}-${{ inputs.toolchain-version }}
         cache-workspace-crates: true
         save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-bin: false
