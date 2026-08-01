@@ -456,7 +456,7 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
                     UpdateDialPlan {
                         dial_plan: dial_plan.clone(),
                     },
-                    false,
+                    true,
                 )
                 .await
                 .unwrap()
