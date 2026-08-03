@@ -169,7 +169,7 @@ jobs:
         name: Install cargo-workspaces
         run: command -v cargo-workspaces || cargo binstall --no-confirm --force cargo-workspaces
       - name: Check for unused dependencies (cargo machete)
-        uses: bnjbvr/cargo-machete@main
+        uses: bnjbvr/cargo-machete@ac30a525c0a8d163a92d727b3ff079ee3f6ecb08 # v0.9.2
         with:
           args: "--with-metadata"
       - name: Dependency audit (cargo deny)
