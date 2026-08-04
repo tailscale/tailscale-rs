@@ -28,6 +28,8 @@ Put changes for the upcoming release here!
   Private keys continue to have serde implementations for serializing to/from disk.
 - **Security** (ts_elixir): don't print fields of the Keystate struct when inspected.
   Previously a GenServer crash would print the keystate in logs.
+- **Security** (ts_tunnel): fix DoS in handshake logic, where an attacker could force
+  handshakes to fail by racing an invalid response to the initiator. (#334)
 - Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits,
   rather than panic.
 - Fixed(ts_tunnel): adjust session rotation logic to match the spec (#286)

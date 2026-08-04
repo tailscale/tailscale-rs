@@ -194,9 +194,10 @@ impl Handshake {
         cookies: &MACReceiver,
         now: Instant,
     ) -> Option<BidiSession> {
-        let (mut sent_handshake, timeout, _) = self.take_initiated()?;
+        let (mut sent_handshake, timeout, mac) = self.take_initiated()?;
 
         if !cookies.verify_macs(packet.as_bytes()) {
+            *self = Handshake::Initiated(sent_handshake, timeout, mac);
             return None;
         };
 
@@ -208,6 +209,7 @@ impl Handshake {
                 Ok(session_keys) => session_keys,
                 Err(handshake) => {
                     sent_handshake.noise = handshake;
+                    *self = Handshake::Initiated(sent_handshake, timeout, mac);
                     return None;
                 }
             };
@@ -286,7 +288,7 @@ mod tests {
         let mut scheduler = Scheduler::default();
         let timeout = scheduler.add(
             ts_time::TimeRange::new_around(Instant::now(), std::time::Duration::from_secs(1000)),
-            crate::Event::HandshakeTimeout(crate::config::PeerId(0)),
+            Event::HandshakeTimeout(crate::config::PeerId(0)),
         );
         let mut a_handshake = Handshake::Initiated(a_handshake, timeout, handshake_mac);
 
@@ -324,5 +326,70 @@ mod tests {
         b_session.encrypt(&mut packets);
         let a_received = a_session.decrypt(packets);
         assert_eq!(a_received, b_plaintext);
+    }
+
+    // Regression test for https://github.com/tailscale/tailscale-rs/issues/334
+    #[test]
+    fn test_invalid_response_ignored() {
+        let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
+        let psk = rand::random();
+
+        // A sends a handshake
+        let a_mac_send = MACSender::new(&b_static.public);
+        let a_mac_recv = MACReceiver::new(&a_static.public);
+        let a_session = SessionId::random(); // A wants to receive at this ID
+        let a_init_time = TAI64N::now();
+        let (a_handshake, init_pkt) =
+            initiate_handshake(&a_static, &b_static.public, a_session, a_init_time);
+
+        let mut init_pkt = PacketMut::from(init_pkt.as_bytes());
+        let handshake_mac = a_mac_send.write_macs(init_pkt.as_mut());
+        let mut scheduler = Scheduler::default();
+        let timeout = scheduler.add(
+            ts_time::TimeRange::new_around(Instant::now(), std::time::Duration::from_secs(1000)),
+            Event::HandshakeTimeout(crate::PeerId(0)),
+        );
+        let mut a_handshake = Handshake::Initiated(a_handshake, timeout, handshake_mac);
+
+        // B receives and responds
+        let init_pkt = HandshakeInitiation::try_mut_from_bytes(init_pkt.as_mut())
+            .expect("init_pkt should be a valid handshake initiation message");
+        let b_mac_send = MACSender::new(&a_static.public);
+        let b_mac_recv = MACReceiver::new(&b_static.public);
+        let b_handshake = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
+            .expect("peer B should successfully process A's handshake initiation");
+        let b_session = SessionId::random(); // B wants to receive at this ID
+        let (_b_session, mut response_pkt) =
+            b_handshake.respond(b_session, &psk, &b_mac_send, Instant::now());
+
+        // A receives several invalid responses: one with bad MACs, one with a bad Noise handshake
+        assert!(
+            a_handshake
+                .finish(
+                    &mut HandshakeResponse::default(),
+                    &a_static,
+                    &psk,
+                    &a_mac_recv,
+                    Instant::now()
+                )
+                .is_none()
+        );
+        let mut corrupt_pkt = response_pkt.clone();
+        let corrupt_pkt = HandshakeResponse::try_mut_from_bytes(corrupt_pkt.as_mut()).unwrap();
+        corrupt_pkt.noise[3] += 1;
+        assert!(
+            a_handshake
+                .finish(corrupt_pkt, &a_static, &psk, &a_mac_recv, Instant::now())
+                .is_none()
+        );
+
+        // Finally, A receives the correct response and establishes the session.
+        let response_pkt = HandshakeResponse::try_mut_from_bytes(response_pkt.as_mut())
+            .expect("response_pkt should be a valid handshake response message");
+        assert!(
+            a_handshake
+                .finish(response_pkt, &a_static, &psk, &a_mac_recv, Instant::now())
+                .is_some()
+        );
     }
 }
