@@ -17,6 +17,8 @@ pub struct DerpLatencyMeasurer {
     env: Env,
 }
 
+impl DerpLatencyMeasurer;
+
 impl kameo::Actor for DerpLatencyMeasurer {
     type Args = Env;
     type Error = Error;
