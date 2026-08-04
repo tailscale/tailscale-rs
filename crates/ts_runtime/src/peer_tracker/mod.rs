@@ -1,7 +1,7 @@
 //! Peer delta update tracking.
 
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
-
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use kameo::{
     actor::ActorRef,
     message::{Context, Message},
@@ -10,7 +10,7 @@ use kameo::{
 use ts_control::Node;
 use ts_transport::PeerId;
 
-use crate::{Error, env::Env};
+use crate::{Error, env::Env, kv};
 
 mod peer_db;
 
@@ -25,6 +25,9 @@ pub struct PeerTracker {
 }
 
 impl PeerTracker {
+    /// [`ts_kv_store`] owner name for [`PeerTracker`].
+    pub const KV_OWNER: &str = "peer_tracker";
+
     fn peer_by_name_opt(&self, name: &str) -> Option<&Node> {
         let name = name.trim_end_matches('.');
         self.peer_db.get(&name).map(|(_id, node)| node)
@@ -56,6 +59,112 @@ enum Pending {
     PeerByName(PeerByName, ReplySender<Option<Node>>),
     AcceptedRoute(PeerByAcceptedRoute, ReplySender<Vec<Node>>),
     TailnetIp(PeerByTailnetIp, ReplySender<Option<Node>>),
+}
+
+impl kv::KvStore {
+    pub fn peer_by_name(&self, name: &str) -> Option<(PeerId, Node)> {
+        let name = name.trim_end_matches('.');
+
+        let txn = self.begin_ro_transaction(PeerTracker::KV_OWNER);
+
+        if let Some(ret) = txn
+            .table_by::<kv::index::Peers::fqdn>()
+            .get(name)
+            .unwrap_ok()
+        {
+            return Some(ret);
+        }
+
+        txn.table_by::<kv::index::Peers::hostname>()
+            .get(name)
+            .unwrap_ok()
+    }
+
+    pub fn peers_by_accepted_route(
+        &self,
+        ip: ipnet::IpNet,
+    ) -> impl Iterator<Item = (PeerId, Node)> {
+        let txn = self.begin_ro_transaction(PeerTracker::KV_OWNER);
+
+        txn.with::<kv::PeerRouteIndex, _>(|v| v.lookup_prefix(ip).cloned())
+            .flatten()
+            .into_iter()
+            .flat_map(|x| x.into_iter())
+            .filter_map(move |id| {
+                let node = txn.table::<kv::Peers>().get(&id)?;
+                Some((id, node))
+            })
+    }
+
+    pub fn peer_by_tailnet_ip(&self, ip: IpAddr) -> Option<(PeerId, Node)> {
+        let txn = self.begin_ro_transaction(PeerTracker::KV_OWNER);
+
+        let id = txn.with::<kv::PeerIpIndex, _>(|v| v.lookup(ip).copied())??;
+        let node = txn.table::<kv::Peers>().get(&id)?;
+
+        Some((id, node))
+    }
+}
+
+fn clear_ip_idxs(txn: &mut ts_kv_store::Transaction<kv::TableStorage>, peer: &Node)  {
+    let mut ip_idx = txn.get_arc::<kv::PeerIpIndex>().unwrap_or_default();
+    let mut rt_idx = txn.get_arc::<kv::PeerRouteIndex>().unwrap_or_default();
+
+    // Decrement refcounts so we can (optimistically) Arc::make_mut below
+    txn.remove::<kv::PeerIpIndex>();
+    txn.remove::<kv::PeerRouteIndex>();
+
+    let id = txn.table_by::<kv::index::Peers::stable_id>().with(&peer.stable_id, |&id, _| id).unwrap_ok();
+
+    {
+        let ip_idx = Arc::make_mut(&mut ip_idx);
+        ip_idx.remove(peer.tailnet_address.ipv4.into());
+        ip_idx.remove(peer.tailnet_address.ipv6.into());
+
+        let rt_idx = Arc::make_mut(&mut rt_idx);
+        for &route in &peer.accepted_routes {
+            rt_idx.modify(route, |val| match val {
+                Some(val) => {
+                    let mut some_matched = false;
+
+                    val.retain(|&mut x| {
+                        let ids_match = Some(x) == id;
+                        some_matched = some_matched || ids_match;
+
+                        !ids_match
+                    });
+
+                    assert!(some_matched);
+
+                    if val.is_empty() {
+                        RouteModification::Remove
+                    } else {
+                        RouteModification::Noop
+                    }
+                },
+                None => RouteModification::Noop,
+            });
+        }
+    }
+
+    txn.insert::<kv::PeerIpIndex>(ip_idx);
+    txn.insert::<kv::PeerRouteIndex>(rt_idx);
+}
+
+fn upsert_peer(txn: &mut ts_kv_store::Transaction<kv::TableStorage>, peer: &Node) -> PeerId {
+    static NEXT_PEER_ID: AtomicU32 = AtomicU32::new(0);
+
+    if let Some(id) = txn.table_by::<kv::index::Peers::stable_id>().with_mut(&peer.stable_id, |id, node| {
+        *node = peer.clone();
+        *id
+    }).unwrap_ok() {
+        return id;
+    }
+
+    let id = NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed);
+    txn.table::<kv::Peers>().insert(PeerId(id), peer.clone());
+
+    PeerId(id)
 }
 
 // For messages with arguments, a struct is generated with the args as fields. They aren't
@@ -166,6 +275,9 @@ mod msg_impl {
 }
 
 pub use msg_impl::*;
+use ts_bart::{RouteModification, RoutingTable, RoutingTableExt};
+
+use crate::kv::ResultExt;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PeerState {
@@ -191,6 +303,8 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
         let mut upserts = HashSet::default();
         let mut deletions = HashSet::default();
 
+        let mut txn = self.env.kv_store.begin_transaction(Self::KV_OWNER);
+
         match peer_update {
             ts_control::PeerUpdate::Full(new_nodes) => {
                 tracing::trace!("full peer update");
@@ -200,17 +314,10 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                     .map(|x| &x.stable_id)
                     .collect::<HashSet<_>>();
 
-                self.peer_db.retain(|id, peer| {
-                    let retain = new_ids.contains(&peer.stable_id);
-
-                    if !retain {
-                        deletions.insert(id);
-                    }
-
-                    retain
-                });
+                txn.table_by::<kv::index::Peers::stable_id>().clear();
 
                 for node in new_nodes {
+                    txn.table::<kv::Peers>().insert(node.)
                     let peer_id = self.peer_db.upsert(node);
                     upserts.insert(peer_id);
                 }
@@ -223,22 +330,26 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
             } => {
                 tracing::trace!("delta peer update");
 
-                for peer in remove {
-                    let Some((id, _node)) = self.peer_db.remove(peer) else {
-                        tracing::error!(control_node_id = peer, "removed peer was unknown");
-                        continue;
-                    };
+                let mut table = txn.table_by::<kv::index::Peers::control_id>();
 
-                    deletions.insert(id);
+                for peer in remove {
+                    table.with(peer, |id, _node| {
+                        deletions.insert(id);
+                    }).unwrap_poison();
+
+                    table.remove(peer);
                 }
 
                 for peer in upsert {
-                    let id = self.peer_db.upsert(peer);
-
+                    let id = upsert_peer(&mut txn, peer);
                     upserts.insert(id);
                 }
 
                 for update in patch {
+                    table.with_mut(&update.id, |id, node| {
+                        node.apply_update(update);
+                    }).unwrap_poison();
+
                     if let Some(id) = self.peer_db.patch(update) {
                         upserts.insert(id);
                     } else {

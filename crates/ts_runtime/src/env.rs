@@ -14,7 +14,7 @@ use smol_str::SmolStr;
 use crate::{
     Error, ErrorKind,
     error::ResultExt,
-    registry,
+    kv, registry,
     registry::{ErasedWeakRef, Forward, Registry},
     retained_bus::RetainedBus,
 };
@@ -26,15 +26,22 @@ pub struct Env {
     pub registry: ActorRef<Registry>,
 
     pub keys: Arc<ts_keys::NodeState>,
+
+    pub kv_store: Arc<kv::KvStore>,
+    notifier: Arc<ts_kv_store_tokio::TokioNotifier<kv::TableStorage>>,
 }
 
 impl Env {
     pub fn new(keys: ts_keys::NodeState) -> Self {
+        let notifier = ts_kv_store_tokio::TokioNotifier::new();
+
         Self {
             bus: RetainedBus::spawn_default(),
             scheduler: Scheduler::spawn_default(),
             registry: Registry::spawn_default(),
             keys: Arc::new(keys),
+            kv_store: Arc::new(kv::KvStore::with_notifier(Arc::downgrade(&notifier) as _)),
+            notifier,
         }
     }
 
