@@ -20,6 +20,7 @@ mod direct;
 mod disco;
 mod env;
 mod error;
+mod kv;
 mod multiderp;
 mod netmon;
 mod netstack_actor;
