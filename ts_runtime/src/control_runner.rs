@@ -248,6 +248,8 @@ impl ControlRunner {
 }
 
 impl ControlRunner {
+    pub const KV_OWNER: &str = "control";
+
     /// Call `f` with a map request built from the current control actor state.
     ///
     /// `stream` dictates whether the request is built for a streaming netmap response or as a
