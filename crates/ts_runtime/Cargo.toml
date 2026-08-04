@@ -28,6 +28,8 @@ ts_transport.workspace = true
 ts_derp.workspace = true
 ts_tunnel.workspace = true
 ts_util.workspace = true
+ts_kv_store.workspace = true
+ts_kv_store_tokio.workspace = true
 
 # Unconditionally required dependencies.
 futures.workspace = true
