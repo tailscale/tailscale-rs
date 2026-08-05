@@ -31,7 +31,7 @@ impl Default for Config {
         Self {
             command_channel_capacity: Some(32),
 
-            mtu: 1500,
+            mtu: 1280,
 
             loopback: false,
 
