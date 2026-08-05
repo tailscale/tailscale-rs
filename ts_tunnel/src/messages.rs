@@ -159,7 +159,7 @@ pub struct CookieReply {
 impl Default for CookieReply {
     fn default() -> Self {
         Self {
-            msg_type: MessageType::TransportData,
+            msg_type: MessageType::CookieReply,
             _reserved: Default::default(),
             receiver_id: Default::default(),
             nonce: Default::default(),
