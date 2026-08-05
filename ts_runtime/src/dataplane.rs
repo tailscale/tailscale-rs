@@ -13,6 +13,7 @@ use ts_dataplane::async_tokio::{
 };
 use ts_disco_protocol::{Packet, Plaintext};
 use ts_hexdump::{AsHexExt, Case};
+use ts_packet::PacketMut;
 use ts_transport::{DynEndpoint, OverlayTransportId, UnderlayTransportId};
 
 use crate::{
@@ -44,14 +45,25 @@ impl DataplaneActor {
     ) -> (UnderlayTransportId, Rx<ToUnderlay>, Tx<FromUnderlay>) {
         self.dataplane.new_underlay_transport().await
     }
+
+    /// Send a message directly to an underlay transport, bypassing the routing layer.
+    #[message]
+    pub async fn send_underlay(
+        &self,
+        underlay_id: UnderlayTransportId,
+        endpoint: DynEndpoint,
+        bufs: Vec<PacketMut>,
+    ) -> bool {
+        self.dataplane
+            .send_underlay(underlay_id, endpoint, bufs)
+            .await
+    }
 }
 
 pub type DiscoPacket = yoke::Yoke<&'static Packet<Plaintext>, ts_packet::Packet>;
 
 #[derive(Clone)]
 pub struct IncomingDiscoMsg {
-    // TODO(npry): used as part of direct transport
-    #[expect(dead_code)]
     pub sender: DynEndpoint,
     pub packet: DiscoPacket,
 }
