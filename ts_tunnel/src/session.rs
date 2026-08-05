@@ -112,12 +112,11 @@ pub const SESSION_FRESH_LIFETIME: Duration = Duration::from_secs(120);
 /// How long a session can be used before being discarded.
 ///
 /// Endpoints must not continue using a session older than this. If there is still traffic
-/// being exchanged, a key rotation handshake should have started at the halfway point
-/// (defined by [`SESSION_FRESH_LIFETIME`]) to switch to a new session. If that handshake
-/// fails to establish a new session in time, or traffic is no longer being exchanged,
-/// the previously established session is forcibly discarded after this much time to preserve
-/// forward secrecy.
-pub const SESSION_LIFETIME: Duration = Duration::from_secs(240);
+/// being exchanged, a key rotation handshake should have started after `SESSION_FRESH_LIFETIME`
+/// to switch to a new session. If that handshake fails to establish a new session in time, or
+/// traffic is no longer being exchanged, the previously established session is forcibly discarded
+/// after this much time to preserve forward secrecy.
+pub const SESSION_LIFETIME: Duration = Duration::from_secs(180);
 
 /// Grace time for cleaning up a session that has exceeded [`SESSION_LIFETIME`].
 ///
