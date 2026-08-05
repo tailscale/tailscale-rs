@@ -96,11 +96,11 @@ impl Peer {
         now: Instant,
         out: &mut RecvResult,
     ) {
-        let pre_len = packets.len();
-
+        let mut dropped = 0;
         packets.retain_mut(|packet| match MessageMut::try_from(packet.as_mut()) {
             Err(()) => {
                 tracing::trace!("dropping invalid packet");
+                dropped += 1;
                 false
             }
             Ok(MessageMut::TransportDataHeader(_)) => true,
@@ -122,9 +122,8 @@ impl Peer {
             }
         });
 
-        let post_len = packets.len();
-        if post_len != pre_len {
-            tracing::trace!(n_dropped = pre_len - post_len, "dropped packets");
+        if dropped > 0 {
+            tracing::trace!(n_dropped = dropped, "dropped packets");
         }
 
         self.recv_transport_data(endpoint, session_id, packets, now, out);
