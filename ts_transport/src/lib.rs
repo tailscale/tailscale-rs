@@ -6,14 +6,16 @@ extern crate alloc;
 use core::fmt::{Debug, Display, Formatter};
 
 mod batch_iter;
-mod map_key;
+mod endpoint;
 mod overlay;
 mod underlay;
 
 pub use batch_iter::{BatchRecvIter, BatchSendIter};
-pub use map_key::{MapPeerKey, PeerLookup};
+pub use endpoint::{DerpEndpoint, DynEndpoint, DynOrd, Endpoint, EndpointStorage, UdpEndpoint};
 pub use overlay::{OverlayTransport, OverlayTransportId};
-pub use underlay::{UnderlayTransport, UnderlayTransportExt, UnderlayTransportId};
+pub use underlay::{UnderlayTransport, UnderlayTransportId};
+
+pub extern crate smallbox;
 
 /// The unique id of a peer.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

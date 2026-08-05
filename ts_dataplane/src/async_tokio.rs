@@ -9,10 +9,10 @@ use std::{
 
 use tokio::sync::{Mutex, mpsc, watch};
 use ts_packet::PacketMut;
-use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
+use ts_transport::{DynEndpoint, OverlayTransportId, PeerId, UnderlayTransportId};
 use ts_tunnel::NodeKeyPair;
 
-use crate::{EventResult, InboundResult, OutboundResult};
+use crate::{InboundResult, OutboundResult};
 
 // NOTE(npry): this used to have unique types for each queue, but the names got confusing due to
 // having to think about the cartesian product of PacketType x QueueDirection x Network
@@ -29,14 +29,14 @@ pub type ToOverlay = Vec<PacketMut>;
 pub type FromOverlay = Vec<PacketMut>;
 
 /// Packet batches sent to an underlay.
-pub type ToUnderlay = (PeerId, Vec<PacketMut>);
+pub type ToUnderlay = (DynEndpoint, Vec<PacketMut>);
 /// Packet batches received from an underlay.
-pub type FromUnderlay = Vec<PacketMut>;
+pub type FromUnderlay = (DynEndpoint, Vec<PacketMut>);
 
 /// A batch of disco packets received from an underlay transport.
-pub type DiscoBatch = Vec<PacketMut>;
+pub type DiscoBatch = (DynEndpoint, Vec<PacketMut>);
 /// A batch of stun packets received from an underlay transport.
-pub type StunBatch = Vec<PacketMut>;
+pub type StunBatch = (DynEndpoint, Vec<PacketMut>);
 
 /// Hashset where membership indicates that a peer has had activity recently and we should run
 /// path discovery.
@@ -202,8 +202,8 @@ impl DataPlane {
     #[tracing::instrument(skip_all)]
     pub async fn step(&self) {
         enum SelectResult {
-            OverlayDown(Vec<PacketMut>),
-            UnderlayUp(Vec<PacketMut>),
+            OverlayDown(FromOverlay),
+            UnderlayUp(FromUnderlay),
             TransportsChanged,
             Event,
         }
@@ -242,10 +242,10 @@ impl DataPlane {
                 }
 
                 underlay_pkts = underlay_up.recv() => {
-                    let underlay_pkts = underlay_pkts.unwrap();
-                    tracing::trace!(n_underlay_pkts = underlay_pkts.len());
+                    let (ep, underlay_pkts) = underlay_pkts.unwrap();
+                    tracing::trace!(from_ep = %ep.ty(), n_underlay_pkts = underlay_pkts.len());
 
-                    SelectResult::UnderlayUp(underlay_pkts)
+                    SelectResult::UnderlayUp((ep, underlay_pkts))
                 }
 
                 _ = self.transports_changed.notified() => {
@@ -277,27 +277,28 @@ impl DataPlane {
 
                 (Some(to_peers), Some(loopback))
             }
-            SelectResult::UnderlayUp(underlay_up) => {
+            SelectResult::UnderlayUp((ep, pkts)) => {
                 let InboundResult {
                     to_local,
                     to_peers,
                     disco,
                     stun,
-                } = core.sync.process_inbound(underlay_up);
+                } = core.sync.process_inbound(pkts);
 
-                if !disco.is_empty() && core.disco_out.send(disco).is_err() {
+                if !disco.is_empty() && core.disco_out.send((ep.clone(), disco)).is_err() {
                     tracing::warn!("disco packets dropped: no receiver");
                 }
 
-                if !stun.is_empty() && core.stun_out.send(stun).is_err() {
+                if !stun.is_empty() && core.stun_out.send((ep, stun)).is_err() {
                     tracing::warn!("stun packets dropped: no receiver");
                 }
 
                 (Some(to_peers), Some(to_local))
             }
             SelectResult::Event => {
-                let EventResult { to_peers } = core.sync.process_events();
+                let to_peers = core.sync.process_events();
                 possible_gc = true;
+
                 (Some(to_peers), None)
             }
             SelectResult::TransportsChanged => (None, None),
@@ -355,15 +356,12 @@ async fn write_to_overlay(slf: &CoreState, packets: HashMap<OverlayTransportId, 
     }
 }
 
-async fn write_to_underlay(
-    slf: &CoreState,
-    packets: impl IntoIterator<Item = ((UnderlayTransportId, PeerId), Vec<PacketMut>)>,
-) {
-    for ((tid, peer_id), packets) in packets {
-        tracing::trace!(underlay_id = ?tid, %peer_id, n_packets = packets.len());
+async fn write_to_underlay(slf: &CoreState, packets: ts_underlay_router::outbound::Result) {
+    for ((tid, endpoint), packets) in packets {
+        tracing::trace!(underlay_id = ?tid, ?endpoint, n_packets = packets.len());
 
         if let Some(queue) = slf.underlay_transports.get(&tid) {
-            queue.send((peer_id, packets)).unwrap();
+            queue.send((endpoint, packets)).unwrap();
         }
     }
 }

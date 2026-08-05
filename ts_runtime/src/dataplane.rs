@@ -9,11 +9,11 @@ use kameo::{
     message::{Context, Message, StreamMessage},
 };
 use ts_dataplane::async_tokio::{
-    ActivePeers, FromOverlay, FromUnderlay, Rx, ToOverlay, ToUnderlay, Tx,
+    ActivePeers, DiscoBatch, FromOverlay, FromUnderlay, Rx, StunBatch, ToOverlay, ToUnderlay, Tx,
 };
 use ts_disco_protocol::{Packet, Plaintext};
-use ts_packet::PacketMut;
-use ts_transport::{OverlayTransportId, UnderlayTransportId};
+use ts_hexdump::{AsHexExt, Case};
+use ts_transport::{DynEndpoint, OverlayTransportId, UnderlayTransportId};
 
 use crate::{
     Error, Task,
@@ -49,27 +49,35 @@ impl DataplaneActor {
 pub type DiscoPacket = yoke::Yoke<&'static Packet<Plaintext>, ts_packet::Packet>;
 
 #[derive(Clone)]
-pub struct IncomingDiscoMsg(pub DiscoPacket);
+pub struct IncomingDiscoMsg {
+    // TODO(npry): used as part of direct transport
+    #[expect(dead_code)]
+    pub sender: DynEndpoint,
+    pub packet: DiscoPacket,
+}
 
 impl Debug for IncomingDiscoMsg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
+        self.packet.get().fmt(f)
     }
 }
 
 impl AsRef<Packet<Plaintext>> for IncomingDiscoMsg {
     fn as_ref(&self) -> &Packet<Plaintext> {
-        self.0.get()
+        self.packet.get()
     }
 }
 
-struct DiscoInternal(PacketMut);
+struct DiscoInternal(DiscoBatch);
 
 #[derive(Debug, Clone)]
 #[expect(dead_code)]
-pub struct IncomingStunMsg(pub ts_packet::Packet);
+pub struct IncomingStunMsg {
+    pub sender: DynEndpoint,
+    pub pkt: ts_packet::Packet,
+}
 
-struct StunInternal(PacketMut);
+struct StunInternal(StunBatch);
 
 impl kameo::Actor for DataplaneActor {
     type Args = Env;
@@ -82,17 +90,13 @@ impl kameo::Actor for DataplaneActor {
         let dataplane = Arc::new(dataplane);
 
         slf.attach_stream(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(disco)
-                .flat_map(tokio_stream::iter)
-                .map(DiscoInternal),
+            tokio_stream::wrappers::UnboundedReceiverStream::new(disco).map(DiscoInternal),
             (),
             (),
         );
 
         slf.attach_stream(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(stun)
-                .flat_map(tokio_stream::iter)
-                .map(StunInternal),
+            tokio_stream::wrappers::UnboundedReceiverStream::new(stun).map(StunInternal),
             (),
             (),
         );
@@ -131,35 +135,43 @@ impl Message<StreamMessage<DiscoInternal, (), ()>> for DataplaneActor {
         msg: StreamMessage<DiscoInternal, (), ()>,
         _ctx: &mut Context<Self, Self::Reply>,
     ) {
-        let mut buf = match msg {
+        let (ep, bufs) = match msg {
             StreamMessage::Next(pkt) => pkt.0,
             _ => return,
         };
 
-        let pkt = match Packet::from_encrypted_bytes_mut(buf.as_mut()) {
-            Ok(pkt) => pkt,
-            Err(e) => {
-                tracing::error!(error = %e, "parsing disco message");
+        for mut buf in bufs {
+            let pkt = match Packet::from_encrypted_bytes_mut(buf.as_mut()) {
+                Ok(pkt) => pkt,
+                Err(e) => {
+                    tracing::error!(error = %e, "parsing disco message:\n{}",
+                        buf.iter().hexdump_string(Case::Lower)
+                    );
+                    return;
+                }
+            };
+
+            if let Err(e) = pkt.decrypt_in_place(&self.env.keys.disco_keys.private) {
+                tracing::error!(error = %e, "decrypting disco message");
                 return;
-            }
-        };
+            };
 
-        if let Err(e) = pkt.decrypt_in_place(&self.env.keys.disco_keys.private) {
-            tracing::error!(error = %e, "decrypting disco message");
-            return;
-        };
+            let pkt = yoke::Yoke::<&'static Packet<Plaintext>, _>::try_attach_to_cart(
+                buf.freeze(),
+                // SAFETY: we just parsed this from the same buffer, so type/version are set correctly.
+                |buf| unsafe { Packet::from_bytes_unchecked(buf) },
+            )
+            .unwrap();
 
-        let pkt = yoke::Yoke::<&'static Packet<Plaintext>, _>::try_attach_to_cart(
-            buf.freeze(),
-            // SAFETY: we just parsed this from the same buffer, so type/version are set correctly.
-            |buf| unsafe { Packet::from_bytes_unchecked(buf) },
-        )
-        .unwrap();
-        let pkt = IncomingDiscoMsg(pkt);
+            let pkt = IncomingDiscoMsg {
+                sender: ep.clone(),
+                packet: pkt,
+            };
 
-        tracing::trace!(?pkt, "decrypted disco message");
+            tracing::trace!(?pkt, "decrypted disco message");
 
-        self.env.publish_noretain(pkt).await.unwrap();
+            self.env.publish_noretain(pkt).await.unwrap();
+        }
     }
 }
 
@@ -171,15 +183,20 @@ impl Message<StreamMessage<StunInternal, (), ()>> for DataplaneActor {
         msg: StreamMessage<StunInternal, (), ()>,
         _ctx: &mut Context<Self, Self::Reply>,
     ) {
-        let pkt = match msg {
+        let (ep, pkts) = match msg {
             StreamMessage::Next(pkt) => pkt.0,
             _ => return,
         };
 
-        self.env
-            .publish_noretain(IncomingStunMsg(pkt.freeze()))
-            .await
-            .unwrap();
+        for pkt in pkts {
+            self.env
+                .publish_noretain(IncomingStunMsg {
+                    pkt: pkt.freeze(),
+                    sender: ep.clone(),
+                })
+                .await
+                .unwrap();
+        }
     }
 }
 

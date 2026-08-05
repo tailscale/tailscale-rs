@@ -8,7 +8,7 @@ use ts_bart::RoutingTable;
 use ts_overlay_router::{
     inbound::RouteAction as InboundRouteAction, outbound::RouteAction as OutboundRouteAction,
 };
-use ts_transport::{OverlayTransportId, PeerId, UnderlayTransportId};
+use ts_transport::{DynEndpoint, OverlayTransportId, PeerId, UnderlayTransportId};
 
 use crate::{Error, env::Env, multiderp::DerpTransportMap, peer_tracker::PeerState};
 
@@ -53,7 +53,9 @@ impl RouteUpdater {
             match derp_map.0.get(&region) {
                 Some(&transport_id) => {
                     span.record("underlay_transport", tracing::field::debug(transport_id));
-                    routes.underlay_routes.insert(*id, transport_id);
+                    routes
+                        .underlay_routes
+                        .insert(*id, (transport_id, DynEndpoint::derp(peer.node_key.into())));
                 }
                 None => {
                     tracing::error!("no region stored in multiderp, no underlay route");
@@ -108,7 +110,7 @@ pub struct PeerRouteUpdate {
 
 #[derive(Default)]
 pub struct PeerRoutesInner {
-    pub underlay_routes: HashMap<PeerId, UnderlayTransportId>,
+    pub underlay_routes: HashMap<PeerId, (UnderlayTransportId, DynEndpoint)>,
     pub overlay_out_routes: ts_bart::Table<OutboundRouteAction>,
 }
 

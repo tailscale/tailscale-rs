@@ -73,6 +73,7 @@
         (lib.fileset.fileFilter (file: file.name == "prefixes.txt.gz") ./ts_bart)
         (lib.fileset.fileFilter (file: file.name == "Cargo.toml") ./.)
         (lib.fileset.fileFilter (file: file.name == "Cargo.lock") ./.)
+        (lib.fileset.fileFilter (file: file.name == ".clippy.toml") ./.)
         (lib.fileset.fileFilter (file: file.name == "config.toml") ./.)  # capture .cargo/config.toml
       ];
 
