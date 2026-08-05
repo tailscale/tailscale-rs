@@ -28,7 +28,7 @@ As stated above, this crate by itself is NOT a complete implementation of WireGu
 
 In particular, this crate operates on packets with no awareness of IP protocols. Packets are opaque byte sequences to
 be encrypted/decrypted/queued/dropped as specified by the session and handshake state machines. This means that this
-crate does not implement aspects of WireGuard that requires awareness of IP addressing. These aspects must be provided
+crate does not implement aspects of WireGuard that requires awareness of IP networking. These aspects must be provided
 by the caller to be a complete implementation of the protocol:
 
 ### Cryptokey routing
@@ -40,6 +40,14 @@ automatically routed to the correct peer based on destination IP.
 This crate does _not_ enforce this unique association. The caller tags packets to be sent with the destination peer ID,
 and received packets are similarly tagged with the originating peer ID. It is up to the caller to select the correct
 peer when sending, and to validate the source IP when receiving.
+
+### Packet padding
+
+A complete WireGuard implementation pads cleartext packets before encryption, to complicate traffic analysis.
+
+This crate does not handle packet padding. It is the caller's responsibility to pad outgoing packets appropriately,
+and to strip any padding from received packets from peers. The padding removal in particular requires parsing received
+IP datagrams to find what the correct packet length should be.
 
 ### Underlay addressing & roaming
 

@@ -84,6 +84,32 @@ impl DataPlane {
         }
     }
 
+    /// Pad `packets` to a 16-byte boundary, as required by `ts_tunnel`.
+    fn pad_packets(packets: &mut Vec<PacketMut>) {
+        const PAD_ALIGN: usize = 16;
+        for p in packets {
+            let m = p.len() % PAD_ALIGN;
+            if m != 0 {
+                p.grow_back(PAD_ALIGN - m);
+            }
+        }
+    }
+
+    /// Remove padding from `packets`.
+    ///
+    /// Packets which do not superficially match the structure of an IPv4 or IPv6 packet are
+    /// removed from `packets`.
+    fn unpad_packets(packets: &mut Vec<PacketMut>) {
+        packets.retain_mut(|packet| {
+            if let Some(sz) = packet.get_ip_len() {
+                packet.resize(sz);
+                true
+            } else {
+                false
+            }
+        });
+    }
+
     /// Processes packets originating from the local device.
     #[tracing::instrument(skip_all, fields(n_packets = packets.len()))]
     pub fn process_outbound(&mut self, packets: Vec<PacketMut>) -> OutboundResult {
@@ -96,10 +122,11 @@ impl DataPlane {
 
         let to_wireguard = to_wireguard
             .into_iter()
-            .inspect(|(id, _)| {
-                self.active_peers.insert(*id, now);
+            .map(|(id, mut packets)| {
+                self.active_peers.insert(id, now);
+                Self::pad_packets(&mut packets);
+                (ts_tunnel::PeerId(id.0), packets)
             })
-            .map(|(k, v)| (ts_tunnel::PeerId(k.0), v))
             .collect::<Vec<_>>();
 
         let ts_tunnel::SendResult {
@@ -144,6 +171,16 @@ impl DataPlane {
 
         let to_local = to_local
             .into_iter()
+            .filter_map(
+                |(peer_id, mut packets)| -> Option<(ts_tunnel::PeerId, Vec<PacketMut>)> {
+                    Self::unpad_packets(&mut packets);
+                    if packets.is_empty() {
+                        None
+                    } else {
+                        Some((peer_id, packets))
+                    }
+                },
+            )
             .map(|(peer_id, mut packets)| -> Vec<PacketMut> {
                 let _span = tracing::trace_span!(
                     "src_filter_inbound",

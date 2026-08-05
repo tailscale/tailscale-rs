@@ -248,6 +248,18 @@ impl PacketMut {
         self.contents.extend_from_slice(slice);
     }
 
+    /// Add zero bytes to, or remove excess bytes from, the end of the packet to make its length
+    /// exactly `len`.
+    pub fn resize(&mut self, len: usize) {
+        self.contents.resize(len, 0);
+    }
+
+    /// Add the given number of zero bytes to the back of this packet. The underlying buffer is
+    /// resized if it does not have enough capacity.
+    pub fn grow_back(&mut self, len: usize) {
+        self.contents.resize(self.contents.len() + len, 0);
+    }
+
     /// Add the given number of zero bytes to the front of this `[PacketMut]`. The underlying
     /// buffer is resized if it does not have enough capacity.
     pub fn grow_front(&mut self, len: usize) {
@@ -503,6 +515,30 @@ impl PacketMut {
             Some(6) => self.ipv6_at(24),
             _ => None,
         }
+    }
+
+    /// Returns the IP datagram length, including both IP header and payload, as reported by the
+    /// IP header's length field.
+    ///
+    /// The returned value may be smaller than [`PacketMut::len`], but will never be greater.
+    ///
+    /// Returns `None` if the packet's structure doesn't match an IPv4 or IPv6 datagram, or the
+    /// length reported by the header is greater than [`PacketMut::len`].
+    pub fn get_ip_len(&self) -> Option<usize> {
+        let len = match self.get_ip_family() {
+            Some(4) => {
+                let len = u16::from_be_bytes(self.get(2..4)?.try_into().unwrap());
+                len as usize
+            }
+            Some(6) => {
+                let len = u16::from_be_bytes(self.get(4..6)?.try_into().unwrap());
+                // v6 length field only includes extension headers and payload, not the fixed base
+                // IP header.
+                len as usize + 40
+            }
+            _ => return None,
+        };
+        if len <= self.len() { Some(len) } else { None }
     }
 }
 
