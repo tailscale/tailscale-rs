@@ -30,24 +30,35 @@ struct NonceGenerator {
     nonce: Mutex<u64>,
 }
 
+/// The maximum number of messages that can be processed on one session key. This maps
+/// to the number of nonces that NonceGenerator is willing to produce before panicking.
+const REJECT_AFTER_MESSAGES: u64 = u64::MAX - (2 << 13);
+
 impl NonceGenerator {
+    #[cfg(test)]
+    fn new_with(value: u64) -> Self {
+        Self {
+            nonce: Mutex::new(value),
+        }
+    }
+
     /// Reserve a batch of consecutive nonces.
     ///
     /// The reserved range is fully consumed even if the returned NonceIter isn't.
     fn batch(&self, num: usize) -> NonceIter {
         let mut nonce = self.nonce.lock().unwrap();
-        let end = match nonce.checked_add(num as u64) {
-            Some(end) => end,
+        let end = nonce.saturating_add(num as u64);
+        if end > REJECT_AFTER_MESSAGES + 1 {
             // NonceGenerator is used to produce nonces for a wireguard session.
             // A single wireguard session lives for 120s before being replaced.
-            // To exhaust a u64 in that time, assuming 1500b packets, you would
-            // have to be sending 27.6 zettabytes every two minutes, or 230
-            // exabytes/sec.
+            // To exhaust `REJECT_AFTER_MESSAGES` nonces in that time, assuming
+            // 1500b packets, you would have to be sending 27.6 zettabytes every
+            // two minutes, or 230 exabytes/sec.
             //
             // If you're still running this code on a computer capable of that
             // kind of data rate: hello from the past! Enjoy your panic.
-            None => panic!("nonce exhausted"),
-        };
+            panic!("nonce exhausted");
+        }
         let ret = NonceIter { cur: *nonce, end };
         *nonce = end;
         ret
@@ -74,7 +85,7 @@ impl Iterator for NonceIter {
 
 /// A cryptographic nonce for use with ChaCha20Poly1305.
 #[repr(C)]
-#[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
+#[derive(Eq, PartialEq, Debug, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
 struct Nonce {
     _zero: U32,
     counter: U64,
@@ -882,5 +893,27 @@ mod tests {
 
         assert!(bidi.expired(now + SESSION_LIFETIME + epsilon));
         assert!(bidi.needs_rotation(now + SESSION_LIFETIME + epsilon));
+    }
+
+    #[test]
+    fn test_nonce_limit() {
+        let nonces = NonceGenerator::new_with(REJECT_AFTER_MESSAGES);
+        assert_eq!(
+            nonces.batch(1).collect::<Vec<Nonce>>(),
+            vec![Nonce::from(REJECT_AFTER_MESSAGES)]
+        );
+    }
+    #[test]
+    #[should_panic(expected = "nonce exhausted")]
+    fn test_nonce_limit_exceeded() {
+        let nonces = NonceGenerator::new_with(REJECT_AFTER_MESSAGES + 1);
+        nonces.batch(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "nonce exhausted")]
+    fn test_nonce_limit_exceeded_batch() {
+        let nonces = NonceGenerator::new_with(REJECT_AFTER_MESSAGES - 10);
+        nonces.batch(20);
     }
 }
