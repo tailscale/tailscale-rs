@@ -232,6 +232,7 @@ impl Peer {
         }
         self.last_seen_timestamp = Some(handshake.timestamp);
 
+        endpoint.ids.remove_handshake_session(&self.handshake);
         let session_id = endpoint.ids.allocate_session(self.id);
 
         let packet = self.handshake.respond(
