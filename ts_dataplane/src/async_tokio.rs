@@ -26,17 +26,17 @@ use crate::{InboundResult, OutboundResult};
 /// Packet batches sent to an overlay.
 pub type ToOverlay = Vec<PacketMut>;
 /// Packet batches received from an overlay.
-pub type FromOverlay = Vec<PacketMut>;
+pub type FromOverlay = (OverlayTransportId, Vec<PacketMut>);
 
 /// Packet batches sent to an underlay.
 pub type ToUnderlay = (DynEndpoint, Vec<PacketMut>);
 /// Packet batches received from an underlay.
-pub type FromUnderlay = (DynEndpoint, Vec<PacketMut>);
+pub type FromUnderlay = (UnderlayTransportId, DynEndpoint, Vec<PacketMut>);
 
 /// A batch of disco packets received from an underlay transport.
-pub type DiscoBatch = (DynEndpoint, Vec<PacketMut>);
+pub type DiscoBatch = (UnderlayTransportId, DynEndpoint, Vec<PacketMut>);
 /// A batch of stun packets received from an underlay transport.
-pub type StunBatch = (DynEndpoint, Vec<PacketMut>);
+pub type StunBatch = (UnderlayTransportId, DynEndpoint, Vec<PacketMut>);
 
 /// Hashset where membership indicates that a peer has had activity recently and we should run
 /// path discovery.
@@ -235,17 +235,17 @@ impl DataPlane {
 
             tokio::select! {
                 overlay_pkts = overlay_down.recv() => {
-                    let overlay_pkts = overlay_pkts.unwrap();
+                    let (overlay_id, overlay_pkts) = overlay_pkts.unwrap();
                     tracing::trace!(n_overlay_pkts = overlay_pkts.len());
 
-                    SelectResult::OverlayDown(overlay_pkts)
+                    SelectResult::OverlayDown((overlay_id, overlay_pkts))
                 }
 
                 underlay_pkts = underlay_up.recv() => {
-                    let (ep, underlay_pkts) = underlay_pkts.unwrap();
-                    tracing::trace!(from_ep = %ep.ty(), n_underlay_pkts = underlay_pkts.len());
+                    let (id, ep, underlay_pkts) = underlay_pkts.unwrap();
+                    tracing::trace!(underlay_id = ?id, from_ep = %ep.ty(), n_underlay_pkts = underlay_pkts.len());
 
-                    SelectResult::UnderlayUp((ep, underlay_pkts))
+                    SelectResult::UnderlayUp((id, ep, underlay_pkts))
                 }
 
                 _ = self.transports_changed.notified() => {
@@ -271,13 +271,13 @@ impl DataPlane {
         let mut possible_gc = false;
 
         let (to_peers, to_local) = match select_result {
-            SelectResult::OverlayDown(overlay_down) => {
+            SelectResult::OverlayDown((_overlay_id, overlay_down)) => {
                 let OutboundResult { to_peers, loopback } =
                     core.sync.process_outbound(overlay_down);
 
                 (Some(to_peers), Some(loopback))
             }
-            SelectResult::UnderlayUp((ep, pkts)) => {
+            SelectResult::UnderlayUp((underlay_id, ep, pkts)) => {
                 let InboundResult {
                     to_local,
                     to_peers,
@@ -285,11 +285,16 @@ impl DataPlane {
                     stun,
                 } = core.sync.process_inbound(pkts);
 
-                if !disco.is_empty() && core.disco_out.send((ep.clone(), disco)).is_err() {
+                if !disco.is_empty()
+                    && core
+                        .disco_out
+                        .send((underlay_id, ep.clone(), disco))
+                        .is_err()
+                {
                     tracing::warn!("disco packets dropped: no receiver");
                 }
 
-                if !stun.is_empty() && core.stun_out.send((ep, stun)).is_err() {
+                if !stun.is_empty() && core.stun_out.send((underlay_id, ep, stun)).is_err() {
                     tracing::warn!("stun packets dropped: no receiver");
                 }
 
