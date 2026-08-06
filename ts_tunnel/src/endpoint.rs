@@ -68,7 +68,7 @@ impl Peer {
         now: Instant,
         out: &mut SendResult,
     ) {
-        if let Some(packets) = self.session.send(packets, &mut endpoint.ids, now) {
+        if let Some(packets) = self.session.send(packets, now) {
             tracing::trace!("enqueueing packets to peer");
             out.queue_to_peer(self.id, packets);
             // Fall through to check if the session is in need of rotation.
@@ -155,7 +155,7 @@ impl Peer {
             return;
         };
 
-        let (expiry, packets) = self.session.activate(session, &mut endpoint.ids, now, true);
+        let (expiry, packets) = self.session.activate(session, now, true);
         out.queue_to_peer(self.id, packets);
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
@@ -175,7 +175,7 @@ impl Peer {
         now: Instant,
         out: &mut RecvResult,
     ) {
-        if let Some(recv) = self.session.get_recv(session_id, &mut endpoint.ids, now) {
+        if let Some(recv) = self.session.get_recv(session_id, now) {
             let packets = recv.decrypt(packets);
             if !packets.is_empty() {
                 out.queue_to_local(self.id, packets);
@@ -195,9 +195,7 @@ impl Peer {
         out.queue_to_local(self.id, packets);
         self.schedule_keepalive(&mut endpoint.scheduler, now);
 
-        let (expiry, packets_for_peer) =
-            self.session
-                .activate(session, &mut endpoint.ids, now, false);
+        let (expiry, packets_for_peer) = self.session.activate(session, now, false);
         if !packets_for_peer.is_empty() {
             out.queue_to_peer(self.id, packets_for_peer);
         }
@@ -231,7 +229,6 @@ impl Peer {
         }
         self.last_seen_timestamp = Some(handshake.timestamp);
 
-        endpoint.ids.remove_handshake_session(&self.handshake);
         let session_id = endpoint.ids.allocate_session(self.id);
 
         let packet = self.handshake.respond(
@@ -255,7 +252,6 @@ impl Peer {
             return;
         }
 
-        endpoint.ids.remove_handshake_session(&self.handshake);
         self.handshake = Handshake::None;
 
         self.start_handshake(endpoint, now, out);
@@ -267,7 +263,7 @@ impl Peer {
         now: Instant,
         out: &mut EventResult,
     ) {
-        let Some(packet) = self.session.send_keepalive(&mut endpoint.ids, now) else {
+        let Some(packet) = self.session.send_keepalive(now) else {
             tracing::trace!("send keepalive: session expired, skipping");
             return;
         };
@@ -281,14 +277,13 @@ impl Peer {
         }
     }
 
-    fn cleanup_expired(&mut self, endpoint: &mut EndpointState, now: Instant) {
-        self.session.cleanup_expired(&mut endpoint.ids, now)
+    fn cleanup_expired(&mut self, now: Instant) {
+        self.session.cleanup_expired(now)
     }
 
-    fn shutdown(&mut self, endpoint: &mut EndpointState) {
-        self.session.deactivate(&mut endpoint.ids);
+    fn shutdown(&mut self) {
+        self.session.deactivate();
 
-        endpoint.ids.remove_handshake_session(&self.handshake);
         self.handshake = Handshake::None;
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
@@ -308,6 +303,7 @@ impl Peer {
     ) {
         // TODO most of this logic might be better in the `handshake` module.
         let session_id = endpoint.ids.allocate_session(self.id);
+        tracing::debug!(peer_id = ?self.id, ?session_id, "enqueue handshake start");
         let (handshake, packet) = initiate_handshake(
             &endpoint.my_key,
             &self.config.key,
@@ -317,8 +313,6 @@ impl Peer {
 
         let mut packet = PacketMut::from(packet.as_bytes());
         let mac = self.cookie_sender.write_macs(packet.as_mut());
-
-        tracing::debug!(peer_id = ?self.id, ?session_id, "enqueue handshake start");
 
         out.queue_to_peer(self.id, [packet]);
         let tr = TimeRange::new_around(now + HANDSHAKE_TIMEOUT, Duration::from_millis(500));
@@ -397,7 +391,7 @@ impl Endpoint {
         match self.peers.remove(&peer) {
             None => false,
             Some(mut peer) => {
-                peer.shutdown(&mut self.state);
+                peer.shutdown();
                 self.state.ids.remove_peer(&peer.config.key);
                 true
             }
@@ -463,7 +457,7 @@ impl Endpoint {
                 tracing::warn!(?session_id, "session not found");
                 continue;
             };
-            let Some(peer) = self.peers.get_mut(peer_id) else {
+            let Some(peer) = self.peers.get_mut(&peer_id) else {
                 tracing::warn!(?peer_id, "no peer found");
                 continue;
             };
@@ -523,7 +517,7 @@ impl Endpoint {
                     let Some(peer) = self.peers.get_mut(&peer_id) else {
                         continue;
                     };
-                    peer.cleanup_expired(&mut self.state, now);
+                    peer.cleanup_expired(now);
                 }
             }
         }

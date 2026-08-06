@@ -9,6 +9,7 @@ use zerocopy::IntoBytes;
 use crate::{
     config::Psk,
     endpoint::Event,
+    ids::SessionHandle,
     macs::{MACReceiver, MACSender, Mac},
     messages::*,
     session::BidiSession,
@@ -49,20 +50,20 @@ impl ReceivedHandshake {
     /// Finalize the handshake, producing a HandshakeResponse.
     pub fn respond(
         self,
-        initiator_to_responder_id: SessionId,
+        initiator_to_responder_id: SessionHandle,
         psk: &Psk,
         macs: &MACSender,
         now: Instant,
     ) -> (BidiSession, PacketMut) {
         let mut response = HandshakeResponse {
-            sender_id: initiator_to_responder_id,
+            sender_id: initiator_to_responder_id.id(),
             receiver_id: self.responder_to_initiator_id,
             ..Default::default()
         };
 
         let session_keys = self.noise.finish(psk, response.noise.as_mut_bytes());
 
-        let session = BidiSession::new(
+        let session = BidiSession::new_responder(
             session_keys,
             initiator_to_responder_id,
             self.responder_to_initiator_id,
@@ -84,11 +85,11 @@ impl ReceivedHandshake {
 pub fn initiate_handshake(
     endpoint_static: &NodeKeyPair,
     peer_static: &NodePublicKey,
-    session_id: SessionId,
+    session_id: SessionHandle,
     timestamp: TAI64N,
 ) -> (SentHandshake, HandshakeInitiation) {
     let mut pkt = HandshakeInitiation {
-        sender_id: session_id,
+        sender_id: session_id.id(),
         ..Default::default()
     };
 
@@ -110,7 +111,7 @@ pub fn initiate_handshake(
 
 /// A partially completed sent handshake.
 pub struct SentHandshake {
-    pub responder_to_initiator_id: SessionId,
+    pub responder_to_initiator_id: SessionHandle,
     noise: ikpsk2::SentHandshake<TAI64N>,
 }
 
@@ -132,15 +133,6 @@ impl Handshake {
         !matches!(self, Handshake::None)
     }
 
-    /// Return the session id of the handshake, if any.
-    pub(crate) fn session_id(&self) -> Option<SessionId> {
-        match self {
-            Handshake::Initiated(handshake, ..) => Some(handshake.responder_to_initiator_id),
-            Handshake::Responded(tentative) => Some(tentative.recv_id()),
-            Handshake::None => None,
-        }
-    }
-
     pub(crate) fn take_initiated(&mut self) -> Option<(SentHandshake, Handle<Event>, Mac)> {
         match std::mem::replace(self, Handshake::None) {
             Handshake::Initiated(sent, timeout, mac) => Some((sent, timeout, mac)),
@@ -157,7 +149,7 @@ impl Handshake {
     /// Responding replaces any other handshake state unconditionally.
     pub(crate) fn respond(
         &mut self,
-        session_id: SessionId,
+        session_id: SessionHandle,
         handshake: ReceivedHandshake,
         psk: &Psk,
         cookie_sender: &MACSender,
@@ -214,10 +206,10 @@ impl Handshake {
                 }
             };
 
-        let session = BidiSession::new(
+        let session = BidiSession::new_initiator(
             session_keys,
-            packet.sender_id,
             sent_handshake.responder_to_initiator_id,
+            packet.sender_id,
             now,
         );
 
@@ -268,6 +260,7 @@ mod tests {
     use zerocopy::TryFromBytes;
 
     use super::*;
+    use crate::{PeerId, ids::IdMap};
 
     #[test]
     fn test_handshake() {
@@ -277,7 +270,8 @@ mod tests {
         // Peer A sends a handshake initiation...
         let a_mac_send = MACSender::new(&b_static.public);
         let a_mac_recv = MACReceiver::new(&a_static.public);
-        let a_session = SessionId::random(); // A wants to receive at this ID
+        let mut ids = IdMap::default();
+        let a_session = ids.allocate_session(PeerId(1)); // A wants to receive at this ID
         let a_init_time = TAI64N::now();
         let (a_handshake, init_pkt) =
             initiate_handshake(&a_static, &b_static.public, a_session, a_init_time);
@@ -301,7 +295,7 @@ mod tests {
             .expect("peer B should successfully process A's handshake initiation");
         assert_eq!(b_handshake.peer_static(), a_static.public);
         assert_eq!(b_handshake.timestamp, a_init_time);
-        let b_session = SessionId::random(); // B wants to receive at this ID
+        let b_session = ids.allocate_session(PeerId(2)); // B wants to receive at this ID
         let (mut b_session, mut response_pkt) =
             b_handshake.respond(b_session, &psk, &b_mac_send, Instant::now());
 
@@ -333,11 +327,12 @@ mod tests {
     fn test_invalid_response_ignored() {
         let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
         let psk = rand::random();
+        let mut ids = IdMap::default();
 
         // A sends a handshake
         let a_mac_send = MACSender::new(&b_static.public);
         let a_mac_recv = MACReceiver::new(&a_static.public);
-        let a_session = SessionId::random(); // A wants to receive at this ID
+        let a_session = ids.allocate_session(PeerId(1)); // A wants to receive at this ID
         let a_init_time = TAI64N::now();
         let (a_handshake, init_pkt) =
             initiate_handshake(&a_static, &b_static.public, a_session, a_init_time);
@@ -358,7 +353,7 @@ mod tests {
         let b_mac_recv = MACReceiver::new(&b_static.public);
         let b_handshake = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
             .expect("peer B should successfully process A's handshake initiation");
-        let b_session = SessionId::random(); // B wants to receive at this ID
+        let b_session = ids.allocate_session(PeerId(2)); // B wants to receive at this ID
         let (_b_session, mut response_pkt) =
             b_handshake.respond(b_session, &psk, &b_mac_send, Instant::now());
 

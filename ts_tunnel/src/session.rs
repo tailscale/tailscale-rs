@@ -8,7 +8,6 @@ use std::{
 
 use aead::AeadInPlace;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
-use ts_noise::core::Role;
 use ts_packet::PacketMut;
 use ts_time::TimeRange;
 use zerocopy::{
@@ -17,7 +16,7 @@ use zerocopy::{
 };
 
 use crate::{
-    ids::IdMap,
+    ids::SessionHandle,
     messages::{SessionId, TransportDataHeader},
     replay::ReplayWindow,
 };
@@ -139,7 +138,7 @@ pub const SESSION_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 /// Established session that can only receive.
 pub struct ReceiveSession {
     cipher: ChaCha20Poly1305,
-    id: SessionId,
+    id: SessionHandle,
     expiry: Instant,
     window: ReplayWindow,
 }
@@ -147,13 +146,13 @@ pub struct ReceiveSession {
 impl Debug for ReceiveSession {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReceiveSession")
-            .field("id", &self.id)
+            .field("id", self.id.as_ref())
             .finish_non_exhaustive()
     }
 }
 
 impl ReceiveSession {
-    pub fn new(key: SessionKey, id: SessionId, now: Instant) -> Self {
+    pub fn new(key: SessionKey, id: SessionHandle, now: Instant) -> Self {
         ReceiveSession {
             cipher: ChaCha20Poly1305::new(&key),
             id,
@@ -181,7 +180,7 @@ impl ReceiveSession {
 
         let _guard = tracing::trace_span!("header_parsed", ?header).entered();
 
-        if header.receiver_id != self.id {
+        if header.receiver_id != self.id() {
             // Technically an unnecessary check, because a bespoke session is created for each
             // session ID, with different AEAD keys. So, if the caller mistakenly hands the wrong
             // packet to a session, it'll always fail to decrypt below. But, comparing one u32
@@ -223,7 +222,7 @@ impl ReceiveSession {
 
     /// Return the session ID that will appear on received packets meant for this session.
     pub fn id(&self) -> SessionId {
-        self.id
+        self.id.id()
     }
 
     /// Report whether the session is expired.
@@ -244,35 +243,35 @@ pub struct BidiSession {
 }
 
 impl BidiSession {
-    pub fn new(
+    /// Create a new session in the initiator role.
+    pub fn new_initiator(
         keys: ts_noise::core::Session,
+        responder_to_initiator_id: SessionHandle,
         initiator_to_responder_id: SessionId,
+        now: Instant,
+    ) -> Self {
+        Self {
+            recv: ReceiveSession::new(keys.responder_to_initiator, responder_to_initiator_id, now),
+            send_id: initiator_to_responder_id,
+            send_cipher: ChaCha20Poly1305::new(&keys.initiator_to_responder),
+            send_nonce: Default::default(),
+            is_initiator: true,
+        }
+    }
+
+    /// Create a new session in the responder role.
+    pub fn new_responder(
+        keys: ts_noise::core::Session,
+        initiator_to_responder_id: SessionHandle,
         responder_to_initiator_id: SessionId,
         now: Instant,
     ) -> Self {
-        match keys.role {
-            Role::Initiator => Self {
-                recv: ReceiveSession::new(
-                    keys.responder_to_initiator,
-                    responder_to_initiator_id,
-                    now,
-                ),
-                send_id: initiator_to_responder_id,
-                send_cipher: ChaCha20Poly1305::new(&keys.initiator_to_responder),
-                send_nonce: Default::default(),
-                is_initiator: true,
-            },
-            Role::Responder => Self {
-                recv: ReceiveSession::new(
-                    keys.initiator_to_responder,
-                    initiator_to_responder_id,
-                    now,
-                ),
-                send_id: responder_to_initiator_id,
-                send_cipher: ChaCha20Poly1305::new(&keys.responder_to_initiator),
-                send_nonce: Default::default(),
-                is_initiator: false,
-            },
+        Self {
+            recv: ReceiveSession::new(keys.initiator_to_responder, initiator_to_responder_id, now),
+            send_id: responder_to_initiator_id,
+            send_cipher: ChaCha20Poly1305::new(&keys.responder_to_initiator),
+            send_nonce: Default::default(),
+            is_initiator: false,
         }
     }
 
@@ -310,7 +309,7 @@ impl BidiSession {
 
     /// Return the session ID that will appear on received packets meant for this session.
     pub fn recv_id(&self) -> SessionId {
-        self.recv.id
+        self.recv.id.id()
     }
 
     pub fn rotation_time(&self) -> Instant {
@@ -385,22 +384,10 @@ impl ActiveSession {
     ///
     /// The prior receive session is rotated into the previous slot, and will continue to accept
     /// packets until the next rotation (or the hard session expiry deadline).
-    fn rotate(&mut self, next: BidiSession, ids: &mut IdMap, now: Instant) {
-        if let Some(prev) = self.prev.as_ref() {
-            ids.remove_session(prev.id());
-        }
+    fn rotate(&mut self, next: BidiSession, now: Instant) {
         let prev = std::mem::replace(self.cur.as_mut(), next);
-        if prev.expired(now) {
-            ids.remove_session(prev.recv_id());
-        } else {
+        if !prev.expired(now) {
             self.prev = Some(Box::new(prev.into()));
-        }
-    }
-
-    fn cleanup_ids(&mut self, ids: &mut IdMap) {
-        ids.remove_session(self.cur.recv_id());
-        if let Some(prev) = self.prev.as_ref() {
-            ids.remove_session(prev.id());
         }
     }
 
@@ -435,8 +422,8 @@ impl Session {
     ///
     /// Calls [`Session::maybe_expire`], so callers can assume that the returned session
     /// consists only of unexpired state.
-    fn as_active(&mut self, ids: &mut IdMap, now: Instant) -> Option<&mut ActiveSession> {
-        self.cleanup_expired(ids, now);
+    fn as_active(&mut self, now: Instant) -> Option<&mut ActiveSession> {
+        self.cleanup_expired(now);
         if let Self::Active(session) = self {
             Some(session)
         } else {
@@ -451,7 +438,6 @@ impl Session {
     pub fn activate(
         &mut self,
         next: BidiSession,
-        ids: &mut IdMap,
         now: Instant,
         need_keepalive: bool,
     ) -> (TimeRange, Vec<PacketMut>) {
@@ -460,7 +446,7 @@ impl Session {
         let (active, mut packets) = match self.take() {
             Self::None(queue) => (next.into(), queue.into()),
             Self::Active(mut session) => {
-                session.rotate(next, ids, now);
+                session.rotate(next, now);
                 (session, vec![])
             }
         };
@@ -480,18 +466,15 @@ impl Session {
     }
 
     /// Discard all state for this session.
-    pub fn deactivate(&mut self, ids: &mut IdMap) {
-        if let Self::Active(mut session) = self.take() {
-            session.cleanup_ids(ids);
-        }
+    pub fn deactivate(&mut self) {
         *self = Self::default();
     }
 
     /// Encrypt a keepalive packet for the peer.
     ///
     /// Returns None if the session is inactive (and thus no keepalive is necessary).
-    pub fn send_keepalive(&mut self, ids: &mut IdMap, now: Instant) -> Option<PacketMut> {
-        let session = self.as_active(ids, now)?;
+    pub fn send_keepalive(&mut self, now: Instant) -> Option<PacketMut> {
+        let session = self.as_active(now)?;
         let mut packet = vec![PacketMut::new(0)];
         session.cur.encrypt(&mut packet);
         packet.pop()
@@ -503,13 +486,8 @@ impl Session {
     ///
     /// Returns None to indicate that packets were queued, indicating the caller may need to
     /// initiate a handshake.
-    pub fn send(
-        &mut self,
-        mut packets: Vec<PacketMut>,
-        ids: &mut IdMap,
-        now: Instant,
-    ) -> Option<Vec<PacketMut>> {
-        self.cleanup_expired(ids, now);
+    pub fn send(&mut self, mut packets: Vec<PacketMut>, now: Instant) -> Option<Vec<PacketMut>> {
+        self.cleanup_expired(now);
         match self {
             Self::None(queue) => {
                 queue.append(packets);
@@ -523,13 +501,8 @@ impl Session {
     }
 
     /// Get the ReceiveSession for the given receiving ID, if any.
-    pub fn get_recv(
-        &mut self,
-        id: SessionId,
-        ids: &mut IdMap,
-        now: Instant,
-    ) -> Option<&mut ReceiveSession> {
-        let session = self.as_active(ids, now)?;
+    pub fn get_recv(&mut self, id: SessionId, now: Instant) -> Option<&mut ReceiveSession> {
+        let session = self.as_active(now)?;
         if session.cur.recv_id() == id {
             Some(&mut session.cur.recv)
         } else if let Some(prev) = session.prev.as_mut()
@@ -550,17 +523,15 @@ impl Session {
     }
 
     /// Clean up expired session state, if any.
-    pub fn cleanup_expired(&mut self, ids: &mut IdMap, now: Instant) {
+    pub fn cleanup_expired(&mut self, now: Instant) {
         if let Self::Active(session) = self {
             if session.expired(now) {
-                session.cleanup_ids(ids);
                 *self = Self::default();
                 return;
             }
             if let Some(prev) = session.prev.as_ref()
                 && prev.expired(now)
             {
-                ids.remove_session(prev.id());
                 session.prev = None;
             }
         }
@@ -569,28 +540,34 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use ts_noise::core::Role;
+
     use super::*;
-    use crate::{PeerId, messages::Message};
+    use crate::{PeerId, ids::IdMap, messages::Message};
 
     #[test]
     fn test_session_parts() {
         let k: [u8; 32] = rand::random();
-        let session = SessionId::random();
+        let mut ids = IdMap::default();
+
+        let initiator_session = ids.allocate_session(PeerId(1));
+        let responder_session = ids.allocate_session(PeerId(2));
+        let responder_session_id = responder_session.id();
         let now = Instant::now();
         // NOTE: this would be catastrophically insecure in non-test code, because it reuses the
         // same key in both directions, which leads to catastrophic nonce reuse. It's okay here
         // because (a) it's a test and (b) we only ever transmit in one direction.
-        let send = BidiSession::new(
+        let send = BidiSession::new_initiator(
             ts_noise::core::Session {
                 initiator_to_responder: k.into(),
                 responder_to_initiator: k.into(),
                 role: Role::Initiator,
             },
-            session,
-            session,
+            initiator_session,
+            responder_session_id,
             now,
         );
-        let mut recv = ReceiveSession::new(k.into(), session, now);
+        let mut recv = ReceiveSession::new(k.into(), responder_session, now);
 
         const CLEARTEXT: &[u8] = b"foobar";
         let mut pkt = [PacketMut::from(CLEARTEXT)];
@@ -600,7 +577,7 @@ mod tests {
         let Ok(Message::TransportDataHeader(msg)) = Message::try_from(pkt[0].as_ref()) else {
             panic!("packet is not a valid TransportData message");
         };
-        assert_eq!(msg.receiver_id, session);
+        assert_eq!(msg.receiver_id, responder_session_id);
         assert_eq!(u64::from(msg.nonce), 0);
 
         assert!(recv.decrypt_one(&mut pkt[0]));
@@ -611,7 +588,7 @@ mod tests {
         let Ok(Message::TransportDataHeader(msg)) = Message::try_from(pkt[0].as_ref()) else {
             panic!("packet is not a valid TransportData message");
         };
-        assert_eq!(msg.receiver_id, session);
+        assert_eq!(msg.receiver_id, responder_session_id);
         assert_eq!(u64::from(msg.nonce), 1);
 
         assert!(recv.decrypt_one(&mut pkt[0]));
@@ -631,11 +608,11 @@ mod tests {
     }
 
     impl PeerSession {
-        fn allocate_id(&mut self) -> SessionId {
+        fn allocate_id(&mut self) -> SessionHandle {
             self.recv_id_prev = self.recv_id.take();
-            let id = self.ids.allocate_session(PeerId(1));
-            self.recv_id = Some(id);
-            id
+            let ret = self.ids.allocate_session(PeerId(1));
+            self.recv_id = Some(ret.id());
+            ret
         }
 
         fn handshake_with(
@@ -645,40 +622,41 @@ mod tests {
         ) -> (Vec<PacketMut>, Vec<PacketMut>) {
             let (k1, k2): ([u8; 32], [u8; 32]) = rand::random();
             let sid1 = self.allocate_id();
+            let sid1_id = sid1.id();
             let sid2 = other.allocate_id();
-            let s1 = BidiSession::new(
+            let s1 = BidiSession::new_initiator(
                 ts_noise::core::Session {
                     initiator_to_responder: k1.into(),
                     responder_to_initiator: k2.into(),
                     role: Role::Initiator,
                 },
-                sid2,
                 sid1,
+                sid2.id(),
                 now,
             );
-            let s2 = BidiSession::new(
+            let s2 = BidiSession::new_responder(
                 ts_noise::core::Session {
                     initiator_to_responder: k1.into(),
                     responder_to_initiator: k2.into(),
                     role: Role::Responder,
                 },
                 sid2,
-                sid1,
+                sid1_id,
                 now,
             );
-            let (_, p1) = self.session.activate(s1, &mut self.ids, now, false);
-            let (_, p2) = other.session.activate(s2, &mut other.ids, now, false);
+            let (_, p1) = self.session.activate(s1, now, false);
+            let (_, p2) = other.session.activate(s2, now, false);
             (p1, p2)
         }
 
         fn send(&mut self, now: Instant, packets: Vec<PacketMut>) -> Option<Vec<PacketMut>> {
-            self.session.send(packets, &mut self.ids, now)
+            self.session.send(packets, now)
         }
 
         fn get_recv(&mut self, now: Instant, packets: &[PacketMut]) -> Option<&mut ReceiveSession> {
             let (hdr, _) =
                 TransportDataHeader::try_ref_from_prefix(packets.first()?.as_ref()).unwrap();
-            self.session.get_recv(hdr.receiver_id, &mut self.ids, now)
+            self.session.get_recv(hdr.receiver_id, now)
         }
 
         fn recv(&mut self, now: Instant, packets: Vec<PacketMut>) -> Vec<PacketMut> {
@@ -858,27 +836,29 @@ mod tests {
     #[test]
     fn test_session_timers() {
         let k: [u8; 32] = rand::random();
-        let id = SessionId::random();
+        let mut ids = IdMap::default();
+        let recv_session = ids.allocate_session(PeerId(1));
+        let recv_session_id = recv_session.id();
+        let bidi_session = ids.allocate_session(PeerId(2));
         let now = Instant::now();
         let epsilon = Duration::from_secs(1);
 
-        let recv = ReceiveSession::new(k.into(), id, now);
+        let recv = ReceiveSession::new(k.into(), recv_session, now);
         assert!(!recv.expired(now));
         assert!(!recv.expired(now + SESSION_FRESH_LIFETIME - epsilon));
         assert!(!recv.expired(now + SESSION_FRESH_LIFETIME + epsilon));
         assert!(recv.expired(now + SESSION_LIFETIME + epsilon));
 
         let k2: [u8; 32] = rand::random();
-        let id2 = SessionId::random();
 
-        let bidi = BidiSession::new(
+        let bidi = BidiSession::new_initiator(
             ts_noise::core::Session {
                 initiator_to_responder: k.into(),
                 responder_to_initiator: k2.into(),
                 role: Role::Initiator,
             },
-            id,
-            id2,
+            bidi_session,
+            recv_session_id,
             now,
         );
         assert!(!bidi.expired(now));
