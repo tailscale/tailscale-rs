@@ -7,7 +7,7 @@ use std::{
     cell::UnsafeCell,
     hash::Hash,
     num::NonZeroU64,
-    sync::{Arc, RwLockReadGuard, RwLockWriteGuard},
+    sync::{RwLockReadGuard, RwLockWriteGuard},
 };
 
 use crate::{
@@ -263,15 +263,6 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
         <&Self as SingletonOps<_>>::get::<D>(self, self.owner)
     }
 
-    /// Get a single value from the store by cloning an `Arc`.
-    ///
-    /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
-        &self,
-    ) -> Option<Arc<D::Value>> {
-        <&Self as SingletonOps<_>>::get_arc::<D>(self, self.owner)
-    }
-
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
@@ -282,8 +273,21 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
         <&Self as SingletonOps<_>>::with::<D, T>(self, f, self.owner)
     }
 
+    /// Get mutable access to a value in the store by reference.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    pub fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+        &mut self,
+        f: impl FnOnce(&mut D::Value) -> T,
+    ) -> Option<T>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        <&mut Self as SingletonOpsMut<_>>::with_mut::<D, T>(self, f, self.owner)
+    }
+
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&mut self, value: D::ArgValue) {
+    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&mut self, value: D::Value) {
         <&mut Self as SingletonOpsMut<_>>::insert::<D>(self, value, self.owner)
     }
 
@@ -523,15 +527,6 @@ impl<'guard, TableStorage: schema::GeneratedStorage> RoTransaction<'guard, Table
         <&Self as SingletonOps<_>>::get::<D>(self, self.owner)
     }
 
-    /// Get a single value from the store by cloning an `Arc`.
-    ///
-    /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
-        &self,
-    ) -> Option<Arc<D::Value>> {
-        <&Self as SingletonOps<_>>::get_arc::<D>(self, self.owner)
-    }
-
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
@@ -614,7 +609,7 @@ mod test {
     use crate::store;
 
     store!(
-        kvs: { Count(u64; OWNER), Shared(String as Arc; OWNER) }
+        kvs: { Count(u64; OWNER), Shared(Arc<String>; OWNER) }
         tables: { Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER) }
     );
 
@@ -721,32 +716,6 @@ mod test {
     }
 
     #[test]
-    fn txn_get_arc_returns_none_when_absent() {
-        let store = KvStore::new();
-        let txn = store.begin_transaction(OWNER);
-        assert!(txn.get_arc::<Shared>().is_none());
-    }
-
-    #[test]
-    fn txn_get_arc_returns_arc_after_insert() {
-        let store = KvStore::new();
-        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
-        let txn = store.begin_transaction(OWNER);
-        let arc = txn.get_arc::<Shared>().unwrap();
-        assert_eq!(*arc, "hello");
-    }
-
-    #[test]
-    fn txn_get_arc_shares_allocation() {
-        let store = KvStore::new();
-        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
-        let txn = store.begin_transaction(OWNER);
-        let arc1 = txn.get_arc::<Shared>().unwrap();
-        let arc2 = txn.get_arc::<Shared>().unwrap();
-        assert!(Arc::ptr_eq(&arc1, &arc2));
-    }
-
-    #[test]
     fn txn_with_returns_none_and_does_not_call_f_when_absent() {
         let store = KvStore::new();
         let txn = store.begin_transaction(OWNER);
@@ -772,6 +741,66 @@ mod test {
         let mut txn = store.begin_transaction(OWNER);
         txn.insert::<Count>(1);
         txn.remove::<Count>();
+        assert!(txn.get::<Count>().is_none());
+    }
+
+    #[test]
+    fn txn_with_mut_returns_none_and_does_not_call_f_when_absent() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        let mut called = false;
+        let result = txn.with_mut::<Count, ()>(|_| called = true);
+        assert!(result.is_none());
+        assert!(!called);
+    }
+
+    #[test]
+    fn txn_with_mut_does_not_insert_when_absent() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v = 7);
+        assert!(txn.get::<Count>().is_none());
+    }
+
+    #[test]
+    fn txn_with_mut_mutates_value_inserted_before_txn() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 5);
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v *= 2);
+        assert_eq!(txn.get::<Count>(), Some(10));
+    }
+
+    #[test]
+    fn txn_with_mut_mutates_value_inserted_in_same_txn() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.insert::<Count>(5);
+        txn.with_mut::<Count, _>(|v| *v *= 2);
+        assert_eq!(txn.get::<Count>(), Some(10));
+    }
+
+    #[test]
+    fn txn_with_mut_sees_previous_with_mut_in_same_txn() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 0);
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        assert_eq!(txn.get::<Count>(), Some(3));
+    }
+
+    #[test]
+    fn txn_with_mut_returns_none_after_remove_in_same_txn() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 5);
+        let mut txn = store.begin_transaction(OWNER);
+        txn.remove::<Count>();
+        let mut called = false;
+        let result = txn.with_mut::<Count, ()>(|_| called = true);
+        assert!(result.is_none());
+        assert!(!called);
         assert!(txn.get::<Count>().is_none());
     }
 
@@ -803,6 +832,16 @@ mod test {
         store.insert::<Count>(OWNER, 1);
         let mut txn = store.begin_transaction(OTHER);
         txn.insert::<Count>(5);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Ownership violation")]
+    fn txn_with_mut_wrong_owner_panics() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 1);
+        let mut txn = store.begin_transaction(OTHER);
+        txn.with_mut::<Count, _>(|v| *v = 5);
     }
 
     #[test]
@@ -1209,22 +1248,6 @@ mod test {
     }
 
     #[test]
-    fn ro_txn_get_arc_returns_none_when_absent() {
-        let store = KvStore::new();
-        let txn = store.begin_ro_transaction(OWNER);
-        assert!(txn.get_arc::<Shared>().is_none());
-    }
-
-    #[test]
-    fn ro_txn_get_arc_returns_arc() {
-        let store = KvStore::new();
-        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
-        let txn = store.begin_ro_transaction(OWNER);
-        let arc = txn.get_arc::<Shared>().unwrap();
-        assert_eq!(*arc, "hello");
-    }
-
-    #[test]
     fn ro_txn_with_returns_none_and_does_not_call_f_when_absent() {
         let store = KvStore::new();
         let txn = store.begin_ro_transaction(OWNER);
@@ -1452,6 +1475,82 @@ mod test {
         txn.commit().unwrap();
 
         assert_eq!(store.get::<Count>(OWNER), None);
+    }
+
+    #[test]
+    fn txn_singleton_with_mut_then_commit_visible() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 7);
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        txn.commit().unwrap();
+
+        assert_eq!(store.get::<Count>(OWNER), Some(8));
+    }
+
+    #[test]
+    fn txn_singleton_with_mut_commits_atomically_with_other_writes() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 0);
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v = 1);
+        txn.table::<Items>().insert("k", "v".to_owned());
+        txn.commit().unwrap();
+
+        assert_eq!(store.get::<Count>(OWNER), Some(1));
+        assert_eq!(store.table::<Items>(OWNER).get("k"), Some("v".to_owned()));
+    }
+
+    #[test]
+    fn txn_singleton_with_mut_of_insert_in_same_txn_rolled_back_on_drop() {
+        let store = KvStore::new();
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.insert::<Count>(41);
+            txn.with_mut::<Count, _>(|v| *v += 1);
+            // dropped here without commit
+        }
+        assert_eq!(store.get::<Count>(OWNER), None);
+    }
+
+    #[test]
+    fn txn_singleton_with_mut_over_existing_rolled_back_on_drop() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 1);
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.with_mut::<Count, _>(|v| *v += 1);
+        }
+        assert_eq!(store.get::<Count>(OWNER), Some(1));
+    }
+
+    #[test]
+    fn txn_singleton_with_mut_explicitly_rolled_back() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 1);
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        txn.rollback();
+
+        assert_eq!(store.get::<Count>(OWNER), Some(1));
+    }
+
+    #[test]
+    fn txn_singleton_with_mut_after_rollback_sees_pre_txn_value() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 1);
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.with_mut::<Count, _>(|v| *v += 1);
+        }
+
+        let mut txn = store.begin_transaction(OWNER);
+        let mut seen = None;
+        txn.with_mut::<Count, _>(|v| seen = Some(*v));
+        assert_eq!(seen, Some(1));
     }
 
     #[test]

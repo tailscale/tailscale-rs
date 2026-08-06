@@ -336,7 +336,7 @@ mod tests {
 
     ts_kv_store::store!(
         kvs: {
-            Count(u64; OWNER),
+            Count(u64; OWNER; notify(Clone)),
         }
         tables: {
             Items(u32 => String; OWNER; notify(Clone)),

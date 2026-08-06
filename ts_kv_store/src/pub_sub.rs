@@ -27,7 +27,7 @@ use std::{
 use crate::{
     Error, Owner, Result,
     schema::{GeneratedStorage, Singleton, TableDesc},
-    storage::{SinValue, Storage},
+    storage::Storage,
 };
 
 /// Identifies a subscriber.
@@ -344,11 +344,11 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         notifications: &mut Notifications<
             <S::Storage as crate::schema::GeneratedStorage>::Notification,
         >,
-        event: &SinValue,
+        event: &Option<S::NotificationValue>,
     ) {
         let notification = match event {
-            SinValue::None => S::make_notification(SingletonEvent::Remove),
-            v => S::make_notification(SingletonEvent::Upsert(S::from_value_clone(v))),
+            None => S::make_notification(SingletonEvent::Remove),
+            Some(v) => S::make_notification(SingletonEvent::Upsert(v.clone())),
         };
 
         for s in self.all.lock().unwrap().iter() {
@@ -811,7 +811,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{Error, storage::SinValue, store};
+    use crate::{Error, store};
 
     /// A value type with an indexed field, for exercising mutation through an index.
     #[derive(Clone, Debug, PartialEq)]
@@ -822,8 +822,9 @@ mod tests {
 
     store!(
         kvs: {
-            Count(u64; OWNER),
-            Shared(String as Arc; OWNER),
+            Count(u64; OWNER; notify(Clone)),
+            Shared(Arc<String>; OWNER; notify(Clone)),
+            Quiet(u64; OWNER),
         }
         tables: {
             Items(u32 => String; OWNER; notify(Clone)),
@@ -980,6 +981,27 @@ mod tests {
             match e {
                 SingletonEvent::Upsert(v) => CountKind::Upsert(*v),
                 SingletonEvent::Remove => CountKind::Remove,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// A comparable projection of a `Quiet` singleton notification. `Quiet` does not use
+    /// `notify(Clone)`, so its notifications carry no value.
+    #[derive(Debug, PartialEq)]
+    enum QuietKind {
+        Upsert,
+        Remove,
+    }
+
+    impl From<&Notification> for QuietKind {
+        fn from(n: &Notification) -> QuietKind {
+            let Notification::Quiet(e) = n else {
+                panic!();
+            };
+            match e {
+                SingletonEvent::Upsert(()) => QuietKind::Upsert,
+                SingletonEvent::Remove => QuietKind::Remove,
                 _ => unreachable!(),
             }
         }
@@ -1240,12 +1262,12 @@ mod tests {
             .unwrap();
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::U64(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert_eq!(CountKind::from(&map[&sub][0]), CountKind::Upsert(5));
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::None);
+        subs.collect_singleton_events::<Count>(&mut notifs, &Option::None);
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert_eq!(CountKind::from(&map[&sub][0]), CountKind::Remove);
     }
@@ -1257,7 +1279,7 @@ mod tests {
         let sub = subs.create_global_subscription(subscriber).unwrap();
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::U64(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert_eq!(CountKind::from(&map[&sub][0]), CountKind::Upsert(5));
@@ -1272,7 +1294,7 @@ mod tests {
 
         let mut notifs = Notifications::default();
         subs.collect_events::<Items>(&mut notifs, events(&[(1, upsert("a"))]));
-        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::U64(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert!(!map.contains_key(&sub));
@@ -1288,7 +1310,7 @@ mod tests {
         subs.remove_singleton_subscription::<Count>(sub);
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::U64(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert!(!map.contains_key(&sub));
     }
@@ -1334,7 +1356,7 @@ mod tests {
 
         let mut notifs = Notifications::default();
         subs.collect_events::<Items>(&mut notifs, events(&[(1, upsert("a"))]));
-        subs.collect_singleton_events::<Count>(&mut notifs, &SinValue::U64(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         for s in gone_subs {
@@ -1688,6 +1710,26 @@ mod tests {
     }
 
     #[test]
+    fn e2e_valueless_singleton_subscription() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Quiet>(subscriber).unwrap();
+        rec.reset();
+
+        store.insert::<Quiet>(OWNER, 42);
+        store.remove::<Quiet>(OWNER);
+
+        // Without `notify(Clone)` the value is not sent, but a removal must still arrive as a
+        // removal rather than as an upsert of nothing.
+        let got = rec.notifications_for(sub);
+        assert_eq!(
+            got.iter().map(QuietKind::from).collect::<Vec<_>>(),
+            vec![QuietKind::Upsert, QuietKind::Remove]
+        );
+    }
+
+    #[test]
     fn e2e_arc_singleton_subscription() {
         let (notifier, rec) = RecordingNotifier::new();
         let store = KvStore::with_notifier(Arc::downgrade(&notifier));
@@ -1708,6 +1750,253 @@ mod tests {
             &got[1],
             Notification::Shared(SingletonEvent::Remove)
         ));
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_notifies_with_new_value() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 0);
+        rec.reset();
+
+        store.with_mut::<Count, _>(OWNER, |v| *v += 1);
+        store.with_mut::<Count, _>(OWNER, |v| *v += 1);
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(CountKind::from)
+                .collect::<Vec<_>>(),
+            vec![CountKind::Upsert(1), CountKind::Upsert(2)]
+        );
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_notifies_once_per_call() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 0);
+        rec.reset();
+
+        store.with_mut::<Count, _>(OWNER, |v| *v = 1);
+
+        // Each `with_mut` is its own transaction, so it commits (and notifies) exactly once.
+        assert_eq!(rec.total_calls(), 1);
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_to_same_value_does_not_notify() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 7);
+        rec.reset();
+
+        store.with_mut::<Count, _>(OWNER, |_| ());
+
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_singleton_insert_then_with_mut_to_same_value_notifies() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 0);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.insert::<Count>(7);
+        txn.with_mut::<Count, _>(|v| *v = 7);
+        txn.commit().unwrap();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(CountKind::from)
+                .collect::<Vec<_>>(),
+            vec![CountKind::Upsert(7)]
+        );
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_after_remove_does_not_notify() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 7);
+        store.remove::<Count>(OWNER);
+        rec.reset();
+
+        assert!(store.with_mut::<Count, _>(OWNER, |_| panic!()).is_none());
+
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_after_remove_does_not_notify_on_a_committing_txn() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 7);
+        store.remove::<Count>(OWNER);
+        rec.reset();
+
+        // As above, but in a transaction which goes on to commit real work elsewhere.
+        let mut txn = store.begin_transaction(OWNER);
+        assert!(txn.with_mut::<Count, _>(|_| panic!()).is_none());
+        txn.table::<Items>().insert(1, "a".to_owned());
+        txn.commit().unwrap();
+
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_commit_without_singleton_writes_does_not_renotify() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 1);
+        store.insert::<Count>(OWNER, 2);
+        rec.reset();
+
+        // Both of `Count`'s slots now hold committed values, but a transaction which doesn't touch
+        // `Count` must not re-deliver it.
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Items>().insert(9, "z".to_owned());
+        txn.commit().unwrap();
+
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_when_absent_does_not_notify() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        rec.reset();
+
+        // There is no value to mutate, so nothing changes and there is nothing to notify about.
+        assert!(store.with_mut::<Count, _>(OWNER, |v| *v = 1).is_none());
+
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_coalesced_within_one_transaction() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 0);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        txn.with_mut::<Count, _>(|v| *v += 1);
+        txn.commit().unwrap();
+
+        // Subscribers see the net effect of the transaction, notified once.
+        assert_eq!(rec.total_calls(), 1);
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(CountKind::from)
+                .collect::<Vec<_>>(),
+            vec![CountKind::Upsert(2)]
+        );
+    }
+
+    #[test]
+    fn e2e_rolled_back_singleton_with_mut_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Count>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 1);
+        rec.reset();
+
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.with_mut::<Count, _>(|v| *v += 1);
+            // Dropped without `commit`, so the transaction rolls back and never notifies.
+        }
+
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(store.get::<Count>(OWNER), Some(1));
+    }
+
+    #[test]
+    fn e2e_arc_singleton_with_mut_notifies() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe::<Shared>(subscriber).unwrap();
+        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
+        rec.reset();
+
+        store.with_mut::<Shared, _>(OWNER, |v| *v = Arc::new(format!("{v}!")));
+
+        let got = rec.notifications_for(sub);
+        assert_eq!(got.len(), 1);
+        match &got[0] {
+            Notification::Shared(SingletonEvent::Upsert(v)) => assert_eq!(v.as_str(), "hello!"),
+            _ => panic!("expected a Shared upsert"),
+        }
+    }
+
+    #[test]
+    fn e2e_singleton_with_mut_only_notifies_subscribers_of_that_singleton() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let shared_sub = store.subscribe::<Shared>(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 0);
+        rec.reset();
+
+        store.with_mut::<Count, _>(OWNER, |v| *v = 1);
+
+        assert!(rec.notifications_for(shared_sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_no_singleton_subscribers_commits_mutated_value() {
+        let (notifier, _rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+
+        store.insert::<Count>(OWNER, 0);
+        store.with_mut::<Count, _>(OWNER, |v| *v += 7);
+        assert_eq!(store.get::<Count>(OWNER), Some(7));
+    }
+
+    #[test]
+    fn e2e_global_subscription_sees_singleton_with_mut() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe_global(subscriber).unwrap();
+        store.insert::<Count>(OWNER, 0);
+        rec.reset();
+
+        store.with_mut::<Count, _>(OWNER, |v| *v = 3);
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(CountKind::from)
+                .collect::<Vec<_>>(),
+            vec![CountKind::Upsert(3)]
+        );
     }
 
     #[test]
@@ -2136,6 +2425,41 @@ mod tests {
     }
 
     #[test]
+    fn e2e_subscribe_and_notify_valueless_singleton_sends_presence() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        store.insert::<Quiet>(OWNER, 7);
+        rec.reset();
+
+        let sub = store.subscribe_and_notify::<Quiet>(subscriber).unwrap();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(QuietKind::from)
+                .collect::<Vec<_>>(),
+            vec![QuietKind::Upsert]
+        );
+    }
+
+    #[test]
+    fn e2e_subscribe_and_notify_valueless_singleton_without_value_sends_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::with_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        store.insert::<Quiet>(OWNER, 7);
+        store.remove::<Quiet>(OWNER);
+        rec.reset();
+
+        let sub = store.subscribe_and_notify::<Quiet>(subscriber).unwrap();
+
+        // The value has been removed, so there is nothing to report.
+        assert!(rec.notifications_for(sub).is_empty());
+        assert_eq!(rec.total_calls(), 0);
+    }
+
+    #[test]
     fn e2e_subscribe_and_notify_singleton_without_value_sends_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
         let store = KvStore::with_notifier(Arc::downgrade(&notifier));
@@ -2415,7 +2739,7 @@ mod tests {
         txn.commit().unwrap();
 
         assert_eq!(
-            store.get_arc::<Shared>(OWNER).as_deref(),
+            store.get::<Shared>(OWNER).as_deref(),
             Some(&"hello".to_owned())
         );
         // Only `Count` is watched, so only its event is delivered.
