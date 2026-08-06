@@ -3,51 +3,80 @@
 
 extern crate alloc;
 
+pub mod dalek;
 mod keystate;
 mod macros;
+mod util;
 
+use alloc::string::ToString;
+use core::{
+    fmt,
+    fmt::{Display, Formatter},
+    str::FromStr,
+};
+
+pub use dalek::X25519KeyPair;
 #[doc(inline)]
 pub use keystate::{NodeState, PersistState};
 use macros::{
-    _create_x25519_base_key_type, create_x25519_keypair_types, create_x25519_private_key_type,
-    create_x25519_public_key_type,
+    create_x25519_keypair_types, create_x25519_private_key_type, create_x25519_public_key_type,
 };
+#[cfg(feature = "serde")]
+use serde::de::Error;
 
-/// Errors that may occur when parsing a string into a key type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ParseError {
-    /// Key string was formatted incorrectly.
-    #[error("key string was formatted incorrectly")]
-    InvalidFormat,
+mod private {
+    use core::{fmt, fmt::Formatter, str::FromStr};
 
-    /// Key was the wrong length.
-    #[error("key was the wrong length")]
-    WrongLength,
+    use crate::util::ParseError;
 
-    /// Parsed prefix did not match the key type.
-    #[error("parsed prefix did not match the key type")]
-    BadPrefix,
+    pub trait SealedExportable: Clone + FromStr<Err = ParseError> {
+        fn write_hex(&self, out: &mut Formatter) -> fmt::Result;
+    }
 }
 
-/// An x25519_dalek private key, and its associated public key.
-///
-/// This exists because the x25519_dalek crate doesn't have a pair type, which results in
-/// awkward APIs and pubkey recomputations when we have a strongly typed keypair of our own that
-/// we want to convert cheaply for crypto ops.
-#[derive(Clone)]
-pub struct X25519KeyPair {
-    /// The keypair's public key.
-    pub public: ::x25519_dalek::PublicKey,
-    /// The keypair's private key.
-    pub private: ::x25519_dalek::StaticSecret,
+pub trait ExportableKey: private::SealedExportable {
+    fn export(self) -> Export<Self>;
 }
 
-impl X25519KeyPair {
-    /// Return a new random keypair.
-    pub fn random() -> Self {
-        let private = ::x25519_dalek::StaticSecret::random();
-        let public = ::x25519_dalek::PublicKey::from(&private);
-        Self { public, private }
+#[derive(Clone, Debug)]
+pub struct Export<T: ExportableKey>(T);
+
+impl<T: ExportableKey> Export<T> {
+    pub fn import(&self) -> T {
+        self.0.clone()
+    }
+}
+
+impl<T: ExportableKey> Display for Export<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        self.0.write_hex(f)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: ExportableKey> serde::Deserialize<'de> for Export<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        let s = <&str>::deserialize(deserializer)?;
+        T::from_str(&s).map_err(D::Error::custom).map(Self)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: ExportableKey> ::serde::Serialize for Export<T> {
+    fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
+    where
+        S: ::serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<T: ExportableKey> From<T> for Export<T> {
+    fn from(k: T) -> Self {
+        Self(k)
     }
 }
 
@@ -59,13 +88,12 @@ create_x25519_public_key_type!(
     "chalpub"
 );
 
-// The client never handles DERP server private keys, so we only create a public key type rather
-// than public/private/keypair types.
 create_x25519_public_key_type!(
     /// The X25519 public key of a DERP server.
     DerpServerPublicKey,
     "derp"
 );
+
 create_x25519_keypair_types!(
     /// The X25519 public key a Tailscale node uses for the Disco protocol.
     DiscoPublicKey,
