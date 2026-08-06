@@ -1,9 +1,8 @@
 use std::{
-    any::Any,
     borrow::Borrow,
     collections::{HashMap, HashSet},
     hash::Hash,
-    sync::{Arc, Weak},
+    sync::Weak,
 };
 
 use crate::{
@@ -66,17 +65,17 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
 
     pub(crate) fn insert_singleton<D: schema::Singleton<Storage = TableStorage>>(
         &mut self,
-        value: D::ArgValue,
+        value: D::Value,
         txn_id: TxnId,
     ) {
-        D::field_ref_mut(&mut self.tables).set(D::to_value(value), txn_id);
+        D::get_mut(&mut self.tables).set(Some(value), txn_id);
     }
 
     pub(crate) fn remove_singleton<D: schema::Singleton<Storage = TableStorage>>(
         &mut self,
         txn_id: TxnId,
     ) {
-        D::field_ref_mut(&mut self.tables).set(SinValue::None, txn_id);
+        D::get_mut(&mut self.tables).set(None, txn_id);
     }
 
     /// Retrieve a singleton value from the store using the given type-key.
@@ -84,24 +83,48 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         &self,
         txn_id: TxnId,
     ) -> Option<&D::Value> {
-        map_singleton_value(D::field_ref(&self.tables), txn_id, |v| D::from_value_ref(v))
+        D::get_ref(&self.tables).get(txn_id)?.as_ref()
+    }
+
+    /// Pass a mutable reference to a singleton value to `f`.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the singleton.
+    pub(crate) fn with_mut_singleton<D: schema::Singleton<Storage = TableStorage>, T>(
+        &mut self,
+        txn_id: TxnId,
+        f: impl FnOnce(&mut D::Value) -> T,
+    ) -> Option<T>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        let singleton = D::get_mut(&mut self.tables);
+
+        // Check for a value before cloning: a removed singleton is stored as a `None` in an occupied
+        // slot, and cloning that into the free slot would look like a mutation and cause a spurious
+        // `Remove` notification.
+        singleton.get(txn_id)?.as_ref()?;
+
+        // If this transaction has already written to the singleton, then it counts as mutated however
+        // `f` behaves, and the clone we'd roll back isn't ours to roll back.
+        let previously_written = singleton.modified_in_txn(txn_id).is_some();
+
+        let value = singleton.internal_clone(txn_id)?.as_mut()?;
+        let old_value = (!previously_written).then(|| value.clone());
+        let result = f(value);
+
+        if old_value.is_some_and(|old_value| *value == old_value) {
+            // `f` left the value alone, so discard the clone.
+            singleton.gc_txn(txn_id);
+        }
+
+        Some(result)
     }
 
     pub(crate) fn get_singleton_notification_value<D: schema::Singleton<Storage = TableStorage>>(
         &self,
         txn_id: TxnId,
     ) -> Option<D::NotificationValue> {
-        map_singleton_value(D::field_ref(&self.tables), txn_id, |v| {
-            D::from_value_clone(v)
-        })
-    }
-
-    /// Retrieve a singleton value from the store using the given type-key.
-    pub(crate) fn get_singleton_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
-        &self,
-        txn_id: TxnId,
-    ) -> Option<Arc<D::Value>> {
-        map_singleton_value(D::field_ref(&self.tables), txn_id, |v| D::from_value_arc(v))
+        D::get_cloned(&self.tables, txn_id)
     }
 
     /// Begin a new transaction. Returns the transactions unique id.
@@ -159,35 +182,6 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     }
 }
 
-/// Internal storage for singleton values.
-#[doc(hidden)]
-#[derive(Default)]
-pub enum SinValue {
-    /// Tombstone value.
-    #[default]
-    None,
-    // TODO add other special cases
-    /// A single, inline `u64`.
-    U64(u64),
-    /// A boxed value.
-    Box(Box<dyn Any + Send + Sync>),
-    /// A shared reference in the store.
-    Arc(Arc<dyn Any + Send + Sync>),
-    /// A static reference in the store.
-    Ref(&'static (dyn Any + Send + Sync)),
-}
-
-fn map_singleton_value<'a, T>(
-    value: &'a VersionedValue<SinValue>,
-    id: TxnId,
-    f: impl FnOnce(&'a SinValue) -> T,
-) -> Option<T> {
-    match &value.get(id)? {
-        SinValue::None => None,
-        v => Some(f(v)),
-    }
-}
-
 /// An MVCC value with only two versions (versioned by [`TxnId`]).
 #[doc(hidden)]
 #[derive(Debug)]
@@ -226,6 +220,7 @@ impl<T> VersionedValue<T> {
         }
     }
 
+    /// The value written by `txn_id`, if this transaction wrote to either slot.
     pub fn modified_in_txn(&self, txn_id: TxnId) -> Option<&T> {
         if let Some((id, v)) = &self.slot_a
             && *id == txn_id
@@ -305,7 +300,7 @@ impl<T> VersionedValue<T> {
         )
     }
 
-    pub(crate) fn get(&self, id: TxnId) -> Option<&T> {
+    pub fn get(&self, id: TxnId) -> Option<&T> {
         // This could be expressed more simply with a match, but that doesn't work for `get_mut` because
         // of mutable borrows. Since the functions do the same thing, I use the more complex code
         // here too.
@@ -552,6 +547,11 @@ pub struct Table<D: schema::TableDesc, I> {
     delete_mask: DeleteMask<D::Key, D::Value>,
     /// Keys modified (includes inserts, but not deletes) by the given transaction.
     modified: Option<TxnMutations<D::Key>>,
+    /// True if the table was empty at the start of the current transaction.
+    ///
+    /// This is maintained by updating it when a transaction is committed. No action is required on
+    /// roll-back because `cleared` is not changed during a transaction.
+    cleared: bool,
     /// A flag indicating if the table has become inconsistent.
     ///
     /// Currently this is used for indexes if multiple primary keys are stored for a single index key.
@@ -566,6 +566,7 @@ impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
             data: HashMap::new(),
             delete_mask: DeleteMask::None,
             modified: None,
+            cleared: true,
             poisoned: VersionedValue::new(false, TxnId::FIRST),
             indexes: I::default(),
         }
@@ -671,10 +672,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             Some(m.keys)
         });
 
-        match std::mem::take(&mut self.delete_mask) {
+        let result = match std::mem::take(&mut self.delete_mask) {
             DeleteMask::All(dm_id, data) if dm_id == txn_id => {
                 if !collect_notifications {
                     self.data = data;
+                    self.cleared = self.data.is_empty();
                     return HashMap::new();
                 }
 
@@ -701,6 +703,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                     removed.iter().for_each(|k| {
                         self.data.remove(k);
                     });
+                    self.cleared = self.data.is_empty();
                     return HashMap::new();
                 }
 
@@ -729,15 +732,14 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             }
             DeleteMask::None => {
                 if !collect_notifications {
+                    self.cleared = self.data.is_empty();
                     return HashMap::new();
                 }
                 let Some(modified) = modified else {
                     return HashMap::new();
                 };
 
-                // TODO(nrc) O(size of table), should do this more efficiently, i.e., track as we mutate.
-                let was_empty = !self.data.values().any(|v| v.has_prior_value(txn_id));
-                if was_empty {
+                if self.cleared {
                     modified
                         .into_iter()
                         .map(|k| (k, WatchedEvent::KeyOnlyUpsert))
@@ -756,7 +758,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                 }
             }
             _ => unreachable!(),
-        }
+        };
+
+        self.cleared = self.data.is_empty();
+
+        result
     }
 
     /// Takes a set of keys which may have been mutated and removes any keys where the values are unchanged
@@ -1225,8 +1231,6 @@ mod test {
         assert_eq!(v.get(TxnId::new(3)), Some(&20));
     }
 
-    // take
-
     #[test]
     fn take_returns_none_when_empty() {
         let mut v: VersionedValue<u32> = VersionedValue::default();
@@ -1285,7 +1289,46 @@ mod test {
         assert!(v.slot_a.is_some());
     }
 
-    // set
+    #[test]
+    fn internal_clone_returns_none_when_empty() {
+        let mut v: VersionedValue<u32> = VersionedValue::default();
+        assert!(v.internal_clone(TxnId::new(2)).is_none());
+    }
+
+    #[test]
+    fn internal_clone_copies_committed_value_into_free_slot() {
+        let mut v = VersionedValue {
+            slot_a: Some((TxnId::new(2), 10u32)),
+            slot_b: None,
+        };
+        *v.internal_clone(TxnId::new(4)).unwrap() = 99;
+        // The committed value is left intact so that the transaction can be rolled back.
+        assert_eq!(v.slot_a, Some((TxnId::new(2), 10)));
+        assert_eq!(v.slot_b, Some((TxnId::new(4), 99)));
+    }
+
+    #[test]
+    fn internal_clone_reuses_slot_from_same_txn() {
+        let mut v = VersionedValue {
+            slot_a: Some((TxnId::new(2), 10u32)),
+            slot_b: Some((TxnId::new(4), 99u32)),
+        };
+        *v.internal_clone(TxnId::new(4)).unwrap() += 1;
+        assert_eq!(v.slot_a, Some((TxnId::new(2), 10)));
+        assert_eq!(v.slot_b, Some((TxnId::new(4), 100)));
+    }
+
+    #[test]
+    fn internal_clone_overwrites_older_of_two_committed_slots() {
+        let mut v = VersionedValue {
+            slot_a: Some((TxnId::new(3), 10u32)),
+            slot_b: Some((TxnId::new(2), 20u32)),
+        };
+        // The most recently committed value is the one cloned, and the older one is overwritten.
+        *v.internal_clone(TxnId::new(5)).unwrap() = 99;
+        assert_eq!(v.slot_a, Some((TxnId::new(3), 10)));
+        assert_eq!(v.slot_b, Some((TxnId::new(5), 99)));
+    }
 
     #[test]
     fn set_into_empty_writes_to_slot_a() {
@@ -1399,5 +1442,84 @@ mod txn_test {
         assert!(storage.current_txn().is_none());
         let now = storage.txn_id();
         assert!(storage.get_singleton_value::<Count>(now).is_none());
+    }
+
+    #[test]
+    fn with_mut_singleton_on_a_removed_value_records_no_mutation() {
+        use crate::schema::Singleton;
+
+        let mut storage =
+            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
+        let id = storage.begin_transaction();
+        storage.insert_singleton::<Count>(42, id);
+        storage.commit_transaction(id).unwrap();
+        let id = storage.begin_transaction();
+        storage.remove_singleton::<Count>(id);
+        storage.commit_transaction(id).unwrap();
+
+        let id = storage.begin_transaction();
+        assert!(
+            storage
+                .with_mut_singleton::<Count, _>(id, |v| *v = 7)
+                .is_none()
+        );
+
+        // A removed singleton is a `None` in an occupied slot. Cloning it into the free slot would
+        // be indistinguishable from a real mutation at commit time.
+        assert!(
+            Count::get_ref(&storage.tables)
+                .modified_in_txn(id)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn with_mut_singleton_without_a_change_records_no_mutation() {
+        use crate::schema::Singleton;
+
+        let mut storage =
+            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
+        let id = storage.begin_transaction();
+        storage.insert_singleton::<Count>(42, id);
+        storage.commit_transaction(id).unwrap();
+
+        let id = storage.begin_transaction();
+        assert_eq!(
+            storage.with_mut_singleton::<Count, _>(id, |v| *v = 42),
+            Some(())
+        );
+
+        assert!(
+            Count::get_ref(&storage.tables)
+                .modified_in_txn(id)
+                .is_none()
+        );
+        // Rolling back the clone must not lose the value.
+        assert_eq!(storage.get_singleton_value::<Count>(id), Some(&42));
+    }
+
+    #[test]
+    fn with_mut_singleton_keeps_a_mutation_from_earlier_in_the_txn() {
+        use crate::schema::Singleton;
+
+        let mut storage =
+            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
+        let id = storage.begin_transaction();
+        storage.insert_singleton::<Count>(42, id);
+        storage.commit_transaction(id).unwrap();
+
+        let id = storage.begin_transaction();
+        storage.insert_singleton::<Count>(7, id);
+        assert_eq!(
+            storage.with_mut_singleton::<Count, _>(id, |v| *v = 7),
+            Some(())
+        );
+
+        // The insert is this transaction's own write, so a `with_mut` which changes nothing must
+        // not roll it back.
+        assert_eq!(
+            Count::get_ref(&storage.tables).modified_in_txn(id),
+            Some(&Some(7))
+        );
     }
 }

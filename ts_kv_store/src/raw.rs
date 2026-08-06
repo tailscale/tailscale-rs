@@ -1,6 +1,6 @@
 //! KvStore non-transactional API.
 
-use std::{borrow::Borrow, hash::Hash, sync::Arc};
+use std::{borrow::Borrow, hash::Hash};
 
 use crate::{
     Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner,
@@ -79,16 +79,6 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         <&Self as SingletonOps<_>>::get::<D>(self, owner)
     }
 
-    /// Get a single value from the store by cloning an `Arc`.
-    ///
-    /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
-        &self,
-        owner: Owner,
-    ) -> Option<Arc<D::Value>> {
-        <&Self as SingletonOps<_>>::get_arc::<D>(self, owner)
-    }
-
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
@@ -100,11 +90,29 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         <&Self as SingletonOps<_>>::with::<D, T>(self, f, owner)
     }
 
+    /// Get mutable access to a value in the store by reference.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    pub fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+        &self,
+        owner: Owner,
+        f: impl FnOnce(&mut D::Value) -> T,
+    ) -> Option<T>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        let mut txn = self.begin_transaction(owner);
+        let result = SingletonOpsMut::with_mut::<D, T>(&mut txn, f, owner);
+        // Should never panic since transaction should only fail on index inserts.
+        txn.commit().unwrap();
+        result
+    }
+
     /// Insert a single value into the store.
     pub fn insert<D: schema::Singleton<Storage = TableStorage>>(
         &self,
         owner: Owner,
-        value: D::ArgValue,
+        value: D::Value,
     ) {
         let mut txn = self.begin_transaction(owner);
         SingletonOpsMut::insert::<D>(&mut txn, value, owner);
@@ -213,15 +221,6 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
         self.store.get::<D>(self.owner)
     }
 
-    /// Get a single value from the store by cloning an `Arc`.
-    ///
-    /// Returns `None` if there is no value for the specified key. Panics if the value is not an `Arc`.
-    pub fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
-        &self,
-    ) -> Option<Arc<D::Value>> {
-        self.store.get_arc::<D>(self.owner)
-    }
-
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
@@ -232,8 +231,21 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
         self.store.with::<D, T>(self.owner, f)
     }
 
+    /// Get mutable access to a value in the store by reference.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    pub fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+        &self,
+        f: impl FnOnce(&mut D::Value) -> T,
+    ) -> Option<T>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.store.with_mut::<D, T>(self.owner, f)
+    }
+
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&self, value: D::ArgValue) {
+    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&self, value: D::Value) {
         self.store.insert::<D>(self.owner, value)
     }
 
@@ -436,8 +448,9 @@ mod test {
     store!(
         kvs: {
             Count(u64; OWNER),
-            Shared(String as Arc; OWNER),
-            Label(u64 as Ref; OWNER),
+            Shared(Arc<String>; OWNER),
+            Label(&'static u64; OWNER),
+            Boxed(Box<String>; OWNER),
         }
         tables: {
             Items(&'static str => String; OWNER),
@@ -474,30 +487,7 @@ mod test {
         static STATIC_LABEL: u64 = 99;
         let store = KvStore::new();
         store.insert::<Label>(OWNER, &STATIC_LABEL);
-        assert_eq!(store.get::<Label>(OWNER), Some(99));
-    }
-
-    #[test]
-    fn get_arc_returns_none_when_absent() {
-        let store = KvStore::new();
-        assert!(store.get_arc::<Shared>(OWNER).is_none());
-    }
-
-    #[test]
-    fn get_arc_returns_arc_after_insert() {
-        let store = KvStore::new();
-        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
-        let arc = store.get_arc::<Shared>(OWNER).unwrap();
-        assert_eq!(*arc, "hello");
-    }
-
-    #[test]
-    fn get_arc_shares_allocation() {
-        let store = KvStore::new();
-        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
-        let arc1 = store.get_arc::<Shared>(OWNER).unwrap();
-        let arc2 = store.get_arc::<Shared>(OWNER).unwrap();
-        assert!(Arc::ptr_eq(&arc1, &arc2));
+        assert_eq!(store.get::<Label>(OWNER), Some(&99));
     }
 
     #[test]
@@ -516,6 +506,124 @@ mod test {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 5);
         assert_eq!(store.with::<Count, _>(OWNER, |v| v * 2), Some(10));
+    }
+
+    #[test]
+    fn get_arc_singleton_shares_allocation() {
+        let store = KvStore::new();
+        let arc = Arc::new("hello".to_owned());
+        store.insert::<Shared>(OWNER, arc.clone());
+        let got = store.get::<Shared>(OWNER).unwrap();
+        assert_eq!(*got, "hello");
+        // `get` clones the `Arc` rather than the pointee.
+        assert!(Arc::ptr_eq(&arc, &got));
+    }
+
+    #[test]
+    fn with_mut_returns_none_and_does_not_call_f_when_absent() {
+        let store = KvStore::new();
+        let mut called = false;
+        let result = store.with_mut::<Count, ()>(OWNER, |_| {
+            called = true;
+        });
+        assert!(result.is_none());
+        assert!(!called);
+    }
+
+    #[test]
+    fn with_mut_does_not_insert_when_absent() {
+        let store = KvStore::new();
+        store.with_mut::<Count, _>(OWNER, |v| *v = 7);
+        assert!(store.get::<Count>(OWNER).is_none());
+    }
+
+    #[test]
+    fn with_mut_passes_current_value() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 5);
+        let mut seen = None;
+        store.with_mut::<Count, _>(OWNER, |v| seen = Some(*v));
+        assert_eq!(seen, Some(5));
+    }
+
+    #[test]
+    fn with_mut_returns_result_of_f() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 5);
+        assert_eq!(store.with_mut::<Count, _>(OWNER, |v| *v * 2), Some(10));
+    }
+
+    #[test]
+    fn with_mut_mutates_existing_value() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 5);
+        store.with_mut::<Count, _>(OWNER, |v| *v *= 2);
+        assert_eq!(store.get::<Count>(OWNER), Some(10));
+    }
+
+    #[test]
+    fn with_mut_sees_previous_with_mut() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 0);
+        store.with_mut::<Count, _>(OWNER, |v| *v += 1);
+        store.with_mut::<Count, _>(OWNER, |v| *v += 1);
+        store.with_mut::<Count, _>(OWNER, |v| *v += 1);
+        assert_eq!(store.get::<Count>(OWNER), Some(3));
+    }
+
+    #[test]
+    fn with_mut_returns_none_after_remove() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 5);
+        store.remove::<Count>(OWNER);
+        let mut called = false;
+        let result = store.with_mut::<Count, ()>(OWNER, |_| called = true);
+        assert!(result.is_none());
+        assert!(!called);
+        assert!(store.get::<Count>(OWNER).is_none());
+    }
+
+    #[test]
+    fn with_mut_box_singleton() {
+        let store = KvStore::new();
+        store.insert::<Boxed>(OWNER, Box::new("hello".to_owned()));
+        store.with_mut::<Boxed, _>(OWNER, |v| v.push('!'));
+        assert_eq!(
+            store.get::<Boxed>(OWNER),
+            Some(Box::new("hello!".to_owned()))
+        );
+    }
+
+    #[test]
+    fn with_mut_arc_singleton() {
+        let store = KvStore::new();
+        store.insert::<Shared>(OWNER, Arc::new("hello".to_owned()));
+        store.with_mut::<Shared, _>(OWNER, |v| *v = Arc::new(format!("{v}!")));
+        assert_eq!(
+            store.get::<Shared>(OWNER).as_deref(),
+            Some(&"hello!".to_owned())
+        );
+    }
+
+    #[test]
+    fn with_mut_ref_singleton() {
+        static OLD_LABEL: u64 = 1;
+        static NEW_LABEL: u64 = 2;
+        let store = KvStore::new();
+        store.insert::<Label>(OWNER, &OLD_LABEL);
+        store.with_mut::<Label, _>(OWNER, |v| {
+            assert_eq!(**v, 1);
+            *v = &NEW_LABEL;
+        });
+        assert_eq!(store.get::<Label>(OWNER), Some(&2));
+    }
+
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
+    fn with_mut_wrong_owner_panics() {
+        let store = KvStore::new();
+        store.insert::<Count>(OWNER, 1);
+        store.with_mut::<Count, _>(OTHER, |v| *v = 2);
     }
 
     #[test]

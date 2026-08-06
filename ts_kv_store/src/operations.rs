@@ -11,7 +11,7 @@
 use std::{
     borrow::Borrow,
     hash::Hash,
-    sync::{Arc, RwLockReadGuard, RwLockWriteGuard},
+    sync::{RwLockReadGuard, RwLockWriteGuard},
 };
 
 use crate::{
@@ -86,16 +86,6 @@ pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
         let storage = storage.storage();
         let txn_id = storage.txn_id();
         storage.get_singleton_value::<D>(txn_id).cloned()
-    }
-
-    fn get_arc<D: schema::ArcSingleton<Storage = TableStorage>>(
-        self,
-        _owner: Owner,
-    ) -> Option<Arc<D::Value>> {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        storage.get_singleton_arc::<D>(txn_id)
     }
 
     fn with<D: schema::Singleton<Storage = TableStorage>, T>(
@@ -359,11 +349,7 @@ pub(crate) trait OpsMut<TableStorage: schema::GeneratedStorage>: Sized {
 pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
     OpsMut<TableStorage>
 {
-    fn insert<D: schema::Singleton<Storage = TableStorage>>(
-        self,
-        value: D::ArgValue,
-        owner: Owner,
-    ) {
+    fn insert<D: schema::Singleton<Storage = TableStorage>>(self, value: D::Value, owner: Owner) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
         assert_owner::<D>(owner);
@@ -379,6 +365,22 @@ pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
 
         let txn_id = storage.txn_id();
         storage.remove_singleton::<D>(txn_id);
+    }
+
+    fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+        self,
+        f: impl FnOnce(&mut D::Value) -> T,
+        owner: Owner,
+    ) -> Option<T>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        let mut storage = self.write_lock();
+        let storage = storage.storage();
+        assert_owner::<D>(owner);
+
+        let txn_id = storage.txn_id();
+        storage.with_mut_singleton::<D, T>(txn_id, f)
     }
 }
 

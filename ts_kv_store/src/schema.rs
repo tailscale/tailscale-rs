@@ -3,13 +3,12 @@
 use std::{
     any::{Any, TypeId},
     hash::Hash,
-    sync::Arc,
 };
 
 use crate::{
     Owner,
     pub_sub::Subscriptions,
-    storage::{SinValue, Table, VersionedValue},
+    storage::{Table, VersionedValue},
     transactions::TxnId,
 };
 
@@ -22,65 +21,24 @@ pub trait Singleton: Sized + 'static {
 
     /// The type of the value.
     type Value: Any + Send + Sync;
-    /// The type of the notification for this singleton (either `Self::ArgValue` or `()`).
+    /// The type of the notification for this singleton (either `Self::Value` or `()`).
     type NotificationValue: Clone;
-    /// The type used to initialize and access the value. For values stored as `Arc`s this should be
-    /// `Arc<Self::Value>`, for values stored by reference, this should be `&'static Self::Value`, and
-    /// for other types, it should be the same as `Self::Value`.
-    type ArgValue;
     /// The storage for this singleton KV.
     type Storage: GeneratedStorage;
 
-    /// Unwrap a `SinValue` into a typed value.
-    ///
-    /// Panics if `value` is an unexpected variant.
-    fn from_value(value: SinValue) -> Self::ArgValue;
-    /// Unwrap a reference to a `SinValue` into a typed value by cloning, if possible.
-    ///
-    /// Panics if `value` is an unexpected variant.
-    fn from_value_clone(value: &SinValue) -> Self::NotificationValue;
-    /// Unwrap a reference to a `SinValue` into a reference to a typed value.
-    ///
-    /// Panics if `value` is an unexpected variant.
-    fn from_value_ref(value: &SinValue) -> &Self::Value;
-    /// Wrap a typed value into a `SinValue`.
-    fn to_value(value: Self::ArgValue) -> SinValue;
+    /// Get a clone of the value from `storage` if the singleton uses cloning for notification values,
+    /// or `()` if not.
+    fn get_cloned(storage: &Self::Storage, txn_id: TxnId) -> Option<Self::NotificationValue>;
     /// Get a reference to the field storing this singleton in `storage`.
-    fn field_ref(storage: &Self::Storage) -> &VersionedValue<SinValue>;
+    fn get_ref(storage: &Self::Storage) -> &VersionedValue<Option<Self::Value>>;
     /// Get a mutable reference to the field storing this singleton in `storage`.
-    fn field_ref_mut(storage: &mut Self::Storage) -> &mut VersionedValue<SinValue>;
+    fn get_mut(storage: &mut Self::Storage) -> &mut VersionedValue<Option<Self::Value>>;
+    /// Convert an optional reference to this singleton's value to it's notification value.
+    fn notif_value(value: &Option<Self::Value>) -> &Option<Self::NotificationValue>;
     /// Create a notification from an event.
     fn make_notification(
         event: crate::SingletonEvent<Self, Self::NotificationValue>,
     ) -> <Self::Storage as GeneratedStorage>::Notification;
-}
-
-/// A singleton key/value which is store as an `Arc`.
-///
-/// Implementing this trait for non-`Arc` values will cause [`crate::KvStore::get_arc`] to panic (but is
-/// not unsafe).
-///
-/// Prefer to use the macros in this module rather than this trait directly.
-pub trait ArcSingleton: Singleton {
-    /// Unwrap a reference to a `SinValue` into an `Arc` reference to a typed value.
-    ///
-    /// Panics if `value` is an unexpected variant.
-    fn from_value_arc(value: &SinValue) -> Arc<Self::Value> {
-        match value {
-            SinValue::Arc(a) => a.clone().downcast().unwrap(),
-            _ => unreachable!(),
-        }
-    }
-}
-
-/// Mark a singleton value as mutable (i.e., the value in the store is unique).
-///
-/// Prefer to use the macros in this module rather than this trait directly.
-pub trait MutSingleton: Singleton {
-    /// Unwrap a mutable reference to a `SinValue` into a mutable reference to a typed value.
-    ///
-    /// Panics if `value` is an unexpected variant.
-    fn from_value_mut(value: &mut SinValue) -> &mut Self::Value;
 }
 
 /// Describes tabular key/values in the store.
@@ -233,26 +191,19 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// The syntax is:
 /// ```ignore
 /// store!(
-///   kvs: { Name(ValueKind; owner; notify(None|Clone)?),* }
+///   kvs: { Name(ValueType; owner; notify(None|Clone)?),* }
 ///   tables: { Name(KeyType => ValueType; owner; indexes?; notify(None|Clone)?),* }
 /// )
 /// ```
 /// where `Name` is an identifier to name the table or singleton (in which case it is also the key),
-/// `KeyType` and `ValueType` are types, `ValueKind` is `u64 | ValueType as (Box | Arc | Ref)`.
-/// `owner` is an expression which evaluates to an `Owner`. `Name` is used as a type argument to
-/// KvStore methods to identify the table or singletone.
-///
-/// The storage kinds for singleton values are:
-///
-/// - `u64` a `u64` stored inline.
-/// - `Box` a value with type `Box<ValueType>`.
-/// - `Arc` a value with type `Arc<ValueType>`.
-/// - `Ref` a value with type `&'static ValueType`.
+/// `KeyType` and `ValueType` are types. `owner` is an expression which evaluates to an `Owner`.
+/// `Name` is used as a type argument to KvStore methods to identify the table or singleton.
 ///
 /// # Example:
 ///
 /// ```rust
 /// # use ts_kv_store::store;
+/// # use std::sync::Arc;
 /// # const GRAPH_OWNER: ts_kv_store::Owner = "foo";
 /// # const NODES_OWNER: ts_kv_store::Owner = "bar";
 /// # const EDGES_OWNER: ts_kv_store::Owner = "baz";
@@ -262,7 +213,7 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// # pub trait Edge {}
 /// store!(
 ///   kvs: {
-///     GraphId(Gid as Arc; GRAPH_OWNER),
+///     GraphId(Arc<Gid>; GRAPH_OWNER),
 ///   }
 ///   tables: {
 ///     Nodes(&'static str => Node; NODES_OWNER),
@@ -308,8 +259,7 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// ## Notifications
 ///
 /// The `notify(...)` argument is used to control notifications about the table or singleton. Accepted
-/// values are `Clone` and `None`. The default is `None` for tables and `Box` singletons, and `Clone`
-/// for other kinds of singleton.
+/// values are `Clone` and `None`. The default is `None`.
 ///
 /// The `None` behaviour is that only keys are sent in notifications. The `Clone` behaviour is
 /// that values are cloned and included in notifications. This requires that the value type implements
@@ -317,18 +267,51 @@ pub trait GeneratedStorage: Default + Send + Sync {
 #[macro_export]
 macro_rules! store {
     (
-        $(kvs: { $($sname: ident $sbody: tt),* $(,)? })?
+        $(kvs: { $($sname:ident($svalue_ty:ty; $sowner:expr $(; notify($snotif:ident))?)),* $(,)? })?
         $(tables: { $(
-            $name: ident (
-                $key_ty: ty => $value_ty: ty;
-                $owner: expr
-                $(; index($field: ident: $field_ty: ty $(= $get_idx: expr)? $(; $unique:ident)?))*
+            $name:ident (
+                $key_ty:ty => $value_ty:ty;
+                $owner:expr
+                $(; index($field:ident: $field_ty:ty $(= $get_idx:expr)? $(; $unique:ident)?))*
                 $(; notify($notif:ident))?
                 $(;)?
             )
         ),* $(,)? })?
     ) => {
-        $($($crate::singleton!($sname $sbody, TableStorage);)*)?
+        $($(
+            /// Describes a singleton in the KV store.
+            #[allow(non_camel_case_types)]
+            pub struct $sname;
+
+            impl $crate::schema::Singleton for $sname {
+                const OWNER: $crate::Owner = $sowner;
+                type Value = $svalue_ty;
+                type NotificationValue = $crate::notification_value_type!($svalue_ty $(; notify($snotif))?);
+                type Storage = TableStorage;
+
+                fn get_cloned(_storage: &Self::Storage, _txn_id: $crate::transactions::TxnId) -> Option<Self::NotificationValue> {
+                    $crate::get_cloned_notification_value!($sname, _storage, _txn_id $(; notify($snotif))?)
+                }
+
+                fn get_ref(storage: &Self::Storage) -> &$crate::storage::VersionedValue<Option<Self::Value>> {
+                    &storage.$sname
+                }
+
+                fn get_mut(storage: &mut Self::Storage) -> &mut $crate::storage::VersionedValue<Option<Self::Value>>{
+                    &mut storage.$sname
+                }
+
+                fn notif_value(_value: &Option<Self::Value>) -> &Option<Self::NotificationValue> {
+                    $crate::notification_value!(_value $(; notify($snotif))? )
+                }
+
+                fn make_notification(
+                    event: $crate::SingletonEvent<Self, Self::NotificationValue>,
+                ) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
+                    Notification::$sname(event)
+                }
+            }
+        )*)?
         $($(
             /// Describes a table in the KV store.
             #[derive(Default)]
@@ -339,7 +322,7 @@ macro_rules! store {
                 const OWNER: $crate::Owner = $owner;
                 type Key = $key_ty;
                 type Value = $value_ty;
-                type NotificationValue = $crate::table_notification_value_type!($value_ty $(; notify($notif))?);
+                type NotificationValue = $crate::notification_value_type!($value_ty $(; notify($notif))?);
                 type Storage = TableStorage;
                 type Indexes = index::$name::Indexes;
 
@@ -354,7 +337,7 @@ macro_rules! store {
                     Notification::$name(event)
                 }
                 fn clone_value_for_notification(_value: &Self::Value) -> Self::NotificationValue {
-                    $crate::table_notification_clone_value!(_value $(; notify($notif))?)
+                    $crate::notification_clone_value!(_value $(; notify($notif))?)
                 }
 
                 $crate::value_eq!(Self::Value);
@@ -389,15 +372,14 @@ macro_rules! store {
                     type BaseTable = $name;
                 }
             )*
-
         )*)?
 
-        /// Macro-generated storage for all tabular data.
+        /// Macro-generated storage for all data.
         #[derive(Default)]
         #[allow(non_snake_case)]
         pub struct TableStorage {
             $($($name: $crate::storage::Table<$name, index::$name::Indexes>,)*)?
-            $($($sname: $crate::storage::VersionedValue<$crate::storage::SinValue>,)*)?
+            $($($sname: $crate::storage::VersionedValue<Option<$svalue_ty>>,)*)?
         }
 
         /// Macro-generated notification type, there is a variant for each table and singleton with
@@ -435,7 +417,7 @@ macro_rules! store {
                         if _subscriptions.has_singleton_subscribers::<$sname>()
                             && let Some(event) = self.$sname.modified_in_txn(_txn_id)
                         {
-                            _subscriptions.collect_singleton_events::<$sname>(_notifications, event);
+                            _subscriptions.collect_singleton_events::<$sname>(_notifications, <$sname as $crate::schema::Singleton>::notif_value(event));
                         }
                     )*
                 )?
@@ -655,130 +637,7 @@ macro_rules! value_eq {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! singleton {
-    ($name:ident(u64; $owner:expr $(; notify($notif:ident))?), $storage:ident) => {
-        $crate::singleton_types!($name(u64, u64, U64), $owner, $storage, $(notify($notif))?);
-
-        impl $crate::schema::MutSingleton for $name {
-            fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
-                match value {
-                    $crate::match_helper_lhs!(U64, v) => $crate::match_helper_rhs_mut!(U64, v),
-                    _ => unreachable!(),
-                }
-            }
-        }
-    };
-    ($name:ident($value_ty:ty as Box; $owner:expr $(; notify($notif:ident))?), $storage:ident) => {
-        $crate::singleton_types!($name($value_ty, $value_ty, Box), $owner, $storage, $(notify($notif))?);
-
-        impl $crate::schema::MutSingleton for $name {
-            fn from_value_mut(value: &mut $crate::storage::SinValue) -> &mut Self::Value {
-                match value {
-                    $crate::match_helper_lhs!(Box, v) => $crate::match_helper_rhs_mut!(Box, v),
-                    _ => unreachable!(),
-                }
-            }
-        }
-    };
-    ($name:ident($value_ty:ty as Arc; $owner:expr $(; notify($notif:ident))?), $storage:ident) => {
-        $crate::singleton_types!(
-            $name($value_ty, std::sync::Arc<$value_ty>, Arc),
-            $owner,
-            $storage,
-            $(notify($notif))?
-        );
-
-        impl $crate::schema::ArcSingleton for $name {}
-    };
-    ($name:ident($value_ty:ty as Ref; $owner:expr $(; notify($notif:ident))?), $storage:ident) => {
-        $crate::singleton_types!($name($value_ty, &'static $value_ty, Ref), $owner, $storage, $(notify($notif))?);
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! singleton_types {
-    ($name:ident($value_ty:ty, $arg_value_ty:ty, $variant:ident), $owner:expr, $storage:ident, $(notify($notif:ident))?) => {
-        /// Describes a singleton in the KV store.
-        #[allow(non_camel_case_types)]
-        pub struct $name;
-
-        impl $crate::schema::Singleton for $name {
-            const OWNER: $crate::Owner = $owner;
-            type Value = $value_ty;
-            type NotificationValue = $crate::singleton_notification_value_type!($name, $variant, $($notif)?);
-            type ArgValue = $arg_value_ty;
-            type Storage = $storage;
-
-            fn from_value(value: $crate::storage::SinValue) -> Self::ArgValue {
-                match value {
-                    $crate::match_helper_lhs!($variant, v) => {
-                        $crate::match_helper_rhs!($variant, v)
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            fn from_value_clone(value: &$crate::storage::SinValue) -> Self::NotificationValue {
-                match value {
-                    $crate::match_helper_lhs!($variant, _v) => {
-                        $crate::match_helper_rhs_clone!($variant, _v, $value_ty, $($notif)?)
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            fn from_value_ref(value: &$crate::storage::SinValue) -> &Self::Value {
-                match value {
-                    $crate::match_helper_lhs!($variant, v) => {
-                        $crate::match_helper_rhs_ref!($variant, v)
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            fn to_value(value: Self::ArgValue) -> $crate::storage::SinValue {
-                $crate::init_helper!($variant, value)
-            }
-
-            fn field_ref(
-                storage: &Self::Storage,
-            ) -> &$crate::storage::VersionedValue<$crate::storage::SinValue> {
-                &storage.$name
-            }
-
-            fn field_ref_mut(
-                storage: &mut Self::Storage,
-            ) -> &mut $crate::storage::VersionedValue<$crate::storage::SinValue> {
-                &mut storage.$name
-            }
-
-            fn make_notification(
-                event: $crate::SingletonEvent<Self, Self::NotificationValue>,
-            ) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
-                Notification::$name(event)
-            }
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! singleton_notification_value_type {
-    ($sname:ident,Box, $(None)?) => {
-        ()
-    };
-    ($sname:ident, $variant:ident, $(Clone)?) => {
-        <$sname as $crate::schema::Singleton>::ArgValue
-    };
-    ($sname:ident, $variant:ident,None) => {
-        ()
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! table_notification_value_type {
+macro_rules! notification_value_type {
     ($value_ty:ty; notify(Clone)) => {
         $value_ty
     };
@@ -789,7 +648,7 @@ macro_rules! table_notification_value_type {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! table_notification_clone_value {
+macro_rules! notification_clone_value {
     ($value:ident; notify(Clone)) => {
         $value.clone()
     };
@@ -797,100 +656,25 @@ macro_rules! table_notification_clone_value {
         ()
     };
 }
-
 #[doc(hidden)]
 #[macro_export]
-macro_rules! init_helper {
-    (U64, $value:ident) => {
-        $crate::storage::SinValue::U64($value)
-    };
-    (Box, $value:ident) => {
-        $crate::storage::SinValue::Box(
-            std::boxed::Box::new($value) as Box<dyn std::any::Any + Send + Sync>
-        )
-    };
-    (Arc, $value:ident) => {
-        $crate::storage::SinValue::Arc(
-            $value.clone() as std::sync::Arc<dyn std::any::Any + Send + Sync>
-        )
-    };
-    (Ref, $value:ident) => {
-        $crate::storage::SinValue::Ref($value as &'static (dyn std::any::Any + Send + Sync))
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_lhs {
-    (U64, $value:ident) => {
-        $crate::storage::SinValue::U64($value)
-    };
-    ($variant:ident, $value:ident) => {
-        $crate::storage::SinValue::$variant($value)
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_rhs {
-    (U64, $value:ident) => {
+macro_rules! notification_value {
+    ($value:ident; notify(Clone)) => {
         $value
     };
-    (Box, $value:ident) => {
-        *$value.downcast().unwrap()
-    };
-    (Arc, $value:ident) => {
-        $value.downcast().unwrap()
-    };
-    (Ref, $value:ident) => {
-        $value.downcast_ref().unwrap()
+    ($value:ident $(; notify(None))?) => {
+        if $value.is_some() { &Some(()) } else { &None }
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! match_helper_rhs_ref {
-    (U64, $value:ident) => {
-        $value
+macro_rules! get_cloned_notification_value {
+    ($name:ident, $storage:ident, $txn_id:ident; notify(Clone)) => {
+        $storage.$name.get($txn_id)?.as_ref().map(|v| v.clone())
     };
-    ($variant:ident, $value:ident) => {
-        $value.downcast_ref().unwrap()
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_rhs_mut {
-    (U64, $value:ident) => {
-        $value
-    };
-    ($variant:ident, $value:ident) => {
-        $value.downcast_mut().unwrap()
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! match_helper_rhs_clone {
-    ($variant:ident, $value:ident, $value_ty:ty,None) => {
-        ()
-    };
-    (U64, $value:ident, $value_ty:ty, $(Clone)?) => {
-        *$value
-    };
-    (Box, $value:ident, $value_ty:ty,Clone) => {
-        $value.downcast_ref::<$value_ty>().unwrap().clone()
-    };
-    (Box, $value:ident, $value_ty:ty) => {
-        ()
-    };
-    (Arc, $value:ident, $value_ty:ty, $(Clone)?) => {
-        std::sync::Arc::clone($value)
-            .downcast::<$value_ty>()
-            .unwrap()
-    };
-    (Ref, $value:ident, $value_ty:ty, $(Clone)?) => {
-        $value.downcast_ref::<$value_ty>().unwrap()
+    ($name:ident, $storage:ident, $txn_id:ident $(; notify(None))?) => {
+        $storage.$name.get($txn_id)?.as_ref().map(|_| ())
     };
 }
 
@@ -898,27 +682,20 @@ macro_rules! match_helper_rhs_clone {
 mod test {
     use std::sync::Arc;
 
-    use super::*;
-
     #[test]
     fn single() {
         store!(
             kvs: {
-                Foo(u64 as Box; "owner"; notify(Clone)),
-                Bar(u64 as Arc; "owner"; notify(None)),
-                Baz(u64 as Ref; "owner"),
+                Foo(Box<u64>; "owner"; notify(Clone)),
+                Bar(Arc<u64>; "owner"; notify(None)),
+                Baz(&'static u64; "owner"),
                 Qux(u64; "owner"),
             }
         );
 
-        assert_eq!(&42, Foo::from_value_ref(&Foo::to_value(42)));
-        assert_eq!(&42, Bar::from_value_ref(&Bar::to_value(Arc::new(42))));
-        assert_eq!(&42, Baz::from_value_ref(&Baz::to_value(&42)));
-        assert_eq!(&42, Qux::from_value_ref(&Qux::to_value(42)));
-
         let store = KvStore::new();
-        store.insert::<Foo>("owner", 42);
-        assert_eq!(store.get::<Foo>("owner").unwrap(), 42);
+        store.insert::<Foo>("owner", Box::new(42));
+        assert_eq!(store.get::<Foo>("owner").unwrap(), Box::new(42));
     }
 
     #[test]

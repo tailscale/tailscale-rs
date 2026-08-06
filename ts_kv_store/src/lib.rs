@@ -131,10 +131,8 @@
 //! for documentation.
 //!
 //! The implementation of storage for tabular data is one HashMap per table, and otherwise
-//! straightforward. For singleton data, we store values (as a `SinValue`) in fields with the name
-//! of the singleton. Values can be stored in different ways (inline, via an `Arc`, etc.) each of
-//! which is a variant of `SinValue`. The store transparently converts keys and values to their
-//! declared types.
+//! straightforward. For singleton data, we store values in an `Option` in fields with the name of
+//! the singleton.
 //!
 //! The implementation of the storage operations (`get`, `insert`, etc.) is somewhat shared between
 //! the various types which support them (`KvStore`, the table types, the transaction types, index
@@ -157,7 +155,7 @@
 //! outside of the main storage in a per-table delete mask.
 //!
 //! Singletons work slightly differently: they still use a `VersionedValue`, but use a tombstone value
-//! for deletes (`SinValue::None`) rather than a delete mask.
+//! for deletes (`None`) rather than a delete mask.
 //!
 //! To commit a transaction, the delete masks are applied to their corresponding tables, the committed
 //! transaction id in the store is set to the committed transaction's, and the pending transaction
