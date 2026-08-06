@@ -552,6 +552,11 @@ pub struct Table<D: schema::TableDesc, I> {
     delete_mask: DeleteMask<D::Key, D::Value>,
     /// Keys modified (includes inserts, but not deletes) by the given transaction.
     modified: Option<TxnMutations<D::Key>>,
+    /// True if the table was empty at the start of the current transaction.
+    ///
+    /// This is maintained by updating it when a transaction is committed. No action is required on
+    /// roll-back because `cleared` is not changed during a transaction.
+    cleared: bool,
     /// A flag indicating if the table has become inconsistent.
     ///
     /// Currently this is used for indexes if multiple primary keys are stored for a single index key.
@@ -566,6 +571,7 @@ impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
             data: HashMap::new(),
             delete_mask: DeleteMask::None,
             modified: None,
+            cleared: true,
             poisoned: VersionedValue::new(false, TxnId::FIRST),
             indexes: I::default(),
         }
@@ -671,10 +677,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             Some(m.keys)
         });
 
-        match std::mem::take(&mut self.delete_mask) {
+        let result = match std::mem::take(&mut self.delete_mask) {
             DeleteMask::All(dm_id, data) if dm_id == txn_id => {
                 if !collect_notifications {
                     self.data = data;
+                    self.cleared = self.data.is_empty();
                     return HashMap::new();
                 }
 
@@ -701,6 +708,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                     removed.iter().for_each(|k| {
                         self.data.remove(k);
                     });
+                    self.cleared = self.data.is_empty();
                     return HashMap::new();
                 }
 
@@ -729,15 +737,14 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             }
             DeleteMask::None => {
                 if !collect_notifications {
+                    self.cleared = self.data.is_empty();
                     return HashMap::new();
                 }
                 let Some(modified) = modified else {
                     return HashMap::new();
                 };
 
-                // TODO(nrc) O(size of table), should do this more efficiently, i.e., track as we mutate.
-                let was_empty = !self.data.values().any(|v| v.has_prior_value(txn_id));
-                if was_empty {
+                if self.cleared {
                     modified
                         .into_iter()
                         .map(|k| (k, WatchedEvent::KeyOnlyUpsert))
@@ -756,7 +763,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                 }
             }
             _ => unreachable!(),
-        }
+        };
+
+        self.cleared = self.data.is_empty();
+
+        result
     }
 
     /// Takes a set of keys which may have been mutated and removes any keys where the values are unchanged
