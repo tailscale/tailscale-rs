@@ -138,7 +138,7 @@ pub const SESSION_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 /// Established session that can only receive.
 pub struct ReceiveSession {
     cipher: ChaCha20Poly1305,
-    id: SessionHandle,
+    session_handle: SessionHandle,
     expiry: Instant,
     window: ReplayWindow,
 }
@@ -146,16 +146,16 @@ pub struct ReceiveSession {
 impl Debug for ReceiveSession {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReceiveSession")
-            .field("id", self.id.as_ref())
+            .field("id", self.session_handle.as_ref())
             .finish_non_exhaustive()
     }
 }
 
 impl ReceiveSession {
-    pub fn new(key: SessionKey, id: SessionHandle, now: Instant) -> Self {
+    pub fn new(key: SessionKey, session_handle: SessionHandle, now: Instant) -> Self {
         ReceiveSession {
             cipher: ChaCha20Poly1305::new(&key),
-            id,
+            session_handle,
             expiry: now + SESSION_LIFETIME,
             window: ReplayWindow::default(),
         }
@@ -170,7 +170,7 @@ impl ReceiveSession {
     }
 
     /// Decrypt a wireguard transport data message in place.
-    #[tracing::instrument(skip_all, fields(session_id = ?self.id))]
+    #[tracing::instrument(skip_all, fields(session_id = ?self.session_handle))]
     #[must_use]
     fn decrypt_one(&mut self, pkt: &mut PacketMut) -> bool {
         let Ok((header, _)) = TransportDataHeader::try_ref_from_prefix(pkt.as_ref()) else {
@@ -222,7 +222,7 @@ impl ReceiveSession {
 
     /// Return the session ID that will appear on received packets meant for this session.
     pub fn id(&self) -> SessionId {
-        self.id.id()
+        self.session_handle.id()
     }
 
     /// Report whether the session is expired.
@@ -246,12 +246,16 @@ impl BidiSession {
     /// Create a new session in the initiator role.
     pub fn new_initiator(
         keys: ts_noise::core::Session,
-        responder_to_initiator_id: SessionHandle,
+        responder_to_initiator_handle: SessionHandle,
         initiator_to_responder_id: SessionId,
         now: Instant,
     ) -> Self {
         Self {
-            recv: ReceiveSession::new(keys.responder_to_initiator, responder_to_initiator_id, now),
+            recv: ReceiveSession::new(
+                keys.responder_to_initiator,
+                responder_to_initiator_handle,
+                now,
+            ),
             send_id: initiator_to_responder_id,
             send_cipher: ChaCha20Poly1305::new(&keys.initiator_to_responder),
             send_nonce: Default::default(),
@@ -262,12 +266,16 @@ impl BidiSession {
     /// Create a new session in the responder role.
     pub fn new_responder(
         keys: ts_noise::core::Session,
-        initiator_to_responder_id: SessionHandle,
+        initiator_to_responder_handle: SessionHandle,
         responder_to_initiator_id: SessionId,
         now: Instant,
     ) -> Self {
         Self {
-            recv: ReceiveSession::new(keys.initiator_to_responder, initiator_to_responder_id, now),
+            recv: ReceiveSession::new(
+                keys.initiator_to_responder,
+                initiator_to_responder_handle,
+                now,
+            ),
             send_id: responder_to_initiator_id,
             send_cipher: ChaCha20Poly1305::new(&keys.responder_to_initiator),
             send_nonce: Default::default(),
@@ -309,7 +317,7 @@ impl BidiSession {
 
     /// Return the session ID that will appear on received packets meant for this session.
     pub fn recv_id(&self) -> SessionId {
-        self.recv.id.id()
+        self.recv.session_handle.id()
     }
 
     pub fn rotation_time(&self) -> Instant {
@@ -608,7 +616,7 @@ mod tests {
     }
 
     impl PeerSession {
-        fn allocate_id(&mut self) -> SessionHandle {
+        fn allocate_handle(&mut self) -> SessionHandle {
             self.recv_id_prev = self.recv_id.take();
             let ret = self.ids.allocate_session(PeerId(1));
             self.recv_id = Some(ret.id());
@@ -621,9 +629,9 @@ mod tests {
             now: Instant,
         ) -> (Vec<PacketMut>, Vec<PacketMut>) {
             let (k1, k2): ([u8; 32], [u8; 32]) = rand::random();
-            let sid1 = self.allocate_id();
+            let sid1 = self.allocate_handle();
             let sid1_id = sid1.id();
-            let sid2 = other.allocate_id();
+            let sid2 = other.allocate_handle();
             let s1 = BidiSession::new_initiator(
                 ts_noise::core::Session {
                     initiator_to_responder: k1.into(),

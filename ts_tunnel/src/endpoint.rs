@@ -5,16 +5,15 @@ use itertools::Itertools;
 use ts_keys::{NodeKeyPair, NodePublicKey};
 use ts_packet::PacketMut;
 use ts_time::{Handle, Scheduler, TimeRange};
-use zerocopy::IntoBytes;
 
 use crate::{
     config::{PeerConfig, PeerId},
-    handshake::{Handshake, ReceivedHandshake, initiate_handshake},
+    handshake::{Handshake, ReceivedHandshake},
     ids::IdMap,
-    macs::{MACReceiver, MACSender},
-    messages::{CookieReply, HandshakeResponse, Message, MessageMut, SessionId},
+    macs::MACReceiver,
+    messages::{HandshakeResponse, Message, MessageMut, SessionId},
     session::Session,
-    time::{TAI64N, TAI64NClock},
+    time::TAI64NClock,
 };
 
 /// If an endpoint hasn't sent any packets to a peer for `KEEPALIVE_TIMEOUT` after receiving a
@@ -28,8 +27,6 @@ struct Peer {
     config: PeerConfig,
     session: Session,
     handshake: Handshake,
-    last_seen_timestamp: Option<TAI64N>,
-    cookie_sender: MACSender,
     keepalive: Option<Handle<Event>>,
     session_cleanup: Option<Handle<Event>>,
     send_another_keepalive: bool,
@@ -37,14 +34,13 @@ struct Peer {
 
 impl Peer {
     fn new(id: PeerId, config: PeerConfig) -> Self {
-        let macs = MACSender::new(&config.key);
+        let handshake = Handshake::new(&config.key);
         Self {
             id,
             config,
+            handshake,
+
             session: Default::default(),
-            handshake: Handshake::None,
-            last_seen_timestamp: None,
-            cookie_sender: macs,
             keepalive: None,
             session_cleanup: None,
             send_another_keepalive: false,
@@ -109,7 +105,7 @@ impl Peer {
                 false
             }
             Ok(MessageMut::CookieReply(resp)) => {
-                self.recv_cookie_reply(resp);
+                self.handshake.cookie_reply(resp);
                 false
             }
             Ok(MessageMut::HandshakeInitiation(_)) => {
@@ -127,14 +123,6 @@ impl Peer {
         }
 
         self.recv_transport_data(endpoint, session_id, packets, now, out);
-    }
-
-    fn recv_cookie_reply(&mut self, packet: &CookieReply) {
-        let Handshake::Initiated(_, _, handshake_mac1) = &mut self.handshake else {
-            tracing::trace!("dropping cookie reply received outside of handshake");
-            return;
-        };
-        self.cookie_sender.receive_cookie(packet, handshake_mac1);
     }
 
     fn recv_handshake_response(
@@ -187,8 +175,13 @@ impl Peer {
             return;
         }
 
-        let Some((session, packets)) = self.handshake.confirm(session_id, packets) else {
-            // TODO: log
+        let Some(tentative_id) = self.handshake.session_id() else {
+            return;
+        };
+        if tentative_id != session_id {
+            return;
+        }
+        let Some((session, packets)) = self.handshake.confirm(packets) else {
             return;
         };
 
@@ -216,29 +209,15 @@ impl Peer {
         now: Instant,
         out: &mut RecvResult,
     ) {
-        if let Some(timestamp) = self.last_seen_timestamp
-            && handshake.timestamp < timestamp
-        {
-            // Replayed handshake initiation
-            // TODO: because we buffer the raw initiation packet on the sender side, we need to accept
-            // initiations with an equal timestamp to the last one received. Check against reference
-            // implementations and see if we should instead regenerate a fresh handshake with new timestamp
-            // on retransmit.
-            tracing::warn!("handshake replay detected, bailing out");
-            return;
-        }
-        self.last_seen_timestamp = Some(handshake.timestamp);
-
-        let session_id = endpoint.ids.allocate_session(self.id);
-
         let packet = self.handshake.respond(
-            session_id,
             handshake,
+            || endpoint.ids.allocate_session(self.id),
             &self.config.psk,
-            &self.cookie_sender,
             now,
         );
-        out.queue_to_peer(self.id, [packet]);
+        if let Some(packet) = packet {
+            out.queue_to_peer(self.id, [packet]);
+        }
     }
 
     fn handshake_timeout(
@@ -251,8 +230,6 @@ impl Peer {
             // Handshake completed prior to timeout firing.
             return;
         }
-
-        self.handshake = Handshake::None;
 
         self.start_handshake(endpoint, now, out);
     }
@@ -283,8 +260,7 @@ impl Peer {
 
     fn shutdown(&mut self) {
         self.session.deactivate();
-
-        self.handshake = Handshake::None;
+        self.handshake.abandon();
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         }
@@ -301,24 +277,17 @@ impl Peer {
         now: Instant,
         out: &mut impl QueueToPeer,
     ) {
-        // TODO most of this logic might be better in the `handshake` module.
         let session_id = endpoint.ids.allocate_session(self.id);
-        tracing::debug!(peer_id = ?self.id, ?session_id, "enqueue handshake start");
-        let (handshake, packet) = initiate_handshake(
+        let packet = self.handshake.initiate(
+            &mut endpoint.scheduler,
+            session_id,
             &endpoint.my_key,
             &self.config.key,
-            session_id,
+            Event::HandshakeTimeout(self.id),
             endpoint.timestamps.now(),
+            now,
         );
-
-        let mut packet = PacketMut::from(packet.as_bytes());
-        let mac = self.cookie_sender.write_macs(packet.as_mut());
-
         out.queue_to_peer(self.id, [packet]);
-        let tr = TimeRange::new_around(now + HANDSHAKE_TIMEOUT, Duration::from_millis(500));
-
-        let timeout = endpoint.scheduler.add(tr, Event::HandshakeTimeout(self.id));
-        self.handshake = Handshake::Initiated(handshake, timeout, mac);
     }
 }
 
@@ -468,14 +437,9 @@ impl Endpoint {
         ret
     }
 
-    fn process_one_handshake(&mut self, mut packet: PacketMut, now: Instant, out: &mut RecvResult) {
-        let Ok(MessageMut::HandshakeInitiation(init)) = MessageMut::try_from(packet.as_mut())
-        else {
-            tracing::error!("message parsing failed");
-            return;
-        };
+    fn process_one_handshake(&mut self, packet: PacketMut, now: Instant, out: &mut RecvResult) {
         let Some(handshake) =
-            ReceivedHandshake::new(init, &self.state.my_key, &self.state.my_cookie)
+            ReceivedHandshake::new(packet, &self.state.my_key, &self.state.my_cookie)
         else {
             tracing::error!("parsing received handshake failed");
             return;
@@ -611,8 +575,6 @@ pub enum Event {
     /// Clean up expired session state.
     ExpireSession(PeerId),
 }
-
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests {
