@@ -1034,7 +1034,7 @@ version = "0.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.spin]]
-version = "0.9.8"
+version = "0.9.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.stable_deref_trait]]
