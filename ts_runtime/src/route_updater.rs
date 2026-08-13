@@ -55,7 +55,9 @@ impl RouteUpdater {
             {
                 (*transport_id, DynEndpoint::derp(peer.node_key))
             } else {
-                if !self.derp_transport_map.0.is_empty() {
+                // If we would log this error because we don't have a derp map or the peer just
+                // doesn't have a home region set in control, skip doing so because it'll be spammy.
+                if !self.derp_transport_map.0.is_empty() && peer.derp_region.is_some() {
                     tracing::error!("no region stored in multiderp, no underlay route");
                 }
 
