@@ -2,38 +2,34 @@
 
 Record breaking or significant changes here. All dates are UTC.
 
-## Unreleased - August 2026
+## Unreleased - September 2026
 
 Put changes for the upcoming release here!
 
+## [0.5.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.5.0) - 2026-08-14
+
 - **Breaking** (Rust API, lang bindings, ts_control): Support for `ephemeral`
-  config option. This was previously effectively hardcoded to `true`, the default
-  is now `false` (tailscale-rs nodes are _not_ ephemeral unless you explicitly
-  configure them to be).
+  config option. This was previously effectively hardcoded to `true`, the default is now `false` (tailscale-rs nodes are
+  _not_ ephemeral unless you explicitly configure them to be).
   [#292](https://github.com/tailscale/tailscale-rs/pull/292).
-- **Security** (C bindings): Don't log private keys in `ts_load_key_file`. Previously
-  loaded keys were logged at INFO priority. These logs aren't persisted or streamed
-  anywhere by default, so this is only a concern in non-default configurations. Users
-  of the C bindings who persisted logs should provision new nodes with fresh keys and
-  invalidate existing credentials.
-- **Security** (ts_netmon, Windows): Fix use-after-free in Windows network monitoring
-  code. During client shutdown, there is a short window in which network change
-  notifications could fire with an already freed context pointer.
-- **Security** (ts_control_serde): don't print authkeys when logging RegistrationRequests.
-  Previously when TRACE level logging was enabled, the client printed the authkey as part
-  of logging the serialized registration request.
-- **Security** (ts_keys): remove Debug/Display implementation for private keys to
-  avoid inadvertent logging via Debug/Display impls of structs that carry private keys.
-  Private keys now Debug format themselves as `[redacted]` and do not have a Display impl.
-  Private keys continue to have serde implementations for serializing to/from disk.
-- **Security** (ts_elixir): don't print fields of the Keystate struct when inspected.
-  Previously a GenServer crash would print the keystate in logs.
-- **Security** (ts_tunnel): fix DoS in handshake logic, where an attacker could force
-  handshakes to fail by racing an invalid response to the initiator. (#334)
-- Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits,
-  rather than panic.
-- Fixed(ts_tunnel): adjust session rotation logic to match the spec (#286)
-- Fixed(ts_tunnel): don't yield empty decrypted keepalive packets to the caller (#287)
+- **Security** (C bindings): Don't log private keys in `ts_load_key_file`. Previously loaded keys were logged at INFO
+  priority. These logs aren't persisted or streamed anywhere by default, so this is only a concern in non-default
+  configurations. Users of the C bindings who persisted logs should provision new nodes with fresh keys and invalidate
+  existing credentials.
+- **Security** (ts_netmon, Windows): Fix use-after-free in Windows network monitoring code. During client shutdown,
+  there is a short window in which network change notifications could fire with an already freed context pointer.
+- **Security** (ts_control_serde): don't print authkeys when logging `RegistrationRequest`s. Previously when TRACE level
+  logging was enabled, the client printed the authkey as part of logging the serialized registration request.
+- **Security** (ts_keys): remove Debug/Display implementation for private keys to avoid inadvertent logging via
+  Debug/Display impls of structs that carry private keys. Private keys now `Debug`-format themselves as `[redacted]` and
+  do not have a `Display` impl. Private keys continue to have serde implementations for serializing to/from disk.
+- **Security** (ts_elixir): don't print fields of the Keystate struct when inspected. Previously a GenServer crash would
+  print the keystate in logs.
+- **Security** (ts_tunnel): fix DoS in handshake logic, where an attacker could force handshakes to fail by racing an
+  invalid response to the initiator. (#334)
+- Fixed (ts_keys): Return an error when parsing a key string with invalid hex digits, rather than panic.
+- Fixed (ts_tunnel): adjust session rotation logic to match the spec (#286)
+- Fixed (ts_tunnel): don't yield empty decrypted keepalive packets to the caller (#287)
 
 ## [0.4.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.4.0) - 2026-07-08
 
@@ -41,11 +37,10 @@ Put changes for the upcoming release here!
   [`russh`](https://docs.rs/russh/latest/russh/) and (optionally)
   [`ratatui`](https://docs.rs/ratatui/latest/ratatui/).
   [#178](https://github.com/tailscale/tailscale-rs/pull/178).
-- Added (ts_netmon): Monitor network interface changes across Linux and Windows (macOS coming in a
-  future release).
+- Added (ts_netmon): Monitor network interface changes across Linux and Windows (macOS coming in a future release).
   [#214](https://github.com/tailscale/tailscale-rs/pull/214).
-- Added (ts_kv_store): Transactional KV store for future use by multiple components (peer tracker,
-  control client, etc.).
+- Added (ts_kv_store): Transactional KV store for future use by multiple components (peer tracker, control client,
+  etc.).
   [#208](https://github.com/tailscale/tailscale-rs/pull/208).
   [#223](https://github.com/tailscale/tailscale-rs/pull/223).
   [#228](https://github.com/tailscale/tailscale-rs/pull/228).
@@ -53,8 +48,7 @@ Put changes for the upcoming release here!
   [#252](https://github.com/tailscale/tailscale-rs/pull/252).
   [#263](https://github.com/tailscale/tailscale-rs/pull/263).
   [#265](https://github.com/tailscale/tailscale-rs/pull/265).
-- Added (ts_control*, ts_derp, ts_runtime): Handling of various peer change messages from the
-  control plane.
+- Added (ts_control*, ts_derp, ts_runtime): Handling of various peer change messages from the control plane.
   [#185](https://github.com/tailscale/tailscale-rs/pull/185).
   [#248](https://github.com/tailscale/tailscale-rs/pull/248).
 - Added (ts_runtime): STUN protocol support and periodic STUN checks.
@@ -62,12 +56,11 @@ Put changes for the upcoming release here!
   [#244](https://github.com/tailscale/tailscale-rs/pull/244).
 - Added (ts_tunnel): Cleanup of expired sessions that no longer receive traffic.
   [#264](https://github.com/tailscale/tailscale-rs/pull/264).
-- Added (ts_python): Type stubs for the `tailscale-py` package, along with minor improvements to
-  documentation.
+- Added (ts_python): Type stubs for the `tailscale-py` package, along with minor improvements to documentation.
   [#211](https://github.com/tailscale/tailscale-rs/pull/211).
   [#247](https://github.com/tailscale/tailscale-rs/pull/247).
-- Fixed (ts_keys, ts_noise): Private key types are properly zeroized on drop and are now passed by
-  reference rather than Copy.
+- Fixed (ts_keys, ts_noise): Private key types are properly zeroized on drop and are now passed by reference rather than
+  Copy.
   [#221](https://github.com/tailscale/tailscale-rs/pull/221).
   [#245](https://github.com/tailscale/tailscale-rs/pull/245).
   [#249](https://github.com/tailscale/tailscale-rs/pull/249).
@@ -75,11 +68,11 @@ Put changes for the upcoming release here!
 - Fixed (ts_packetfilter_serde): `IpRange::Wildcard.iter_prefixes()` now covers the full `::/0`
   IPv6 address space. Thanks to @immanuwell for the report!
   [#212](https://github.com/tailscale/tailscale-rs/pull/212).
-- Fixed (ts_netstack_smoltcp{_core}): Overlay network stack now returns an error on IP version
-  mismatch between local/remote endpoints instead of panicking.
+- Fixed (ts_netstack_smoltcp{_core}): Overlay network stack now returns an error on IP version mismatch between
+  local/remote endpoints instead of panicking.
   [#213](https://github.com/tailscale/tailscale-rs/pull/213).
-- Fixed (ts_netstack_smoltcp_core): TCP accept loop now correctly handles CLOSE_WAIT transitions and
-  half-open sockets that transition back to the LISTEN state.
+- Fixed (ts_netstack_smoltcp_core): TCP accept loop now correctly handles CLOSE_WAIT transitions and half-open sockets
+  that transition back to the LISTEN state.
   [#200](https://github.com/tailscale/tailscale-rs/pull/200).
   [#239](https://github.com/tailscale/tailscale-rs/pull/239).
 - Fixed (ts_runtime): DERP connectivity is now re-established after a control client reconnect.
@@ -112,12 +105,12 @@ Partial release; this version is tagged and published to PyPI, but was not publi
 
 Internal release; this version is tagged, but was not published to any package repositories.
 
-- **Breaking** (Rust API): exports `config`, `netstack`, and `keys` modules and moves some functionality
-  from the crate root to these modules. Replaces `load_key_file` with `Config::default_with_key_file`.
-  Exports a few more types so fewer users will have to depend on internal crates.
+- **Breaking** (Rust API): exports `config`, `netstack`, and `keys` modules and moves some functionality from the crate
+  root to these modules. Replaces `load_key_file` with `Config::default_with_key_file`. Exports a few more types so
+  fewer users will have to depend on internal crates.
   [#105](https://github.com/tailscale/tailscale-rs/pull/105).
-- **Breaking** (Rust API, ts_netstack_smoltcp, ts_control): errors have been refactored, some minor
-  changes to APIs around errors.
+- **Breaking** (Rust API, ts_netstack_smoltcp, ts_control): errors have been refactored, some minor changes to APIs
+  around errors.
   [#154](https://github.com/tailscale/tailscale-rs/pull/154).
 - Added (Rust API): load configuration options from environment variables. Adds `config::auth_key_from_env`
   and `config::Config::default_from_env`.

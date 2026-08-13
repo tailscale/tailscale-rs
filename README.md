@@ -5,8 +5,7 @@
 
 https://tailscale.com
 
-`tailscale-rs` is a work-in-progress Tailscale library written in Rust, with language bindings to
-C, Elixir, and Python.
+`tailscale-rs` is a work-in-progress Tailscale library written in Rust, with language bindings to C, Elixir, and Python.
 
 > [!CAUTION]
 > This software is unstable and insecure.
@@ -29,14 +28,13 @@ Add this dependency line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tailscale = { version = "0.4" }
+tailscale = { version = "0.5" }
 ```
 
 Examples of using the `tailscale` crate can be found in [`examples/`](examples/README.md).
 
 For instructions on how to run tests, lints, etc., see [CONTRIBUTING.md](CONTRIBUTING.md). For the high-level
-architecture and
-repository layout, see [ARCHITECTURE.md](ARCHITECTURE.md).
+architecture and repository layout, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Code sample
 
@@ -71,37 +69,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 ## Caveats
 
-This software is still a work-in-progress! We are providing it in the open at this stage out of a
-belief in open-source and to see where the community runs with it, but please be aware of a few
-important considerations:
+This software is still a work-in-progress! We are providing it in the open at this stage out of a belief in open-source
+and to see where the community runs with it, but please be aware of a few important considerations:
 
-- This implementation contains unaudited cryptography and hasn't undergone a comprehensive security
-  analysis. Conservatively, assume there could be a critical security hole meaning anything you send
-  or receive could be in the clear on the public Internet.
-- There are no compatibility guarantees at the moment. This is early-days software &mdash; we may
-  break dependent code in order to get things right.
-- We currently rely on DERP relays for all communication. Direct connections via NAT holepunching
-  will be a seamless upgrade in the future, but for now, this puts a cap on data throughput.
+- This implementation contains unaudited cryptography and hasn't undergone a comprehensive security analysis.
+  Conservatively, assume there could be a critical security hole meaning anything you send or receive could be in the
+  clear on the public Internet.
+- There are no compatibility guarantees at the moment. This is early-days software &mdash; we may break dependent code
+  in order to get things right.
+- We currently rely on DERP relays for all communication. Direct connections via NAT holepunching will be a seamless
+  upgrade in the future, but for now, this puts a cap on data throughput.
 - The `TS_RS_EXPERIMENT` environment variable is required to be set to `this_is_unstable_software`
-  for all code linked against `tailscale-rs`; this includes Rust, C, Elixir, and Python code. We'll
-  remove this requirement after a third-party code/cryptography audit and any necessary fixes.
+  for all code linked against `tailscale-rs`; this includes Rust, C, Elixir, and Python code. We'll remove this
+  requirement after a third-party code/cryptography audit and any necessary fixes.
 
 ## Versioning, Releases, and Compatability
 
 We follow semver and aim to make a point release roughly monthly. Since we are pre-1.0, we make no
-backwards-compatability guarantees. We are aiming to have a stable 1.0 release as soon as we can, but
-we currently don't have a timeline.
+backwards-compatability guarantees. We are aiming to have a stable 1.0 release as soon as we can, but we currently don't
+have a timeline.
 
 ## MSRV and Edition
 
 The current MSRV is 1.94.1. The current edition is Rust 2024.
 
-`tailscale-rs` has a rolling MSRV (Minimum Supported Rust Version) policy to support the current
-and previous Rust compiler versions, and the latest
+`tailscale-rs` has a rolling MSRV (Minimum Supported Rust Version) policy to support the current and previous Rust
+compiler versions, and the latest
 [edition of Rust](https://doc.rust-lang.org/edition-guide/editions/index.html).
 
-We may lag the latest version/edition in rare cases for our dependencies to catch up and for us to
-perform any necessary fixes.
+We may lag the latest version/edition in rare cases for our dependencies to catch up and for us to perform any necessary
+fixes.
 
 ## Platform Support
 
@@ -113,9 +110,8 @@ We support the following platforms and architectures:
 
 ## Status
 
-`tailscale-rs` is a work-in-progress - we're still rapidly iterating, fixing bugs, and adding new
-features. We aim to keep this section up-to-date, but
-our [issue tracker](https://github.com/tailscale/tailscale-rs/issues)
+`tailscale-rs` is a work-in-progress - we're still rapidly iterating, fixing bugs, and adding new features. We aim to
+keep this section up-to-date, but our [issue tracker](https://github.com/tailscale/tailscale-rs/issues)
 is the best way to see the latest updates.
 
 ### Implemented
@@ -132,8 +128,8 @@ These are features that we currently implement:
 
 ### Coming Soon
 
-These are features or efforts we have in the pipeline and are actively working towards, but provide
-no guarantees on timeline or completion:
+These are features or efforts we have in the pipeline and are actively working towards, but provide no guarantees on
+timeline or completion:
 
 - Direct connections (NAT traversal, STUN, and Disco)
 - Peer lookups (addressing peers by hostname)
@@ -142,9 +138,8 @@ no guarantees on timeline or completion:
 ### Unsupported
 
 This is an incomplete list of features in the Tailscale Go client, `tsnet`, and/or `libtailscale`
-that we currently *do not* support. We'd like to add all of these eventually! If there's something
-on this list you'd like to see supported, or something _not_ on this list you're not sure about,
-please open an issue!
+that we currently *do not* support. We'd like to add all of these eventually! If there's something on this list you'd
+like to see supported, or something _not_ on this list you're not sure about, please open an issue!
 
 <details>
 <summary>
