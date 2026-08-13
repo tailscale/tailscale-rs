@@ -250,7 +250,7 @@ impl ControlRunner {
 impl ControlRunner {
     async fn update_map_request(&self) {
         let RegState::Registered(conn) = &self.state else {
-            tracing::error!("attempt to update map request while not registered");
+            tracing::debug!("attempt to update map request while not registered");
             return;
         };
 
