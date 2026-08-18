@@ -12,6 +12,7 @@ use crate::{
     ids::IdMap,
     macs::MACReceiver,
     messages::{HandshakeResponse, Message, MessageMut, SessionId},
+    queue::Queue,
     session::Session,
     time::TAI64NClock,
 };
@@ -26,8 +27,8 @@ struct Peer {
     config: PeerConfig,
     session: Session,
     handshake: Handshake,
+    queue: Queue,
     keepalive: Option<Handle<Event>>,
-    session_cleanup: Option<Handle<Event>>,
     send_another_keepalive: bool,
 }
 
@@ -40,7 +41,7 @@ impl From<PeerConfig> for Peer {
 
             session: Default::default(),
             keepalive: None,
-            session_cleanup: None,
+            queue: Default::default(),
             send_another_keepalive: false,
         }
     }
@@ -60,14 +61,20 @@ impl Peer {
     fn send(
         &mut self,
         endpoint: &mut EndpointState,
-        packets: Vec<PacketMut>,
+        mut packets: Vec<PacketMut>,
         now: Instant,
         out: &mut SendResult,
     ) {
-        if let Some(packets) = self.session.send(packets, now) {
-            tracing::trace!("enqueueing packets to peer");
-            out.queue_to_peer(self.config.id, packets);
-            // Fall through to check if the session is in need of rotation.
+        self.check_invariants(now);
+
+        match self.session.send(&mut packets, now) {
+            Ok(_) => {
+                tracing::trace!("enqueueing packets to peer");
+                out.queue_to_peer(self.config.id, packets);
+            }
+            Err(_) => {
+                self.queue.append(packets);
+            }
         }
 
         if self.handshake.is_active() {
@@ -92,6 +99,8 @@ impl Peer {
         now: Instant,
         out: &mut RecvResult,
     ) {
+        self.check_invariants(now);
+
         let mut dropped = 0;
         packets.retain_mut(|packet| match MessageMut::try_from(packet.as_mut()) {
             Err(()) => {
@@ -137,16 +146,17 @@ impl Peer {
             return;
         };
 
-        let (expiry, packets) = self.session.activate(session, now, true);
+        self.session
+            .activate(endpoint, self.config.id, session, now);
+        let mut packets = self.queue.drain();
+        if packets.is_empty() {
+            // Initiator must transmit one packet to confirm session. If there are none queued,
+            // send a keepalive.
+            packets.push(PacketMut::new(0));
+        }
+        // Session was just activated, so can always send.
+        self.session.send(&mut packets, now).unwrap();
         out.queue_to_peer(self.config.id, packets);
-        if let Some(handle) = self.session_cleanup.take() {
-            handle.cancel();
-        };
-        self.session_cleanup = Some(
-            endpoint
-                .scheduler
-                .add(expiry, Event::ExpireSession(self.config.id)),
-        );
     }
 
     fn recv_transport_data(
@@ -182,18 +192,14 @@ impl Peer {
         out.queue_to_local(self.config.id, packets);
         self.schedule_keepalive(&mut endpoint.scheduler, now);
 
-        let (expiry, packets_for_peer) = self.session.activate(session, now, false);
-        if !packets_for_peer.is_empty() {
-            out.queue_to_peer(self.config.id, packets_for_peer);
+        self.session
+            .activate(endpoint, self.config.id, session, now);
+        let mut packets = self.queue.drain();
+        if !packets.is_empty() {
+            // Session was just activated, so can always send.
+            self.session.send(&mut packets, now).unwrap();
+            out.queue_to_peer(self.config.id, packets);
         }
-        if let Some(handle) = self.session_cleanup.take() {
-            handle.cancel();
-        }
-        self.session_cleanup = Some(
-            endpoint
-                .scheduler
-                .add(expiry, Event::ExpireSession(self.config.id)),
-        );
     }
 
     fn respond_to_handshake(
@@ -217,6 +223,8 @@ impl Peer {
         now: Instant,
         out: &mut EventResult,
     ) {
+        self.check_invariants(now);
+
         if !self.handshake.is_active() {
             // Handshake completed prior to timeout firing.
             return;
@@ -246,22 +254,18 @@ impl Peer {
     }
 
     fn cleanup_expired(&mut self, now: Instant) {
-        self.session.cleanup_expired(now)
+        self.check_invariants(now);
+        self.session.cleanup_expired(now);
     }
 
     fn shutdown(&mut self) {
         self.session.deactivate();
         self.handshake.abandon();
-        if let Some(handle) = self.session_cleanup.take() {
-            handle.cancel();
-        }
         if let Some(handle) = self.keepalive.take() {
             handle.cancel();
         }
     }
 
-    /// (Soft) precondition: `self.handshake == HandshakeState::None` (previous handshake is lost, but
-    /// that shouldn't cause anything terrible to happen).
     fn start_handshake(
         &mut self,
         endpoint: &mut EndpointState,
@@ -270,6 +274,25 @@ impl Peer {
     ) {
         let packet = self.handshake.initiate(endpoint, &self.config, now);
         out.queue_to_peer(self.config.id, [packet]);
+    }
+
+    fn check_invariants(&self, now: Instant) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        if !self.queue.is_empty() {
+            assert!(
+                !self.session.is_active(now),
+                "peer {:?}: packets in queue with active session",
+                self.config.id
+            );
+
+            assert!(
+                self.handshake.is_active(),
+                "peer {:?}: packets in queue with no handshake in flight",
+                self.config.id
+            );
+        }
     }
 }
 

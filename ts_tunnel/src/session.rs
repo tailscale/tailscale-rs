@@ -14,9 +14,10 @@ use zerocopy::{
 };
 
 use crate::{
+    Event, PeerId,
+    endpoint::EndpointState,
     ids::SessionHandle,
     messages::{SessionId, TransportDataHeader},
-    queue::Queue,
     replay::ReplayWindow,
 };
 
@@ -372,72 +373,41 @@ impl ActiveSession {
 }
 
 /// A communication session to a peer.
-pub enum Session {
-    /// No session established yet.
-    ///
-    /// This session cannot receive packets. Sent packets are queued if possible, and will be
-    /// transmitted if the session becomes active in the future.
-    None(Queue),
-    /// Active session capable of bidirectional communication.
-    Active(ActiveSession),
-}
-
-impl Default for Session {
-    fn default() -> Self {
-        Self::None(Queue::default())
-    }
-}
+#[derive(Default)]
+pub struct Session(Option<ActiveSession>);
 
 impl Session {
-    fn take(&mut self) -> Session {
-        std::mem::take(self)
-    }
-
-    /// Return a reference to the active session, if any.
-    ///
-    /// Calls [`Session::maybe_expire`], so callers can assume that the returned session
-    /// consists only of unexpired state.
-    fn as_active(&mut self, now: Instant) -> Option<&mut ActiveSession> {
-        self.cleanup_expired(now);
-        if let Self::Active(session) = self {
-            Some(session)
-        } else {
-            None
+    pub fn is_active(&self, now: Instant) -> bool {
+        match &self.0 {
+            Some(session) => !session.expired(now),
+            None => false,
         }
     }
 
     /// Activate the session with the given keys.
-    ///
-    /// Returns the expiry time for the session. If any packets were queued waiting
-    /// for an active session, they are encrypted and returned.
     pub fn activate(
         &mut self,
+        endpoint: &mut EndpointState,
+        peer_id: PeerId,
         next: BidiSession,
         now: Instant,
-        need_keepalive: bool,
-    ) -> (TimeRange, Vec<PacketMut>) {
+    ) {
         tracing::trace!(recv_id = ?next.recv.id(), "activating new session");
 
-        let (active, mut packets) = match self.take() {
-            Self::None(queue) => (next.into(), queue.into()),
-            Self::Active(mut session) => {
+        match &mut self.0 {
+            Some(session) => {
                 session.rotate(next, now);
-                (session, vec![])
             }
-        };
-
-        if need_keepalive && packets.is_empty() {
-            packets.push(PacketMut::new(0));
+            None => self.0 = Some(next.into()),
         }
-        active.cur.encrypt(&mut packets);
-        *self = Self::Active(active);
-        (
-            TimeRange::new(
-                now + SESSION_LIFETIME,
-                now + SESSION_LIFETIME + SESSION_CLEANUP_GRACE,
-            ),
-            packets,
-        )
+
+        let cleanup = TimeRange::new(
+            now + SESSION_LIFETIME,
+            now + SESSION_LIFETIME + SESSION_CLEANUP_GRACE,
+        );
+        endpoint
+            .scheduler
+            .add(cleanup, Event::ExpireSession(peer_id));
     }
 
     /// Discard all state for this session.
@@ -449,7 +419,8 @@ impl Session {
     ///
     /// Returns None if the session is inactive (and thus no keepalive is necessary).
     pub fn send_keepalive(&mut self, now: Instant) -> Option<PacketMut> {
-        let session = self.as_active(now)?;
+        self.cleanup_expired(now);
+        let session = self.0.as_mut()?;
         let mut packet = vec![PacketMut::new(0)];
         session.cur.encrypt(&mut packet);
         packet.pop()
@@ -457,27 +428,18 @@ impl Session {
 
     /// Send packets to the peer.
     ///
-    /// If the session is inactive, packets are queued for future transmission.
-    ///
-    /// Returns None to indicate that packets were queued, indicating the caller may need to
-    /// initiate a handshake.
-    pub fn send(&mut self, mut packets: Vec<PacketMut>, now: Instant) -> Option<Vec<PacketMut>> {
+    /// Returns Err to indicate that no session is available for transmission.
+    pub fn send(&mut self, packets: &mut Vec<PacketMut>, now: Instant) -> Result<(), ()> {
         self.cleanup_expired(now);
-        match self {
-            Self::None(queue) => {
-                queue.append(packets);
-                None
-            }
-            Self::Active(session) => {
-                session.cur.encrypt(&mut packets);
-                Some(packets)
-            }
-        }
+        let session = self.0.as_mut().ok_or(())?;
+        session.cur.encrypt(packets);
+        Ok(())
     }
 
     /// Get the ReceiveSession for the given receiving ID, if any.
     pub fn get_recv(&mut self, id: SessionId, now: Instant) -> Option<&mut ReceiveSession> {
-        let session = self.as_active(now)?;
+        self.cleanup_expired(now);
+        let session = self.0.as_mut()?;
         if session.cur.recv_id() == id {
             Some(&mut session.cur.recv)
         } else if let Some(prev) = session.prev.as_mut()
@@ -491,24 +453,26 @@ impl Session {
 
     /// Reports whether the session is old enough to require rotation.
     pub fn needs_rotation(&self, now: Instant) -> bool {
-        match self {
-            Self::None(_) => true,
-            Self::Active(session) => session.cur.needs_rotation(now),
+        match &self.0 {
+            None => true,
+            Some(session) => session.cur.needs_rotation(now),
         }
     }
 
     /// Clean up expired session state, if any.
     pub fn cleanup_expired(&mut self, now: Instant) {
-        if let Self::Active(session) = self {
-            if session.expired(now) {
-                *self = Self::default();
-                return;
-            }
-            if let Some(prev) = session.prev.as_ref()
-                && prev.expired(now)
-            {
-                session.prev = None;
-            }
+        let Some(session) = self.0.as_mut() else {
+            return;
+        };
+
+        if session.expired(now) {
+            *self = Self::default();
+            return;
+        }
+        if let Some(prev) = session.prev.as_ref()
+            && prev.expired(now)
+        {
+            session.prev = None;
         }
     }
 }
@@ -568,244 +532,6 @@ mod tests {
 
         assert!(recv.decrypt_one(&mut pkt[0]));
         assert_eq!(pkt[0].as_ref(), CLEARTEXT);
-    }
-
-    fn packet(payload: &str) -> Vec<PacketMut> {
-        vec![PacketMut::from(payload.as_bytes())]
-    }
-
-    #[derive(Default)]
-    struct PeerSession {
-        ids: IdMap,
-        recv_id: Option<SessionId>,
-        recv_id_prev: Option<SessionId>,
-        session: Session,
-    }
-
-    impl PeerSession {
-        fn allocate_handle(&mut self) -> SessionHandle {
-            self.recv_id_prev = self.recv_id.take();
-            let ret = self.ids.allocate_session(PeerId(1));
-            self.recv_id = Some(ret.id());
-            ret
-        }
-
-        fn handshake_with(
-            &mut self,
-            other: &mut Self,
-            now: Instant,
-        ) -> (Vec<PacketMut>, Vec<PacketMut>) {
-            let (k1, k2): ([u8; 32], [u8; 32]) = rand::random();
-            let sid1 = self.allocate_handle();
-            let sid1_id = sid1.id();
-            let sid2 = other.allocate_handle();
-            let s1 = BidiSession::new_initiator(
-                ts_noise::core::Session {
-                    initiator_to_responder: k1.into(),
-                    responder_to_initiator: k2.into(),
-                    role: Role::Initiator,
-                },
-                sid1,
-                sid2.id(),
-                now,
-            );
-            let s2 = BidiSession::new_responder(
-                ts_noise::core::Session {
-                    initiator_to_responder: k1.into(),
-                    responder_to_initiator: k2.into(),
-                    role: Role::Responder,
-                },
-                sid2,
-                sid1_id,
-                now,
-            );
-            let (_, p1) = self.session.activate(s1, now, false);
-            let (_, p2) = other.session.activate(s2, now, false);
-            (p1, p2)
-        }
-
-        fn send(&mut self, now: Instant, packets: Vec<PacketMut>) -> Option<Vec<PacketMut>> {
-            self.session.send(packets, now)
-        }
-
-        fn get_recv(&mut self, now: Instant, packets: &[PacketMut]) -> Option<&mut ReceiveSession> {
-            let (hdr, _) =
-                TransportDataHeader::try_ref_from_prefix(packets.first()?.as_ref()).unwrap();
-            self.session.get_recv(hdr.receiver_id, now)
-        }
-
-        fn recv(&mut self, now: Instant, packets: Vec<PacketMut>) -> Vec<PacketMut> {
-            self.get_recv(now, &packets).unwrap().decrypt(packets)
-        }
-
-        fn unknown_recv(&mut self, now: Instant, packets: Vec<PacketMut>) -> bool {
-            self.get_recv(now, &packets).is_none()
-        }
-
-        fn needs_handshake(&self, now: Instant) -> bool {
-            self.session.needs_rotation(now)
-        }
-    }
-
-    #[test]
-    fn test_session() {
-        let mut a = PeerSession::default();
-        let mut b = PeerSession::default();
-
-        let now = Instant::now();
-
-        assert_eq!(a.send(now, packet("foobar")), None);
-        assert_eq!(b.send(now, packet("qux")), None);
-
-        assert!(a.needs_handshake(now));
-        assert!(b.needs_handshake(now));
-
-        // Establish a session between the peers. We're cheating and not doing any of the
-        // handshake lifecycle.
-        let (a_to_b, b_to_a) = a.handshake_with(&mut b, now);
-        assert_eq!(a_to_b.len(), 1);
-        assert_eq!(b_to_a.len(), 1);
-
-        // Verify that the packets queued prior to session activation transmit correctly.
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("foobar"));
-
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("qux"));
-
-        assert!(!a.needs_handshake(now));
-        assert!(!b.needs_handshake(now));
-
-        // Transmit with established session.
-        let now = now + Duration::from_secs(60);
-
-        let a_to_b = a.send(now, packet("frobozz")).unwrap();
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("frobozz"));
-
-        let b_to_a = b.send(now, packet("xyzzy")).unwrap();
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("xyzzy"));
-
-        assert!(!a.needs_handshake(now));
-        assert!(!b.needs_handshake(now));
-
-        // Transmit with stale session.
-        let now = now + Duration::from_secs(70);
-
-        let a_to_b = a.send(now, packet("foo")).unwrap();
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("foo"));
-
-        let b_to_a = b.send(now, packet("bar")).unwrap();
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("bar"));
-
-        assert!(a.needs_handshake(now));
-        assert!(!b.needs_handshake(now));
-
-        // Transmit with expired session.
-        let now = now + Duration::from_secs(120);
-
-        let a_to_b = a.send(now, packet("no"));
-        assert_eq!(a_to_b, None);
-
-        let b_to_a = b.send(now, packet("nope"));
-        assert_eq!(b_to_a, None);
-
-        assert!(a.needs_handshake(now));
-        assert!(b.needs_handshake(now));
-    }
-
-    #[test]
-    fn test_rotation() {
-        let mut a = PeerSession::default();
-        let mut b = PeerSession::default();
-
-        let start = Instant::now();
-        let epsilon = Duration::from_secs(1);
-
-        let now = start;
-        let (a_to_b, b_to_a) = a.handshake_with(&mut b, now);
-        assert!(a_to_b.is_empty());
-        assert!(b_to_a.is_empty());
-
-        let now = start + SESSION_FRESH_LIFETIME - epsilon;
-        let a_to_b = a.send(now, packet("foo")).unwrap();
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("foo"));
-
-        let b_to_a = b.send(now, packet("bar")).unwrap();
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("bar"));
-
-        // Rotate session, with packets delivered across the rotation.
-        let a_to_b = a.send(now, packet("before rotate A->B")).unwrap();
-        let b_to_a = b.send(now, packet("before rotate B->A")).unwrap();
-
-        let very_delayed_a_to_b = a.send(now, packet("delayed A->B")).unwrap();
-        let very_delayed_b_to_a = b.send(now, packet("delayed B->A")).unwrap();
-
-        let to_send = a.handshake_with(&mut b, now);
-        assert_eq!(to_send, (vec![], vec![]));
-
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("before rotate A->B"));
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("before rotate B->A"));
-
-        let a_to_b = a.send(now, packet("after rotate A->B")).unwrap();
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("after rotate A->B"));
-
-        let b_to_a = b.send(now, packet("after rotate B->A")).unwrap();
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("after rotate B->A"));
-
-        // Rotate again, delayed packets should not decrypt anymore.
-        let now = start + SESSION_FRESH_LIFETIME + epsilon;
-        let a_to_b = a.send(now, packet("before rotate2 A->B")).unwrap();
-        let b_to_a = b.send(now, packet("before rotate2 B->A")).unwrap();
-
-        let to_send = a.handshake_with(&mut b, now);
-        assert_eq!(to_send, (vec![], vec![]));
-
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("before rotate2 A->B"));
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("before rotate2 B->A"));
-
-        let a_to_b = a.send(now, packet("after rotate2 A->B")).unwrap();
-        let a_to_b = b.recv(now, a_to_b);
-        assert_eq!(a_to_b, packet("after rotate2 A->B"));
-
-        let b_to_a = b.send(now, packet("after rotate2 B->A")).unwrap();
-        let b_to_a = a.recv(now, b_to_a);
-        assert_eq!(b_to_a, packet("after rotate2 B->A"));
-
-        assert!(b.unknown_recv(now, very_delayed_a_to_b));
-        assert!(a.unknown_recv(now, very_delayed_b_to_a));
-    }
-
-    #[test]
-    fn test_expiration() {
-        let mut a = PeerSession::default();
-        let mut b = PeerSession::default();
-
-        let now = Instant::now();
-        let to_send = a.handshake_with(&mut b, now);
-        assert_eq!(to_send, (vec![], vec![]));
-
-        let a_to_b = a.send(now, packet("A->B")).unwrap();
-        let b_to_a = b.send(now, packet("B->A")).unwrap();
-
-        let now = now + SESSION_LIFETIME + SESSION_LIFETIME;
-
-        assert!(b.unknown_recv(now, a_to_b));
-        assert!(a.unknown_recv(now, b_to_a));
-
-        assert_eq!(a.send(now, packet("expired A->B")), None);
-        assert_eq!(b.send(now, packet("expired B->A")), None);
     }
 
     #[test]

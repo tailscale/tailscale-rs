@@ -30,6 +30,20 @@ impl Queue {
         self.0.clear();
         self.0.shrink_to_fit();
     }
+
+    /// Drain all packets from the queue into a `Vec`.
+    ///
+    /// The queue's memory footprint is shrunk to its minimum, on the assumption that
+    /// it is unlikely to be used again soon.
+    pub fn drain(&mut self) -> Vec<PacketMut> {
+        let ret = self.0.drain(..).collect();
+        self.clear();
+        ret
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl IntoIterator for Queue {
