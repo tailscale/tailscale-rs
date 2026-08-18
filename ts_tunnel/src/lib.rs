@@ -6,6 +6,7 @@ mod handshake;
 mod ids;
 mod macs;
 mod messages;
+mod queue;
 mod replay;
 mod session;
 mod time;

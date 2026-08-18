@@ -1,7 +1,5 @@
 use core::fmt::{Debug, Formatter};
 use std::{
-    cmp::min,
-    collections::{VecDeque, vec_deque},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -18,6 +16,7 @@ use zerocopy::{
 use crate::{
     ids::SessionHandle,
     messages::{SessionId, TransportDataHeader},
+    queue::Queue,
     replay::ReplayWindow,
 };
 
@@ -337,38 +336,6 @@ impl BidiSession {
 impl From<BidiSession> for ReceiveSession {
     fn from(session: BidiSession) -> Self {
         session.recv
-    }
-}
-
-const MAX_QUEUED_PER_PEER: usize = 32;
-
-/// A bounded packet queue that drops oldest packets when full.
-#[derive(Default)]
-pub struct Queue(VecDeque<PacketMut>);
-
-impl Queue {
-    fn append(&mut self, packets: Vec<PacketMut>) {
-        let new_packets = min(packets.len(), MAX_QUEUED_PER_PEER);
-        let drop_incoming = packets.len() - new_packets;
-        let keep_queued = MAX_QUEUED_PER_PEER - new_packets;
-        let drop_queued = self.0.len().saturating_sub(keep_queued);
-        self.0.drain(..drop_queued);
-        self.0.extend(packets.into_iter().skip(drop_incoming));
-    }
-}
-
-impl From<Queue> for Vec<PacketMut> {
-    fn from(queue: Queue) -> Self {
-        queue.0.into()
-    }
-}
-
-impl IntoIterator for Queue {
-    type Item = PacketMut;
-    type IntoIter = vec_deque::IntoIter<PacketMut>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
     }
 }
 
