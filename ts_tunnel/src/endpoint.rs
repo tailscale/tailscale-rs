@@ -23,7 +23,6 @@ use crate::{
 const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Peer {
-    id: PeerId,
     config: PeerConfig,
     session: Session,
     handshake: Handshake,
@@ -32,11 +31,10 @@ struct Peer {
     send_another_keepalive: bool,
 }
 
-impl Peer {
-    fn new(id: PeerId, config: PeerConfig) -> Self {
+impl From<PeerConfig> for Peer {
+    fn from(config: PeerConfig) -> Self {
         let handshake = Handshake::new(&config.key);
         Self {
-            id,
             config,
             handshake,
 
@@ -46,14 +44,16 @@ impl Peer {
             send_another_keepalive: false,
         }
     }
+}
 
+impl Peer {
     fn schedule_keepalive(&mut self, scheduler: &mut Scheduler<Event>, now: Instant) {
         if self.keepalive.is_some() {
             self.send_another_keepalive = true;
             return;
         }
         let tr = TimeRange::new_around(now + KEEPALIVE_TIMEOUT, Duration::from_secs(1));
-        self.keepalive = Some(scheduler.add(tr, Event::MaybeSendKeepalive(self.id)));
+        self.keepalive = Some(scheduler.add(tr, Event::MaybeSendKeepalive(self.config.id)));
     }
 
     // TODO: consider replacing outparam with plain SendResult that supports merging.
@@ -66,7 +66,7 @@ impl Peer {
     ) {
         if let Some(packets) = self.session.send(packets, now) {
             tracing::trace!("enqueueing packets to peer");
-            out.queue_to_peer(self.id, packets);
+            out.queue_to_peer(self.config.id, packets);
             // Fall through to check if the session is in need of rotation.
         }
 
@@ -132,26 +132,20 @@ impl Peer {
         now: Instant,
         out: &mut RecvResult,
     ) {
-        let Some(session) = self.handshake.finish(
-            packet,
-            &endpoint.my_key,
-            &self.config.psk,
-            &endpoint.my_cookie,
-            now,
-        ) else {
+        let Some(session) = self.handshake.finish(packet, endpoint, &self.config, now) else {
             tracing::error!("handshake failed to complete");
             return;
         };
 
         let (expiry, packets) = self.session.activate(session, now, true);
-        out.queue_to_peer(self.id, packets);
+        out.queue_to_peer(self.config.id, packets);
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
         };
         self.session_cleanup = Some(
             endpoint
                 .scheduler
-                .add(expiry, Event::ExpireSession(self.id)),
+                .add(expiry, Event::ExpireSession(self.config.id)),
         );
     }
 
@@ -166,7 +160,7 @@ impl Peer {
         if let Some(recv) = self.session.get_recv(session_id, now) {
             let packets = recv.decrypt(packets);
             if !packets.is_empty() {
-                out.queue_to_local(self.id, packets);
+                out.queue_to_local(self.config.id, packets);
                 self.schedule_keepalive(&mut endpoint.scheduler, now);
                 if self.session.needs_rotation(now) {
                     self.start_handshake(endpoint, now, out);
@@ -185,12 +179,12 @@ impl Peer {
             return;
         };
 
-        out.queue_to_local(self.id, packets);
+        out.queue_to_local(self.config.id, packets);
         self.schedule_keepalive(&mut endpoint.scheduler, now);
 
         let (expiry, packets_for_peer) = self.session.activate(session, now, false);
         if !packets_for_peer.is_empty() {
-            out.queue_to_peer(self.id, packets_for_peer);
+            out.queue_to_peer(self.config.id, packets_for_peer);
         }
         if let Some(handle) = self.session_cleanup.take() {
             handle.cancel();
@@ -198,7 +192,7 @@ impl Peer {
         self.session_cleanup = Some(
             endpoint
                 .scheduler
-                .add(expiry, Event::ExpireSession(self.id)),
+                .add(expiry, Event::ExpireSession(self.config.id)),
         );
     }
 
@@ -209,14 +203,11 @@ impl Peer {
         now: Instant,
         out: &mut RecvResult,
     ) {
-        let packet = self.handshake.respond(
-            handshake,
-            || endpoint.ids.allocate_session(self.id),
-            &self.config.psk,
-            now,
-        );
+        let packet = self
+            .handshake
+            .respond(handshake, endpoint, &self.config, now);
         if let Some(packet) = packet {
-            out.queue_to_peer(self.id, [packet]);
+            out.queue_to_peer(self.config.id, [packet]);
         }
     }
 
@@ -244,7 +235,7 @@ impl Peer {
             tracing::trace!("send keepalive: session expired, skipping");
             return;
         };
-        out.queue_to_peer(self.id, [packet]);
+        out.queue_to_peer(self.config.id, [packet]);
 
         self.keepalive = None;
 
@@ -277,17 +268,8 @@ impl Peer {
         now: Instant,
         out: &mut impl QueueToPeer,
     ) {
-        let session_id = endpoint.ids.allocate_session(self.id);
-        let packet = self.handshake.initiate(
-            &mut endpoint.scheduler,
-            session_id,
-            &endpoint.my_key,
-            &self.config.key,
-            Event::HandshakeTimeout(self.id),
-            endpoint.timestamps.now(),
-            now,
-        );
-        out.queue_to_peer(self.id, [packet]);
+        let packet = self.handshake.initiate(endpoint, &self.config, now);
+        out.queue_to_peer(self.config.id, [packet]);
     }
 }
 
@@ -297,32 +279,38 @@ pub struct Endpoint {
     peers: HashMap<PeerId, Peer>,
 }
 
-struct EndpointState {
-    my_key: NodeKeyPair,
+pub struct EndpointState {
+    pub my_key: NodeKeyPair,
 
-    my_cookie: MACReceiver,
-    ids: IdMap,
-    timestamps: TAI64NClock,
-    scheduler: Scheduler<Event>,
+    pub my_cookie: MACReceiver,
+    pub ids: IdMap,
+    pub timestamps: TAI64NClock,
+    pub scheduler: Scheduler<Event>,
+}
+
+impl EndpointState {
+    pub fn new(my_key: NodeKeyPair) -> Self {
+        let my_cookie = MACReceiver::new(&my_key.public);
+        Self {
+            my_key,
+            my_cookie,
+            ids: IdMap::default(),
+            timestamps: TAI64NClock::default(),
+            scheduler: Scheduler::default(),
+        }
+    }
 }
 
 impl Endpoint {
     /// Construct a new endpoint with the given keypair.
     pub fn new(my_key: NodeKeyPair) -> Self {
-        let my_cookie = MACReceiver::new(&my_key.public);
         Self {
-            state: EndpointState {
-                my_key,
-                my_cookie,
-                ids: Default::default(),
-                timestamps: Default::default(),
-                scheduler: Default::default(),
-            },
+            state: EndpointState::new(my_key),
             peers: HashMap::new(),
         }
     }
 
-    /// Insert a peer if it doesn't exist, otherwise update the peer with the given `id`
+    /// Insert a peer if it doesn't exist, otherwise update the peer with the given `cfg.id`
     /// with the given config.
     ///
     /// Returns the old [`PeerConfig`] if there was one.
@@ -331,23 +319,23 @@ impl Endpoint {
     ///
     /// If the [`NodePublicKey`] in the new [`PeerConfig`] collides with an existing key
     /// for a different [`PeerId`].
-    pub fn upsert_peer(&mut self, id: PeerId, mut cfg: PeerConfig) -> Option<PeerConfig> {
-        match self.peers.get_mut(&id) {
+    pub fn upsert_peer(&mut self, mut cfg: PeerConfig) -> Option<PeerConfig> {
+        match self.peers.get_mut(&cfg.id) {
             Some(peer) => {
                 if peer.config.key != cfg.key {
                     self.state.ids.remove_peer(&peer.config.key);
-                    self.state.ids.add_peer(id, &cfg.key);
+                    self.state.ids.add_peer(cfg.id, &cfg.key);
                 }
 
                 core::mem::swap(&mut peer.config, &mut cfg);
                 Some(cfg)
             }
             None => {
-                if !self.state.ids.add_peer(id, &cfg.key) {
+                if !self.state.ids.add_peer(cfg.id, &cfg.key) {
                     panic!("nodekey collision");
                 }
 
-                self.peers.insert(id, Peer::new(id, cfg));
+                self.peers.insert(cfg.id, Peer::from(cfg));
                 None
             }
         }
@@ -673,24 +661,12 @@ mod tests {
             let mut b = Endpoint::new(key_b.clone());
             let psk = rand::random();
             assert!(
-                a.upsert_peer(
-                    PeerId(1),
-                    PeerConfig {
-                        key: key_b.public,
-                        psk,
-                    }
-                )
-                .is_none()
+                a.upsert_peer(PeerConfig::new(PeerId(1), key_b.public, psk))
+                    .is_none()
             );
             assert!(
-                b.upsert_peer(
-                    PeerId(1),
-                    PeerConfig {
-                        key: key_a.public,
-                        psk,
-                    }
-                )
-                .is_none()
+                b.upsert_peer(PeerConfig::new(PeerId(1), key_a.public, psk))
+                    .is_none()
             );
             Self {
                 a,

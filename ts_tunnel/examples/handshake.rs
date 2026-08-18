@@ -87,14 +87,8 @@ async fn main() -> BoxResult<()> {
     let peer_id = ts_tunnel::PeerId(1);
 
     assert!(
-        ep.upsert_peer(
-            peer_id,
-            ts_tunnel::PeerConfig {
-                key: peer_key,
-                psk: [0; 32],
-            }
-        )
-        .is_none()
+        ep.upsert_peer(ts_tunnel::PeerConfig::new(peer_id, peer_key, [0; 32]))
+            .is_none()
     );
 
     let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;

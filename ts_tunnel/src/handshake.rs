@@ -6,12 +6,12 @@ use std::{
 use ts_keys::{NodeKeyPair, NodePublicKey};
 use ts_noise::ikpsk2;
 use ts_packet::PacketMut;
-use ts_time::{Handle, Scheduler, TimeRange};
+use ts_time::{Handle, TimeRange};
 use zerocopy::IntoBytes;
 
 use crate::{
-    config::Psk,
-    endpoint::Event,
+    PeerConfig,
+    endpoint::{EndpointState, Event},
     ids::SessionHandle,
     macs::{MACReceiver, MACSender, Mac},
     messages::*,
@@ -171,31 +171,29 @@ impl Handshake {
     /// Starting a new handshake abandons any other handshake that was already in flight.
     pub fn initiate(
         &mut self,
-        scheduler: &mut Scheduler<Event>,
-        session_handle: SessionHandle,
-        my_static: &NodeKeyPair,
-        peer_static: &NodePublicKey,
-        timeout_event: Event,
-        timestamp: TAI64N,
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
         now: Instant,
     ) -> PacketMut {
+        let session_handle = endpoint.ids.allocate_session(peer.id);
+
         let mut pkt = HandshakeInitiation {
             sender_id: session_handle.id(),
             ..Default::default()
         };
 
         let noise = ikpsk2::SentHandshake::new(
-            my_static.into(),
-            peer_static.into(),
+            (&endpoint.my_key).into(),
+            peer.key.into(),
             PROLOGUE,
-            timestamp,
+            endpoint.timestamps.now(),
             pkt.noise.as_mut_bytes(),
         );
         let mut pkt = PacketMut::from(pkt.as_bytes());
         let mac1 = self.cookie_sender.write_macs(pkt.as_mut());
 
         let tr = TimeRange::new_around(now + HANDSHAKE_TIMEOUT, Duration::from_millis(500));
-        let timeout = scheduler.add(tr, timeout_event);
+        let timeout = endpoint.scheduler.add(tr, Event::HandshakeTimeout(peer.id));
 
         self.state = State::Initiated(SentHandshake {
             responder_to_initiator_handle: session_handle,
@@ -215,30 +213,29 @@ impl Handshake {
     pub fn finish(
         &mut self,
         packet: &mut HandshakeResponse,
-        endpoint_static: &NodeKeyPair,
-        psk: &Psk,
-        cookies: &MACReceiver,
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
         now: Instant,
     ) -> Option<BidiSession> {
         let mut sent_handshake = self.state.take_if_initiated()?;
 
-        if !cookies.verify_macs(packet.as_bytes()) {
+        if !endpoint.my_cookie.verify_macs(packet.as_bytes()) {
             self.state = State::Initiated(sent_handshake);
             return None;
         };
 
-        let session_keys =
-            match sent_handshake
-                .noise
-                .try_finish(&mut packet.noise, endpoint_static.into(), psk)
-            {
-                Ok(session_keys) => session_keys,
-                Err(handshake) => {
-                    sent_handshake.noise = handshake;
-                    self.state = State::Initiated(sent_handshake);
-                    return None;
-                }
-            };
+        let session_keys = match sent_handshake.noise.try_finish(
+            &mut packet.noise,
+            (&endpoint.my_key).into(),
+            &peer.psk,
+        ) {
+            Ok(session_keys) => session_keys,
+            Err(handshake) => {
+                sent_handshake.noise = handshake;
+                self.state = State::Initiated(sent_handshake);
+                return None;
+            }
+        };
 
         let session = BidiSession::new_initiator(
             session_keys,
@@ -261,8 +258,8 @@ impl Handshake {
     pub fn respond(
         &mut self,
         handshake: ReceivedHandshake,
-        allocate_session_handle: impl FnOnce() -> SessionHandle,
-        psk: &Psk,
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
         now: Instant,
     ) -> Option<PacketMut> {
         if let Some(last_seen_timestamp) = self.last_seen_timestamp
@@ -272,13 +269,15 @@ impl Handshake {
             return None;
         }
 
-        let session_handle = allocate_session_handle();
+        let session_handle = endpoint.ids.allocate_session(peer.id);
         let mut response = HandshakeResponse {
             sender_id: session_handle.id(),
             receiver_id: handshake.responder_to_initiator_id,
             ..Default::default()
         };
-        let session_keys = handshake.noise.finish(psk, response.noise.as_mut_bytes());
+        let session_keys = handshake
+            .noise
+            .finish(&peer.psk, response.noise.as_mut_bytes());
         let mut pkt = PacketMut::from(response.as_bytes());
         self.cookie_sender.write_macs(pkt.as_mut());
 
@@ -348,11 +347,10 @@ impl Handshake {
 #[cfg(test)]
 mod tests {
     use ts_keys::NodeKeyPair;
-    use ts_time::Scheduler;
     use zerocopy::TryFromBytes;
 
     use super::*;
-    use crate::{Event::HandshakeTimeout, PeerId, ids::IdMap};
+    use crate::PeerId;
 
     #[test]
     fn test_handshake() {
@@ -360,42 +358,27 @@ mod tests {
         let psk = rand::random();
 
         // Peer A sends a handshake initiation...
-        let a_mac_recv = MACReceiver::new(&a_static.public);
-        let mut ids = IdMap::default();
-        let a_session = ids.allocate_session(PeerId(1)); // A wants to receive at this ID
-        let a_init_time = TAI64N::now();
-        let mut a_sched = Scheduler::default();
-
+        let mut a_state = EndpointState::new(a_static.clone());
         let mut a_handshake = Handshake::new(&b_static.public);
-        let init_pkt = a_handshake.initiate(
-            &mut a_sched,
-            a_session,
-            &a_static,
-            &b_static.public,
-            HandshakeTimeout(PeerId(0)),
-            a_init_time,
-            Instant::now(),
-        );
+        let a_peer = PeerConfig::new(PeerId(1), b_static.public, psk);
+        let init_pkt = a_handshake.initiate(&mut a_state, &a_peer, Instant::now());
         // Peer B receives it and responds
         let b_mac_recv = MACReceiver::new(&b_static.public);
         let init_pkt = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
             .expect("B should parse the initiation message");
 
-        let mut b_handshake = Handshake::new(&a_static.public);
+        let mut b_handshake = Handshake::new(&a_state.my_key.public);
+        let mut b_state = EndpointState::new(b_static);
+        let b_peer = PeerConfig::new(PeerId(2), a_static.public, psk);
         let mut response_pkt = b_handshake
-            .respond(
-                init_pkt,
-                || ids.allocate_session(PeerId(2)),
-                &psk,
-                Instant::now(),
-            )
+            .respond(init_pkt, &mut b_state, &b_peer, Instant::now())
             .expect("B should respond to handshake");
 
         // Peer A receives response, sends confirmation
         let response_pkt = HandshakeResponse::try_mut_from_bytes(response_pkt.as_mut())
             .expect("response_pkt should be a valid handshake response message");
         let Some(mut a_session) =
-            a_handshake.finish(response_pkt, &a_static, &psk, &a_mac_recv, Instant::now())
+            a_handshake.finish(response_pkt, &mut a_state, &a_peer, Instant::now())
         else {
             panic!("failed to process handshake response from peer B");
         };
@@ -419,37 +402,23 @@ mod tests {
     fn test_invalid_response_ignored() {
         let (a_static, b_static) = (NodeKeyPair::new(), NodeKeyPair::new());
         let psk = rand::random();
-        let mut ids = IdMap::default();
 
         // A sends a handshake
-        let a_mac_recv = MACReceiver::new(&a_static.public);
-        let a_session = ids.allocate_session(PeerId(1)); // A wants to receive at this ID
-        let a_init_time = TAI64N::now();
-        let mut a_scheduler = Scheduler::default();
+        let mut a_state = EndpointState::new(a_static.clone());
         let mut a_handshake = Handshake::new(&b_static.public);
-        let init_pkt = a_handshake.initiate(
-            &mut a_scheduler,
-            a_session,
-            &a_static,
-            &b_static.public,
-            HandshakeTimeout(PeerId(0)),
-            a_init_time,
-            Instant::now(),
-        );
+        let a_peer = PeerConfig::new(PeerId(0), b_static.public, psk);
+        let init_pkt = a_handshake.initiate(&mut a_state, &a_peer, Instant::now());
 
         // B receives and responds
         let b_mac_recv = MACReceiver::new(&b_static.public);
         let init_pkt = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
             .expect("B should parse the initiation message");
         let mut b_handshake = Handshake::new(&a_static.public);
+        let mut b_state = EndpointState::new(b_static);
+        let b_peer = PeerConfig::new(PeerId(2), a_static.public, psk);
 
         let mut response_pkt = b_handshake
-            .respond(
-                init_pkt,
-                || ids.allocate_session(PeerId(2)),
-                &psk,
-                Instant::now(),
-            )
+            .respond(init_pkt, &mut b_state, &b_peer, Instant::now())
             .expect("B responds to handshake");
 
         // A receives several invalid responses: one with bad MACs, one with a bad Noise handshake
@@ -457,9 +426,8 @@ mod tests {
             a_handshake
                 .finish(
                     &mut HandshakeResponse::default(),
-                    &a_static,
-                    &psk,
-                    &a_mac_recv,
+                    &mut a_state,
+                    &a_peer,
                     Instant::now()
                 )
                 .is_none()
@@ -469,7 +437,7 @@ mod tests {
         corrupt_pkt.noise[3] = corrupt_pkt.noise[3].wrapping_add(1);
         assert!(
             a_handshake
-                .finish(corrupt_pkt, &a_static, &psk, &a_mac_recv, Instant::now())
+                .finish(corrupt_pkt, &mut a_state, &a_peer, Instant::now())
                 .is_none()
         );
 
@@ -478,7 +446,7 @@ mod tests {
             .expect("response_pkt should be a valid handshake response message");
         assert!(
             a_handshake
-                .finish(response_pkt, &a_static, &psk, &a_mac_recv, Instant::now())
+                .finish(response_pkt, &mut a_state, &a_peer, Instant::now())
                 .is_some()
         );
     }

@@ -306,13 +306,11 @@ impl Message<Arc<PeerState>> for DataplaneActor {
             for &upsert in &msg.upserts {
                 let (_, node) = msg.peers.get(&upsert).unwrap();
 
-                wg.upsert_peer(
+                wg.upsert_peer(ts_tunnel::PeerConfig::new(
                     ts_tunnel::PeerId(upsert.0),
-                    ts_tunnel::PeerConfig {
-                        key: node.node_key,
-                        psk: [0u8; 32],
-                    },
-                );
+                    node.node_key,
+                    [0u8; 32],
+                ));
             }
 
             for delete in &msg.deletions {
