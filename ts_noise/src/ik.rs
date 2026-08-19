@@ -1,6 +1,6 @@
 //! Implementation of the Noise IK handshake pattern.
 
-use ts_keys::X25519KeyPair;
+use ts_keys::dalek::X25519KeyPair;
 use zerocopy::FromBytes;
 
 use crate::{
