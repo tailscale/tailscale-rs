@@ -358,7 +358,7 @@ mod tests {
         let psk = rand::random();
 
         // Peer A sends a handshake initiation...
-        let mut a_state = EndpointState::new(a_static.clone());
+        let mut a_state = EndpointState::from(a_static.clone());
         let mut a_handshake = Handshake::new(&b_static.public);
         let a_peer = PeerConfig::new(PeerId(1), b_static.public, psk);
         let init_pkt = a_handshake.initiate(&mut a_state, &a_peer, Instant::now());
@@ -368,7 +368,7 @@ mod tests {
             .expect("B should parse the initiation message");
 
         let mut b_handshake = Handshake::new(&a_state.my_key.public);
-        let mut b_state = EndpointState::new(b_static);
+        let mut b_state = EndpointState::from(b_static);
         let b_peer = PeerConfig::new(PeerId(2), a_static.public, psk);
         let mut response_pkt = b_handshake
             .respond(init_pkt, &mut b_state, &b_peer, Instant::now())
@@ -404,7 +404,7 @@ mod tests {
         let psk = rand::random();
 
         // A sends a handshake
-        let mut a_state = EndpointState::new(a_static.clone());
+        let mut a_state = EndpointState::from(a_static.clone());
         let mut a_handshake = Handshake::new(&b_static.public);
         let a_peer = PeerConfig::new(PeerId(0), b_static.public, psk);
         let init_pkt = a_handshake.initiate(&mut a_state, &a_peer, Instant::now());
@@ -414,7 +414,7 @@ mod tests {
         let init_pkt = ReceivedHandshake::new(init_pkt, &b_static, &b_mac_recv)
             .expect("B should parse the initiation message");
         let mut b_handshake = Handshake::new(&a_static.public);
-        let mut b_state = EndpointState::new(b_static);
+        let mut b_state = EndpointState::from(b_static);
         let b_peer = PeerConfig::new(PeerId(2), a_static.public, psk);
 
         let mut response_pkt = b_handshake

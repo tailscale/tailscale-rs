@@ -311,8 +311,8 @@ pub struct EndpointState {
     pub scheduler: Scheduler<Event>,
 }
 
-impl EndpointState {
-    pub fn new(my_key: NodeKeyPair) -> Self {
+impl From<NodeKeyPair> for EndpointState {
+    fn from(my_key: NodeKeyPair) -> Self {
         let my_cookie = MACReceiver::new(&my_key.public);
         Self {
             my_key,
@@ -328,7 +328,7 @@ impl Endpoint {
     /// Construct a new endpoint with the given keypair.
     pub fn new(my_key: NodeKeyPair) -> Self {
         Self {
-            state: EndpointState::new(my_key),
+            state: my_key.into(),
             peers: HashMap::new(),
         }
     }
