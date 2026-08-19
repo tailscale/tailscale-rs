@@ -8,7 +8,7 @@ use ts_time::{Handle, Scheduler, TimeRange};
 
 use crate::{
     config::{PeerConfig, PeerId},
-    handshake::{Handshake, ReceivedHandshake},
+    handshake::{Handshake, ReceivedHandshake, TimeoutError},
     ids::IdMap,
     macs::MACReceiver,
     messages::{HandshakeResponse, Message, MessageMut, SessionId},
@@ -77,17 +77,7 @@ impl Peer {
             }
         }
 
-        if self.handshake.is_active() {
-            tracing::trace!("handshake is already in-flight, bail");
-            return;
-        }
-
-        if !self.session.needs_rotation(now) {
-            tracing::trace!("session does not need new handshake");
-            return;
-        }
-
-        self.start_handshake(endpoint, now, out);
+        self.maybe_start_handshake(endpoint, now, out);
     }
 
     #[tracing::instrument(skip_all, fields(?session_id, n_packets = packets.len()))]
@@ -172,9 +162,7 @@ impl Peer {
             if !packets.is_empty() {
                 out.queue_to_local(self.config.id, packets);
                 self.schedule_keepalive(&mut endpoint.scheduler, now);
-                if self.session.needs_rotation(now) {
-                    self.start_handshake(endpoint, now, out);
-                }
+                self.maybe_start_handshake(endpoint, now, out);
             }
             return;
         }
@@ -217,6 +205,7 @@ impl Peer {
         }
     }
 
+    #[tracing::instrument(skip_all, fields(now, peer_id = ?self.config.id))]
     fn handshake_timeout(
         &mut self,
         endpoint: &mut EndpointState,
@@ -225,12 +214,14 @@ impl Peer {
     ) {
         self.check_invariants(now);
 
-        if !self.handshake.is_active() {
-            // Handshake completed prior to timeout firing.
-            return;
+        match self.handshake.timeout(endpoint, &self.config, now) {
+            Ok(packet) => out.queue_to_peer(self.config.id, [packet]),
+            Err(TimeoutError::WrongHandshakeState) => {}
+            Err(TimeoutError::HandshakeTimeout) => {
+                tracing::warn!("timeout while waiting for handshake response");
+                self.queue.clear();
+            }
         }
-
-        self.start_handshake(endpoint, now, out);
     }
 
     fn send_keepalive(
@@ -266,12 +257,23 @@ impl Peer {
         }
     }
 
-    fn start_handshake(
+    #[tracing::instrument(skip_all, fields(now, peer_id = ?self.config.id))]
+    fn maybe_start_handshake(
         &mut self,
         endpoint: &mut EndpointState,
         now: Instant,
         out: &mut impl QueueToPeer,
     ) {
+        if self.handshake.is_active() {
+            tracing::trace!("handshake is already in flight, bail");
+            return;
+        }
+
+        if !self.session.needs_rotation(now) {
+            tracing::trace!("session does not need new handshake");
+            return;
+        }
+
         let packet = self.handshake.initiate(endpoint, &self.config, now);
         out.queue_to_peer(self.config.id, [packet]);
     }
@@ -594,6 +596,7 @@ mod tests {
     use super::*;
     use crate::{
         config::PeerConfig,
+        handshake::{HANDSHAKE_FAILURE_TIMEOUT, HANDSHAKE_RETRY_TIMEOUT},
         messages::{HandshakeInitiation, TransportDataHeader},
     };
 
@@ -759,6 +762,19 @@ mod tests {
             }
         }
 
+        fn events(now: Instant, ep: &mut Endpoint, to_peer: &mut Vec<PacketMut>) {
+            let id = PeerId(1);
+            let mut acts = ep.dispatch_events(now);
+            match acts.to_peers.len() {
+                0 => (),
+                1 => to_peer.extend(acts.to_peers.remove(&id).unwrap()),
+                _ => panic!(
+                    "got packets for {} peers, expected 1 or 0",
+                    acts.to_peers.len()
+                ),
+            }
+        }
+
         /// Send cleartext packets from endpoint A to endpoint B.
         ///
         /// This may result in the queuing of encrypted packets from A to B, which can be
@@ -803,6 +819,34 @@ mod tests {
                 &mut self.received_at_b,
                 &mut self.b_to_a,
             );
+        }
+
+        /// Process pending events at A.
+        ///
+        /// This may result in the queuing of encrypted packets from A to B, which can be inspected
+        /// with [`EndpointPair::assert_a_to_b`].
+        pub fn event_a(&mut self, now: Instant) {
+            EndpointPair::events(now, &mut self.a, &mut self.a_to_b);
+        }
+
+        /// Process pending events at B.
+        ///
+        /// This may result in the queuing of encrypted packets from B to A, which can be inspected
+        /// with [`EndpointPair::assert_b_to_a`].
+        #[allow(dead_code)]
+        pub fn event_b(&mut self, now: Instant) {
+            EndpointPair::events(now, &mut self.b, &mut self.b_to_a);
+        }
+
+        /// Drop in-flight packets from A to B.
+        pub fn drop_a_to_b(&mut self) {
+            self.a_to_b.clear();
+        }
+
+        /// Drop in-flight packets from B to A.
+        #[allow(dead_code)]
+        pub fn drop_b_to_a(&mut self) {
+            self.b_to_a.clear();
         }
 
         /// Assert that packets currently in flight from A to B match the expected packet shapes.
@@ -958,5 +1002,51 @@ mod tests {
         // B receives confirmation, finalizes rotation.
         p.recv_at_b(t.at(129));
         assert_no_packets(&p.received_at_b);
+    }
+
+    #[test]
+    fn test_handshake_timeout() {
+        use PacketMatcher::*;
+
+        let mut p = EndpointPair::new();
+        let t = TestClock::new();
+
+        // A sends to B. Triggers a handshake initiation, which is lost.
+        p.send_from_a(t.at(0), [packet(1)]);
+        p.assert_a_to_b([HandshakeInitiation]);
+        p.drop_a_to_b();
+
+        // Timeout fires repeatedly, A retries.
+        let mut at = 0;
+        let timeout = HANDSHAKE_RETRY_TIMEOUT.as_secs();
+        let deadline = HANDSHAKE_FAILURE_TIMEOUT.as_secs();
+        while at + timeout < deadline {
+            at += timeout;
+            p.event_a(t.at(at));
+            p.assert_a_to_b([HandshakeInitiation]);
+            p.drop_a_to_b();
+        }
+
+        // Timeout fires for the final time, A gives up.
+        p.event_a(t.at(at + timeout));
+        assert_no_packets(&p.a_to_b);
+
+        // A explicitly sends to B again. Triggers a new handshake initiation, which completes
+        // this time.
+        p.send_from_a(t.at(at + 10), [packet(2)]);
+        p.assert_a_to_b([HandshakeInitiation]);
+
+        p.recv_at_b(t.at(at + 11));
+        p.assert_b_to_a([HandshakeResponse]);
+        assert_no_packets(&p.received_at_b);
+
+        p.recv_at_a(t.at(at + 12));
+        p.assert_a_to_b([TransportData]);
+        assert_no_packets(&p.received_at_a);
+
+        p.recv_at_b(t.at(at + 13));
+        assert_no_packets(&p.b_to_a);
+        // B never receives packet(1), it was dropped when the first handshake failed.
+        p.assert_received_at_b([packet(2)]);
     }
 }

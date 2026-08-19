@@ -1,5 +1,6 @@
 use std::{
     mem::replace,
+    ops::Add,
     time::{Duration, Instant},
 };
 
@@ -70,9 +71,12 @@ struct SentHandshake {
     timeout: Handle<Event>,
     // The mac1 of the transmitted handshake, required to process CookieReply messages.
     mac1: Mac,
+    // The final deadline for this handshake attempt, including all retries.
+    deadline: Instant,
 }
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const HANDSHAKE_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const HANDSHAKE_FAILURE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The state machine portion of a handshake.
 #[derive(Default)]
@@ -135,6 +139,19 @@ pub struct Handshake {
     state: State,
 }
 
+/// Error returned from [`Handshake::timeout`].
+#[derive(Copy, Clone, Debug)]
+pub enum TimeoutError {
+    /// Handshake is not in the initiated state. Likely this means the timeout notification raced
+    /// with handshake completion. Either way, no action is required.
+    WrongHandshakeState,
+    /// The handshake has reached the maximum number of timeout retries, and has permanently failed.
+    /// Caller should clear out any state that was waiting for a session (e.g. packet buffers) and
+    /// not try another handshake initiation until [`Endpoint::send`] is called again with a new
+    /// packet for the peer.
+    HandshakeTimeout,
+}
+
 impl Handshake {
     pub fn new(peer_key: &NodePublicKey) -> Self {
         let cookie_sender = MACSender::new(peer_key);
@@ -169,11 +186,48 @@ impl Handshake {
     /// Start a new handshake in the initiator role.
     ///
     /// Starting a new handshake abandons any other handshake that was already in flight.
+    ///
+    /// [`Handshake::initiate`] schedules an [`Event::HandshakeTimeout`] event. The caller must call
+    /// [`Handshake::timeout`] when that event fires to continue advancing the handshake state machine.
     pub fn initiate(
         &mut self,
         endpoint: &mut EndpointState,
         peer: &PeerConfig,
         now: Instant,
+    ) -> PacketMut {
+        let deadline = now.add(HANDSHAKE_FAILURE_TIMEOUT);
+        self.initiate_inner(endpoint, peer, now, deadline)
+    }
+
+    /// Process a handshake initiation timeout.
+    ///
+    /// Returns `Ok(packet)` if the handshake can continue to retry,
+    /// `Err(TimeoutError::HandshakeTimeout)` if the maximum number of retries has been reached,
+    /// or `Err(TimeoutError::WrongHandshakeState)` if the timeout is no longer applicable.
+    pub fn timeout(
+        &mut self,
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
+        now: Instant,
+    ) -> Result<PacketMut, TimeoutError> {
+        let handshake = self
+            .state
+            .take_if_initiated()
+            .ok_or(TimeoutError::WrongHandshakeState)?;
+
+        if now >= handshake.deadline {
+            return Err(TimeoutError::HandshakeTimeout);
+        }
+
+        Ok(self.initiate_inner(endpoint, peer, now, handshake.deadline))
+    }
+
+    fn initiate_inner(
+        &mut self,
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
+        now: Instant,
+        deadline: Instant,
     ) -> PacketMut {
         let session_handle = endpoint.ids.allocate_session(peer.id);
 
@@ -192,7 +246,7 @@ impl Handshake {
         let mut pkt = PacketMut::from(pkt.as_bytes());
         let mac1 = self.cookie_sender.write_macs(pkt.as_mut());
 
-        let tr = TimeRange::new_around(now + HANDSHAKE_TIMEOUT, Duration::from_millis(500));
+        let tr = TimeRange::new_around(now + HANDSHAKE_RETRY_TIMEOUT, Duration::from_millis(500));
         let timeout = endpoint.scheduler.add(tr, Event::HandshakeTimeout(peer.id));
 
         self.state = State::Initiated(SentHandshake {
@@ -200,6 +254,7 @@ impl Handshake {
             noise,
             timeout,
             mac1,
+            deadline,
         });
 
         pkt
