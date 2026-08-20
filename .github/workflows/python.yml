@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       python_environment:
-        default: 'pypi'
+        default: 'pypi.org'
         description: 'The GitHub environment to use for publishing, as well as the name
         of the Python package index to publish to. Value must match both the name of a
         GitHub environment and the name of a [[tool.uv.index]] entry in
@@ -18,8 +18,8 @@ on:
         required: true
         type: choice
         options:
-          - 'pypi'
-          - 'testpypi'
+          - 'pypi.org'
+          - 'test.pypi.org'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -35,9 +35,9 @@ env:
   # Is this a tagged release build?
   is_tag_push: ${{ startsWith(github.ref, 'refs/tags/') }}
   # The GitHub environment to use for the "publish" job. Use the workflow_dispatch input
-  # if present, 'pypi' if this is a tagged release build; otherwise, fall back to
-  # 'testpypi'.
-  python_environment: &python_environment ${{ case(inputs.python_environment != '', inputs.python_environment, startsWith(github.ref, 'refs/tags/'), 'pypi', 'testpypi') }}
+  # if present, 'pypi.org' if this is a tagged release build; otherwise, fall back to
+  # 'test.pypi.org'.
+  python_environment: &python_environment ${{ case(inputs.python_environment != '', inputs.python_environment, startsWith(github.ref, 'refs/tags/'), 'pypi.org', 'test.pypi.org') }}
   # The Python package index to publish to. Identical to "python_environment", separated
   # for clarity.
   python_index: *python_environment
@@ -73,7 +73,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust
         id: setup-rust
         uses: ./.github/actions/setup-rust
@@ -81,7 +81,7 @@ jobs:
           toolchain-version: ${{ env.rust_toolchain }}
           builder-triple: ${{ matrix.platform.triple }}
       - name: Install python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.python_version }}
       - name: Build wheels
@@ -113,17 +113,17 @@ jobs:
       attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download built wheels
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ts_python
       - name: Generate artifact attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: 'ts_python/wheels-*/*'
       - name: Install uv
-        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           working-directory: ts_python
       - name: (Dry Run) Publish to ${{ env.python_index }}
