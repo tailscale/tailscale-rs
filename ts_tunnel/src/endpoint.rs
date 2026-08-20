@@ -250,11 +250,10 @@ impl Peer {
     }
 
     fn shutdown(&mut self) {
+        // TODO: should this just be a Drop impl instead of an explicit shutdown that leaves a moribund value?
         self.session.deactivate();
         self.handshake.abandon();
-        if let Some(handle) = self.keepalive.take() {
-            handle.cancel();
-        }
+        self.keepalive = None;
     }
 
     #[tracing::instrument(skip_all, fields(now, peer_id = ?self.config.id))]

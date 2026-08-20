@@ -407,7 +407,7 @@ impl Session {
         );
         endpoint
             .scheduler
-            .add(cleanup, Event::ExpireSession(peer_id));
+            .add_uncancelable(cleanup, Event::ExpireSession(peer_id));
     }
 
     /// Discard all state for this session.

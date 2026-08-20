@@ -353,23 +353,16 @@ impl DataPlane {
     }
 
     fn ensure_wg(&mut self) {
-        if let Some(next) = self.wireguard.next_event()
-            && let Some(prev) = self
-                .wg_next
-                .replace(self.events.add(next, Subsystem::Wireguard))
-        {
-            prev.cancel();
-        }
+        self.wg_next = self
+            .wireguard
+            .next_event()
+            .map(|tr| self.events.add(tr, Subsystem::Wireguard));
     }
 
     fn ensure_peer_gc(&mut self, now: Instant) {
-        if self.active_peers.is_empty()
-            && let Some(evt) = self.peer_gc_next.take()
-        {
-            evt.cancel();
-        }
-
-        if !self.active_peers.is_empty() && self.peer_gc_next.is_none() {
+        if self.active_peers.is_empty() {
+            self.peer_gc_next = None;
+        } else if self.peer_gc_next.is_none() {
             self.peer_gc_next = Some(self.events.add(
                 TimeRange::new_around(now + Duration::from_secs(10), Duration::from_millis(2500)),
                 Subsystem::PeerGc,

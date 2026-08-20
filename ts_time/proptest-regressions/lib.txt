@@ -8,3 +8,4 @@ cc 8cea7093c7127919ae8582096c089541566b0801672a136fee39b8e0ee41071b # shrinks to
 cc 7c7de3f790d4e8aa56234c84f14c689816db54f355a1163f7e50ed1e0a4cecdc # shrinks to actions = [Add((1ms, 1ms)), Reschedule((0, (1ms, 1ms)))]
 cc 1c877f42a2d9c7e5985ca555bdb0c0a710189d9005f98e2af9ef5c8d4373eae5 # shrinks to actions = [Add((7.888s, 55.678s)), Dispatch, Add((1ms, 1ms)), Dispatch]
 cc 686a3feb4e14c52f7588160a984c55708dbc887fee1ac5f649a2dc860a87a2d3 # shrinks to times = [(15.845s, 15.845s), (15.845s, 15.845s)]
+cc f2da4a01a38904cd67af3bed916c63495b00148052b45befba1bd1f40ff03316 # shrinks to actions = [Dispatch]

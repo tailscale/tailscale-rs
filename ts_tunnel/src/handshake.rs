@@ -68,6 +68,9 @@ impl ReceivedHandshake {
 struct SentHandshake {
     responder_to_initiator_handle: SessionHandle,
     noise: ikpsk2::SentHandshake<TAI64N>,
+    // timeout is a handle that cancels a retransmit event when the SentHandshake is abandoned,
+    // but is otherwise unused.
+    #[allow(dead_code)]
     timeout: Handle<Event>,
     // The mac1 of the transmitted handshake, required to process CookieReply messages.
     mac1: Mac,
@@ -298,8 +301,6 @@ impl Handshake {
             packet.sender_id,
             now,
         );
-
-        sent_handshake.timeout.cancel();
 
         Some(session)
     }

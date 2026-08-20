@@ -117,8 +117,8 @@ impl<E> Scheduler<E> {
 
     /// Schedule an event to occur at a future point in time.
     ///
-    /// Returns a [`Handle`] which may be used to cancel or reschedule the event. The caller need
-    /// not retain the Handle if cancellation and rescheduling are not required.
+    /// Returns a [`Handle`] which cancels the event when dropped, unless you [`Handle::forget`] it.
+    #[must_use]
     pub fn add(&mut self, when: TimeRange, what: E) -> Handle<E> {
         let event = Arc::new(FutureEvent { when, what });
         let weak_event = Arc::downgrade(&event);
@@ -129,6 +129,18 @@ impl<E> Scheduler<E> {
             events: Arc::downgrade(&self.events),
             event: weak_event,
         }
+    }
+
+    /// Schedule an event to occur at a future point in time.
+    ///
+    /// Unlike [`Scheduler::add`], the scheduled event cannot be canceled.
+    ///
+    /// This is equivalent to `scheduler.add(...).forget()`.
+    pub fn add_uncancelable(&mut self, when: TimeRange, what: E) {
+        let event = Arc::new(FutureEvent { when, what });
+        let mut events = self.events.lock().unwrap();
+        let idx = Scheduler::partition_point(&events, when.start);
+        events.insert(idx, event);
     }
 
     /// Cancel all pending events, leaving the scheduler idle.
@@ -232,12 +244,21 @@ pub struct Handle<E> {
 }
 
 impl<E> Handle<E> {
-    /// Attempts to cancel the event.
+    /// Abandon this handle without canceling the event.
     ///
-    /// If the event hasn't yet occurred when cancel is called, it is canceled and will not be
-    /// returned by [`Scheduler::dispatch`]. Cancelling an event that has already been dispatched
-    /// is a no-op.
-    pub fn cancel(self) {
+    /// If you're always `forget`ing an event immediately after scheduling it, consider
+    /// [`Scheduler::add_uncancelable`] to make that intent more obvious.
+    pub fn forget(mut self) {
+        // Arc's Weak has a handy Default value that can never be upgraded. This makes the Drop
+        // impl exit early without touching scheduler state (which it can't anyway, since the
+        // `events` ref is gone).
+        std::mem::take(&mut self.events);
+        std::mem::take(&mut self.event);
+    }
+}
+
+impl<E> Drop for Handle<E> {
+    fn drop(&mut self) {
         let Some(events) = self.events.upgrade() else {
             return;
         };
@@ -249,33 +270,6 @@ impl<E> Handle<E> {
             return;
         };
         events.remove(idx);
-    }
-
-    /// Attempts to reschedule the event to a new time range.
-    ///
-    /// Returns an updated Handle if rescheduling succeeds, or None if the event has already
-    /// been dispatched.
-    pub fn reschedule(self, when: TimeRange) -> Option<Handle<E>> {
-        let events = self.events.upgrade()?;
-        let mut events = events.lock().unwrap();
-        let mut event = self.event.upgrade()?;
-        drop(self.event);
-        let idx = Scheduler::find(&events, &event)?;
-        drop(events.remove(idx));
-        // Invariant: At most 3 refs to the event exist (see doc on SchedulerInner struct).
-        // We dropped the Handle's Weak and events's Arc above, leaving `event` as the sole Arc
-        // for this event. Thus, get_mut always succeeds.
-        Arc::get_mut(&mut event).unwrap().when = when;
-        let weak = Arc::downgrade(&event);
-
-        let idx = Scheduler::partition_point(&events, when.start);
-        events.insert(idx, event);
-        drop(events);
-
-        Some(Handle {
-            events: self.events,
-            event: weak,
-        })
     }
 }
 
@@ -321,8 +315,35 @@ mod tests {
     fn test_basic() {
         let datum = Instant::now();
         let mut sched = Scheduler::default();
-        sched.add(TimeRange::new(datum, datum), Event::Foo);
+
+        let _handle = sched.add(TimeRange::new(datum, datum), Event::Foo);
         check_next(&mut sched, TimeRange::new(datum, datum), vec![Event::Foo]);
+        check_empty(&mut sched);
+
+        let handle = sched.add(TimeRange::new(datum, datum), Event::Foo);
+        handle.forget();
+        check_next(&mut sched, TimeRange::new(datum, datum), vec![Event::Foo]);
+        check_empty(&mut sched);
+
+        sched.add_uncancelable(TimeRange::new(datum, datum), Event::Foo);
+        check_next(&mut sched, TimeRange::new(datum, datum), vec![Event::Foo]);
+        check_empty(&mut sched);
+    }
+
+    #[test]
+    fn test_cancel() {
+        let datum = Instant::now();
+        let mut sched = Scheduler::default();
+
+        let handle = sched.add(TimeRange::new(datum, datum), Event::Foo);
+        drop(handle);
+        check_empty(&mut sched);
+
+        // Dropping the handle after the event fires is fine, it just does nothing.
+        let handle = sched.add(TimeRange::new(datum, datum), Event::Foo);
+        check_next(&mut sched, TimeRange::new(datum, datum), vec![Event::Foo]);
+        check_empty(&mut sched);
+        drop(handle);
         check_empty(&mut sched);
     }
 
@@ -344,7 +365,7 @@ mod tests {
             let start = datum + Duration::from_secs(*start);
             let end = datum + Duration::from_secs(*end);
             let range = TimeRange::new(start, end);
-            sched.add(range, Event::Bar(i));
+            sched.add_uncancelable(range, Event::Bar(i));
         }
         // First wakeup at 4, all events except (5,5).
         check_next(
@@ -402,8 +423,8 @@ mod proptests {
         /// number of scheduled events so far in the run, so will try to cancel a uniformly sampled
         /// prior event (which may have already been canceled).
         Cancel(f64),
-        /// Reschedule a previously added event. The f64 is rescaled as with Cancel.
-        Reschedule((f64, (Duration, Duration))),
+        /// Forget a previously added event. The f64 is rescaled as with Cancel.
+        Forget(f64),
     }
 
     /// Convert a random 0-1 float value into an index in the range 0..max.
@@ -418,7 +439,7 @@ mod proptests {
             Just(Action::Dispatch),
             arb_timerange().prop_map(Action::Add),
             (0f64..1f64).prop_map(Action::Cancel),
-            ((0f64..1f64), arb_timerange()).prop_map(Action::Reschedule),
+            (0f64..1f64).prop_map(Action::Forget),
         ]
     }
 
@@ -431,11 +452,6 @@ mod proptests {
         fn new(id: usize, start: Duration, end: Duration) -> Self {
             let range = Mutex::new(TimeRange::new(*DATUM + start, *DATUM + end));
             Self { id, range }
-        }
-
-        fn update(&mut self, start: Duration, end: Duration) {
-            let mut range = self.range.lock().unwrap();
-            *range = TimeRange::new(*DATUM + start, *DATUM + end);
         }
     }
 
@@ -459,7 +475,7 @@ mod proptests {
             let mut sched = Scheduler::default();
             for (start, end) in &times {
                 let tr = TimeRange::new(*DATUM+*start, *DATUM+*end);
-                sched.add(tr, (start, end, tr));
+                sched.add_uncancelable(tr, (start, end, tr));
                 sched.assert_consistent();
             }
 
@@ -495,6 +511,7 @@ mod proptests {
             let mut now = *DATUM;
             let mut total_scheduled = 0;
             let mut total_canceled = 0;
+            let mut total_forgotten = 0;
             let mut total_dispatched = 0;
             println!("\nSTART, now=0s");
             for action in actions {
@@ -543,28 +560,25 @@ mod proptests {
                         let idx = sample(idx, events.len());
                         if let Some(handle) = handles[idx].take() {
                             println!("Cancel({})", idx);
-                            handle.cancel();
+                            drop(handle);
                             events[idx] = None;
                             total_canceled += 1;
                         } else {
-                            println!("Cancel({}) (already canceled)", idx);
+                            println!("Cancel({}) (already canceled or forgotten)", idx);
                         };
                     }
-                    Action::Reschedule((idx, (start, end))) => {
+                    Action::Forget(idx) => {
                         if events.is_empty() {
-                            println!("Reschedule() (no events yet)");
+                            println!("Forget() (no events yet)");
                             continue;
                         }
                         let idx = sample(idx, events.len());
-                        if let Some(event) = &mut events[idx] {
-                            event.update(start, end);
-                            let tr = {
-                                *event.range.lock().unwrap()
-                            };
-                            println!("Reschedule({}) event={:?}", idx, event);
-                            handles[idx] = handles[idx].take().and_then(|handle| handle.reschedule(tr));
+                        if let Some(handle) = handles[idx].take() {
+                            println!("Forget({})", idx);
+                            handle.forget();
+                            total_forgotten += 1;
                         } else {
-                            println!("Reschedule({}) (no such event)", idx);
+                            println!("Forget({}) (already canceled or forgotten)", idx);
                         }
                     }
                 }
@@ -573,6 +587,7 @@ mod proptests {
             assert_eq!(total_scheduled, events.len());
             assert!(total_dispatched <= total_scheduled);
             assert!(total_canceled <= total_scheduled);
+            assert!(total_forgotten <= total_scheduled);
             assert!(total_pending <= total_scheduled);
             // Cancellations can cause double-counting, when cancelling an already dispatched event.
             // So, best we can do is bracket the values.
