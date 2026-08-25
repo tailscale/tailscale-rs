@@ -7,14 +7,14 @@ use std::{
 use aead::AeadInPlace;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 use ts_packet::PacketMut;
-use ts_time::TimeRange;
+use ts_time::{Handle, TimeRange};
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
     little_endian::{U32, U64},
 };
 
 use crate::{
-    Event, PeerId,
+    Event, PeerConfig, PeerId,
     endpoint::EndpointState,
     ids::SessionHandle,
     messages::{SessionId, TransportDataHeader},
@@ -141,6 +141,7 @@ pub struct ReceiveSession {
     session_handle: SessionHandle,
     expiry: Instant,
     window: ReplayWindow,
+    _cleanup: Handle<Event>,
 }
 
 impl Debug for ReceiveSession {
@@ -152,12 +153,24 @@ impl Debug for ReceiveSession {
 }
 
 impl ReceiveSession {
-    pub fn new(key: SessionKey, session_handle: SessionHandle, now: Instant) -> Self {
+    pub fn new(
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
+        key: SessionKey,
+        session_handle: SessionHandle,
+        now: Instant,
+    ) -> Self {
+        let expiry = now + SESSION_LIFETIME;
+
         ReceiveSession {
             cipher: ChaCha20Poly1305::new(&key),
             session_handle,
-            expiry: now + SESSION_LIFETIME,
+            expiry,
             window: ReplayWindow::default(),
+            _cleanup: endpoint.scheduler.add(
+                TimeRange::new(expiry, expiry + SESSION_CLEANUP_GRACE),
+                Event::ExpireSession(peer.id),
+            ),
         }
     }
 
@@ -245,6 +258,8 @@ pub struct BidiSession {
 impl BidiSession {
     /// Create a new session in the initiator role.
     pub fn new_initiator(
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
         keys: ts_noise::core::Session,
         responder_to_initiator_handle: SessionHandle,
         initiator_to_responder_id: SessionId,
@@ -252,6 +267,8 @@ impl BidiSession {
     ) -> Self {
         Self {
             recv: ReceiveSession::new(
+                endpoint,
+                peer,
                 keys.responder_to_initiator,
                 responder_to_initiator_handle,
                 now,
@@ -265,6 +282,8 @@ impl BidiSession {
 
     /// Create a new session in the responder role.
     pub fn new_responder(
+        endpoint: &mut EndpointState,
+        peer: &PeerConfig,
         keys: ts_noise::core::Session,
         initiator_to_responder_handle: SessionHandle,
         responder_to_initiator_id: SessionId,
@@ -272,6 +291,8 @@ impl BidiSession {
     ) -> Self {
         Self {
             recv: ReceiveSession::new(
+                endpoint,
+                peer,
                 keys.initiator_to_responder,
                 initiator_to_responder_handle,
                 now,
@@ -479,24 +500,30 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use ts_keys::{NodeKeyPair, NodePublicKey};
     use ts_noise::core::Role;
 
     use super::*;
-    use crate::{PeerId, ids::IdMap, messages::Message};
+    use crate::{PeerId, Psk, ids::IdMap, messages::Message};
 
     #[test]
     fn test_session_parts() {
         let k: [u8; 32] = rand::random();
         let mut ids = IdMap::default();
 
-        let initiator_session = ids.allocate_session(PeerId(1));
-        let responder_session = ids.allocate_session(PeerId(2));
+        let initiator_cfg = PeerConfig::new(PeerId(1), NodePublicKey::default(), Psk::default());
+        let initiator_session = ids.allocate_session(initiator_cfg.id);
+        let responder_cfg = PeerConfig::new(PeerId(2), NodePublicKey::default(), Psk::default());
+        let responder_session = ids.allocate_session(responder_cfg.id);
         let responder_session_id = responder_session.id();
         let now = Instant::now();
+        let mut endpoint = EndpointState::from(NodeKeyPair::new());
         // NOTE: this would be catastrophically insecure in non-test code, because it reuses the
         // same key in both directions, which leads to catastrophic nonce reuse. It's okay here
         // because (a) it's a test and (b) we only ever transmit in one direction.
         let send = BidiSession::new_initiator(
+            &mut endpoint,
+            &responder_cfg,
             ts_noise::core::Session {
                 initiator_to_responder: k.into(),
                 responder_to_initiator: k.into(),
@@ -506,7 +533,13 @@ mod tests {
             responder_session_id,
             now,
         );
-        let mut recv = ReceiveSession::new(k.into(), responder_session, now);
+        let mut recv = ReceiveSession::new(
+            &mut endpoint,
+            &initiator_cfg,
+            k.into(),
+            responder_session,
+            now,
+        );
 
         const CLEARTEXT: &[u8] = b"foobar";
         let mut pkt = [PacketMut::from(CLEARTEXT)];
@@ -538,13 +571,15 @@ mod tests {
     fn test_session_timers() {
         let k: [u8; 32] = rand::random();
         let mut ids = IdMap::default();
-        let recv_session = ids.allocate_session(PeerId(1));
+        let mut endpoint = EndpointState::from(NodeKeyPair::new());
+        let recv_cfg = PeerConfig::new(PeerId(1), NodePublicKey::default(), Psk::default());
+        let recv_session = ids.allocate_session(recv_cfg.id);
         let recv_session_id = recv_session.id();
         let bidi_session = ids.allocate_session(PeerId(2));
         let now = Instant::now();
         let epsilon = Duration::from_secs(1);
 
-        let recv = ReceiveSession::new(k.into(), recv_session, now);
+        let recv = ReceiveSession::new(&mut endpoint, &recv_cfg, k.into(), recv_session, now);
         assert!(!recv.expired(now));
         assert!(!recv.expired(now + SESSION_FRESH_LIFETIME - epsilon));
         assert!(!recv.expired(now + SESSION_FRESH_LIFETIME + epsilon));
@@ -553,6 +588,8 @@ mod tests {
         let k2: [u8; 32] = rand::random();
 
         let bidi = BidiSession::new_initiator(
+            &mut endpoint,
+            &recv_cfg,
             ts_noise::core::Session {
                 initiator_to_responder: k.into(),
                 responder_to_initiator: k2.into(),

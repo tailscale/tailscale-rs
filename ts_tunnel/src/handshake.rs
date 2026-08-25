@@ -296,6 +296,8 @@ impl Handshake {
         };
 
         let session = BidiSession::new_initiator(
+            endpoint,
+            peer,
             session_keys,
             sent_handshake.responder_to_initiator_handle,
             packet.sender_id,
@@ -338,6 +340,8 @@ impl Handshake {
         self.cookie_sender.write_macs(pkt.as_mut());
 
         let session = Box::new(BidiSession::new_responder(
+            endpoint,
+            peer,
             session_keys,
             session_handle,
             handshake.responder_to_initiator_id,
