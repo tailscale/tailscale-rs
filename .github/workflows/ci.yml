@@ -104,7 +104,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust
         id: setup-rust
         uses: ./.github/actions/setup-rust
@@ -152,7 +152,7 @@ jobs:
     runs-on: linux-x86_64-16cpu
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust
         id: setup-rust
         uses: ./.github/actions/setup-rust
@@ -162,7 +162,7 @@ jobs:
           components: rustfmt
       - &binstall
         name: binstall
-        uses: cargo-bins/cargo-binstall@dc19f1e48450eefe5a29b8da6c6b00a87d730b37 #v1.18.1
+        uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
       - name: Install cargo-deny
         run: command -v cargo-deny || cargo binstall --no-confirm --force cargo-deny
       - &cargo_ws
@@ -199,9 +199,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
         with:
           url: ${{ case(inputs.crates_repo == 'prod', 'https://crates.io', startsWith(github.ref, 'refs/tags/'), 'https://crates.io', 'https://staging.crates.io') }}
