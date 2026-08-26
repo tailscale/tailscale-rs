@@ -76,11 +76,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Cache mix
         id: cache-mix
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.mix
@@ -101,7 +101,7 @@ jobs:
 
       - name: Install elixir
         id: install-elixir
-        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # 1.24.0
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # 1.24.1
         with:
           otp-version: ${{ matrix.otp.version }}
           elixir-version: ${{ matrix.elixir.version }}
@@ -173,11 +173,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Cache mix
         id: cache-mix
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.mix
@@ -187,7 +187,7 @@ jobs:
 
       - name: Install elixir
         id: install-elixir
-        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # 1.24.0
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # 1.24.1
         with:
           otp-version: ${{ env.latest_otp }}
           elixir-version: ${{ env.latest_elixir }}
@@ -284,7 +284,7 @@ jobs:
           path: ts_elixir/tailscale
 
       - name: Generate attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ts_elixir/tailscale
 
