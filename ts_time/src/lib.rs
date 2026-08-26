@@ -79,8 +79,8 @@ pub struct Scheduler<E> {
     //
     // Invariant: each FutureEvent is referenced from a few places only: one Arc in this Vec,
     // one Weak in the Handle for the event, and a temporary upgraded Arc during the execution of
-    // Handle's methods. This invariant is relied upon by SchedulerInner, which accounts for all
-    // these potential references prior to unwrapping Arc::get_mut and Arc::into_inner.
+    // Handle's Drop impl. This invariant is relied upon by Scheduler::dispatch, which accounts for
+    // all these potential references prior to unwrapping Arc::get_mut and Arc::into_inner.
     // Additional rogue references would invalidate this accounting and cause runtime panics.
     events: Arc<Mutex<Vec<Arc<FutureEvent<E>>>>>,
 }
@@ -158,7 +158,7 @@ impl<E> Scheduler<E> {
         let idx = Scheduler::partition_point(&events, now);
         let to_dispatch = events.split_off(idx);
 
-        // Invariant: at most 3 refs to the event exist (see doc on SchedulerInner struct).
+        // Invariant: at most 3 refs to the event exist (see doc on Scheduler struct).
         // We haven't upgraded the Handle's Weak, so that Arc doesn't exist. The iterator owns the
         // Arc that was formerly in self.events, and into_inner is not blocked by the existence of
         // the Handle's Weak. Thus, into_inner always succeeds.
