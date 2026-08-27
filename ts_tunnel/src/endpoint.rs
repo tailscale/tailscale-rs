@@ -247,6 +247,11 @@ impl Peer {
     fn cleanup_expired(&mut self, now: Instant) {
         self.check_invariants(now);
         self.session.cleanup_expired(now);
+        self.handshake.cleanup_expired(now);
+        // We may have packets queued that were waiting on session confirmation from the initiator.
+        if !self.handshake.is_active() {
+            self.queue.clear();
+        }
     }
 
     fn shutdown(&mut self) {
@@ -597,6 +602,7 @@ mod tests {
         config::PeerConfig,
         handshake::{HANDSHAKE_FAILURE_TIMEOUT, HANDSHAKE_RETRY_TIMEOUT},
         messages::{HandshakeInitiation, TransportDataHeader},
+        session::SESSION_LIFETIME,
     };
 
     /// Matches different shapes of packets.
@@ -832,7 +838,6 @@ mod tests {
         ///
         /// This may result in the queuing of encrypted packets from B to A, which can be inspected
         /// with [`EndpointPair::assert_b_to_a`].
-        #[allow(dead_code)]
         pub fn event_b(&mut self, now: Instant) {
             EndpointPair::events(now, &mut self.b, &mut self.b_to_a);
         }
@@ -843,7 +848,6 @@ mod tests {
         }
 
         /// Drop in-flight packets from B to A.
-        #[allow(dead_code)]
         pub fn drop_b_to_a(&mut self) {
             self.b_to_a.clear();
         }
@@ -1047,5 +1051,69 @@ mod tests {
         assert_no_packets(&p.b_to_a);
         // B never receives packet(1), it was dropped when the first handshake failed.
         p.assert_received_at_b([packet(2)]);
+    }
+
+    #[test]
+    fn responder_timeout() {
+        use PacketMatcher::*;
+
+        let mut p = EndpointPair::new();
+        let t = TestClock::new();
+
+        // A initiates, B responds.
+        p.send_from_a(t.at(0), [packet(1)]);
+        p.assert_a_to_b([HandshakeInitiation]);
+        p.recv_at_b(t.at(1));
+        p.assert_b_to_a([HandshakeResponse]);
+        p.drop_b_to_a();
+
+        // A vanishes, never confirms the handshake.
+        // After session timeout, B abandons handshake state.
+        p.event_b(t.at(1 + SESSION_LIFETIME.as_secs() + 1));
+
+        // B tries to send. Triggers a handshake initiation since there's no more handshake state.
+        p.send_from_b(t.at(1 + SESSION_LIFETIME.as_secs() + 2), [packet(1)]);
+        p.assert_b_to_a([HandshakeInitiation]);
+    }
+
+    #[test]
+    fn responder_timeout_with_packets() {
+        use PacketMatcher::*;
+
+        let mut p = EndpointPair::new();
+        let t = TestClock::new();
+
+        // A initiates, B responds.
+        p.send_from_a(t.at(0), [packet(1)]);
+        p.assert_a_to_b([HandshakeInitiation]);
+        p.recv_at_b(t.at(1));
+        p.assert_b_to_a([HandshakeResponse]);
+        p.drop_b_to_a();
+
+        // A vanishes, never confirms the handshake.
+
+        // B sends while handshake is still pending. Packet queued.
+        p.send_from_b(t.at(2), [packet(2)]);
+        assert_no_packets(&p.b_to_a);
+
+        // Pending handshake expires.
+        let expiry = 1 + SESSION_LIFETIME.as_secs();
+        p.event_b(t.at(expiry + 1));
+        assert_no_packets(&p.b_to_a);
+
+        // Expire A's handshake, to get everything back into an idle state.
+        p.event_a(t.at(expiry + 1));
+        assert_no_packets(&p.a_to_b);
+
+        // B sends again, becomes initiator for a full completed handshake.
+        p.send_from_b(t.at(expiry + 2), [packet(3)]);
+        p.recv_at_a(t.at(expiry + 3));
+        p.recv_at_b(t.at(expiry + 4));
+        p.assert_b_to_a([TransportData]);
+        p.recv_at_a(t.at(expiry + 5));
+
+        // Only the latest sent packet survives, packet(1) and packet(2) are lost.
+        assert_no_packets(&p.received_at_b);
+        p.assert_received_at_a([packet(3)]);
     }
 }

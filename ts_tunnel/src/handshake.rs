@@ -402,6 +402,16 @@ impl Handshake {
         };
         self.cookie_sender.receive_cookie(packet, &handshake.mac1);
     }
+
+    /// clean up expired responded handshake state, if any.
+    pub fn cleanup_expired(&mut self, now: Instant) {
+        if let State::Responded(tentative) = &self.state
+            && tentative.expired(now)
+        {
+            tracing::trace!("pending responded handshake expired");
+            self.state = State::None;
+        }
+    }
 }
 
 #[cfg(test)]
