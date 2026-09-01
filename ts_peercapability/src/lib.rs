@@ -101,47 +101,64 @@ impl<'a> Name<'a> {
     ts_peercap!(
         /// Grants the ability for a peer to read this node's goroutines, metrics, magicsock
         /// internal state, etc.
-        DEBUG_PEER, "debug-peer"
+        DEBUG_PEER,
+        "debug-peer"
     );
     ts_peercap!(
         /// Grants the ability to send a Wake-On-LAN packet.
-        WAKE_ON_LAN, "wake-on-lan"
+        WAKE_ON_LAN,
+        "wake-on-lan"
     );
     ts_peercap!(
         /// Grants the ability for a peer to send ingress traffic.
-        INGRESS, "ingress"
+        INGRESS,
+        "ingress"
     );
     ts_peercap!(
         /// Grants the ability for a peer to edit features from the device Web UI.
-        WEB_UI, "webui", improper_url
+        WEB_UI,
+        "webui",
+        improper_url
     );
     ts_peercap!(
         /// Grants the ability for a peer to access Taildrive shares.
-        TAILDRIVE, "drive", improper_url
+        TAILDRIVE,
+        "drive",
+        improper_url
     );
     ts_peercap!(
         /// Indicates that a peer has the ability to share folders with us.
-        TAILDRIVE_SHARER, "drive-sharer", improper_url
+        TAILDRIVE_SHARER,
+        "drive-sharer",
+        improper_url
     );
     ts_peercap!(
         /// Grants a peer Kubernetes-specific capabilities, such as the ability to
         /// impersonate specific Tailscale user groups as Kubernetes user groups.
         /// This capability is read by Tailscale Kubernetes operators.
-        KUBERNETES, "kubernetes", improper_url
+        KUBERNETES,
+        "kubernetes",
+        improper_url
     );
     ts_peercap!(
         /// Grants the ability for a peer to allocate relay endpoints.
-        RELAY, "relay", improper_url
+        RELAY,
+        "relay",
+        improper_url
     );
     ts_peercap!(
         /// Grants the current node the ability to allocate relay endpoints to the peer
         /// which has this capability.
-        RELAY_TARGET, "relay-target", improper_url
+        RELAY_TARGET,
+        "relay-target",
+        improper_url
     );
     ts_peercap!(
         /// Grants a peer tsidp-specific capabilities, such as the ability to add user
         /// groups to the OIDC claim.
-        TS_IDP, "tsidp", improper_url
+        TS_IDP,
+        "tsidp",
+        improper_url
     );
 
     /// Convenience function to construct a new `Name` from `&str`.
