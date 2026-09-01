@@ -91,7 +91,8 @@ pub extern "C" fn ts_init_tracing() {
 /// `auth_token`  must be able to be read according to [`CStr`] rules, i.e.
 /// it must be NUL-terminated and valid for reading up to and including the NUL.
 /// The string fields of `config` may be `NULL`, but if they are not, they must
-/// obey the same invariants.
+/// obey the same invariants. `tags` must be either `NULL`, or a `NULL` terminated
+/// array of strings that must all obey the same invariant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ts_init(
     config: Option<&config::config>,
