@@ -7,14 +7,8 @@ https://tailscale.com
 
 `tailscale-rs` is a work-in-progress Tailscale library written in Rust, with language bindings to C, Elixir, and Python.
 
-> [!CAUTION]
-> This software is unstable and insecure.
->
-> We welcome enthusiasm and interest, but please **do not** build production software using these
-> libraries or rely on it for data privacy until we have a chance to batten down some hatches
-> and complete a third-party audit.
->
-> See [Caveats](#caveats) for more details.
+> [!NOTE]
+> This software is under active development. See [Caveats](#caveats) for more details.
 
 ## Getting Started
 
@@ -72,32 +66,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
 This software is still a work-in-progress! We are providing it in the open at this stage out of a belief in open-source
 and to see where the community runs with it, but please be aware of a few important considerations:
 
-- This implementation contains unaudited cryptography and hasn't undergone a comprehensive security analysis.
-  Conservatively, assume there could be a critical security hole meaning anything you send or receive could be in the
-  clear on the public Internet.
-- There are no compatibility guarantees at the moment. This is early-days software &mdash; we may break dependent code
-  in order to get things right.
-- We currently rely on DERP relays for all communication. Direct connections via NAT holepunching will be a seamless
-  upgrade in the future, but for now, this puts a cap on data throughput.
-- The `TS_RS_EXPERIMENT` environment variable is required to be set to `this_is_unstable_software`
-  for all code linked against `tailscale-rs`; this includes Rust, C, Elixir, and Python code. We'll remove this
-  requirement after a third-party code/cryptography audit and any necessary fixes.
+- There are no compatibility guarantees at the moment. We may break dependent code in order to get things right,
+  although we will try to avoid doing so gratuitously.
+- Direct connections via NAT traversal is a work in progress. Communication may fall back to DERP relaying in more cases,
+  with a corresponding hit to latency and throughput.
+- Core networking functionality is implemented. Many other features are still either in progress or not implemented yet.
+  See [Status](#status) for details.
 
-## Versioning, Releases, and Compatability
+We encourage you to experiment with this library and build things with it, as long as you're okay with these caveats.
 
-We follow semver and aim to make a point release roughly monthly. Since we are pre-1.0, we make no
-backwards-compatability guarantees. We are aiming to have a stable 1.0 release as soon as we can, but we currently don't
-have a timeline.
+## Versioning, Releases, and Compatibility
+
+We follow semver and aim to make a point release roughly monthly. Since we are pre-1.0, we make no strong
+backwards-compatibility guarantees.
 
 ## MSRV and Edition
 
 The current MSRV is 1.94.1. The current edition is Rust 2024.
 
 `tailscale-rs` has a rolling MSRV (Minimum Supported Rust Version) policy to support the current and previous Rust
-compiler versions, and the latest
-[edition of Rust](https://doc.rust-lang.org/edition-guide/editions/index.html).
+compiler versions, and the latest [edition of Rust](https://doc.rust-lang.org/edition-guide/editions/index.html).
 
-We may lag the latest version/edition in rare cases for our dependencies to catch up and for us to perform any necessary
+We may periodically lag the MSRV behind this latest version/edition in rare cases for our dependencies to catch up and for us to perform any necessary
 fixes.
 
 ## Platform Support
@@ -110,9 +100,8 @@ We support the following platforms and architectures:
 
 ## Status
 
-`tailscale-rs` is a work-in-progress - we're still rapidly iterating, fixing bugs, and adding new features. We aim to
-keep this section up-to-date, but our [issue tracker](https://github.com/tailscale/tailscale-rs/issues)
-is the best way to see the latest updates.
+`tailscale-rs` is a work-in-progress. We're still rapidly iterating, fixing bugs, and adding new features.
+We aim to keep this section up-to-date, but our [issue tracker](https://github.com/tailscale/tailscale-rs/issues) is the best way to see the latest updates.
 
 ### Implemented
 
@@ -133,7 +122,6 @@ timeline or completion:
 
 - Direct connections (NAT traversal, STUN, and Disco)
 - Peer lookups (addressing peers by hostname)
-- Third-party code and cryptography audit
 
 ### Unsupported
 

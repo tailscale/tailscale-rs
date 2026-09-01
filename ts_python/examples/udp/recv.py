@@ -33,7 +33,7 @@ async def main(auth_key: str, bind_port: int) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="UDP receiver built with `tailscale-py`",
-        usage="TS_RS_EXPERIMENT=this_is_unstable_software %(prog)s [options]",
+        usage="%(prog)s [options]",
     )
     parser.add_argument("auth_key", help="auth key to register with tailnet")
     parser.add_argument("bind_port", help="local UDP port to bind", type=int)

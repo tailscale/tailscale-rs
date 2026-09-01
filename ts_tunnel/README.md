@@ -21,8 +21,8 @@ tests).
 
 ## Security limitations
 
-This crate has not yet been subjected to a code audit by expert cryptography engineers. Conservatively, assume that
-there could be a critical security hole that exposes your traffic to attackers.
+The code in this crate has been reviewed by third-party security experts. However, it's still relatively young code
+that's still being worked on, so depending on your comfort level you may want to conduct your own evaluation.
 
 As stated above, this crate by itself is NOT a complete implementation of WireGuard, and should not be used as one.
 

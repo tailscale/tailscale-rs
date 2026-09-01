@@ -36,7 +36,7 @@ async def main(auth_key: str, peer_ip: str, peer_port: int) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="UDP sender built with `tailscale-py`",
-        usage="TS_RS_EXPERIMENT=this_is_unstable_software %(prog)s [options]",
+        usage="%(prog)s [options]",
     )
     parser.add_argument("auth_key", help="auth key to register with tailnet")
     parser.add_argument("peer_ip", help="peer's tailnet IP address")

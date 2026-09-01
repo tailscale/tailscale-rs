@@ -57,10 +57,6 @@
 //!
 //! ## Using `tailscale`
 //!
-//! To use this crate or the language bindings, you will need to set the `TS_RS_EXPERIMENT` env var
-//! to `this_is_unstable_software`. We'll remove this requirement after a third-party code/cryptography
-//! audit and any necessary fixes.
-//!
 //! Under the hood, we use Tokio for our async runtime. You must also use Tokio, any kind and most
 //! configurations of Tokio runtimes should work, but there must be one available when you call any
 //! async API functions. The easiest way to do this is to use `#[tokio::main]`, see the
@@ -189,7 +185,9 @@ impl Device {
     /// # Ok(()) }
     /// ```
     pub async fn new(config: &Config, auth_key: Option<String>) -> Result<Self, Error> {
-        check_magic_env()?;
+        tracing::warn!(
+            "tailscale-rs is early software in active development, expect more bugs and missing features than usual."
+        );
 
         let keys = (&config.key_state).into();
         let rt = ts_runtime::Runtime::spawn(ts_runtime::Config {
@@ -375,25 +373,4 @@ pub mod keys {
         MachinePublicKey, NetworkLockKeyPair, NetworkLockPrivateKey, NetworkLockPublicKey,
         NodeKeyPair, NodePrivateKey, NodePublicKey, NodeState, PersistState,
     };
-}
-
-const ENV_MAGIC_VAR: &str = "TS_RS_EXPERIMENT";
-const ENV_MAGIC_VALUE: &str = "this_is_unstable_software";
-
-fn check_magic_env() -> Result<(), Error> {
-    if std::env::var(ENV_MAGIC_VAR).as_deref() != Ok(ENV_MAGIC_VALUE) {
-        let warning = format!(
-            "
-check failed: set {ENV_MAGIC_VAR}={ENV_MAGIC_VALUE} to acknowledge that tailscale-rs is early-days
-experimental software containing bugs, unvalidated cryptography, and no stability or compatibility
-guarantees.
-            "
-        );
-
-        eprintln!("{}", warning.trim());
-
-        return Err(Error::UnstableEnvVar);
-    };
-
-    Ok(())
 }

@@ -36,7 +36,7 @@ if __name__ == "__main__":
 To run this demo:
 
 ```console
-$ TS_RS_EXPERIMENT=this_is_unstable_software python demo.py
+$ python demo.py
 ```
 
 ## Building and Usage

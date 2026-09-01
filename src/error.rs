@@ -25,14 +25,6 @@ pub enum Error {
     #[error("an error writing out the key file")]
     KeyFileWrite,
 
-    /// The environment variable `TS_RS_EXPERIMENT` was not set.
-    ///
-    /// The end-user must set `TS_RS_EXPERIMENT=this_is_unstable_software` to acknowledge that tailscale-rs
-    /// is early-days experimental software containing bugs, unvalidated cryptography, and no stability
-    /// or compatibility guarantees.
-    #[error("the environment variable `{}` was not set", crate::ENV_MAGIC_VAR)]
-    UnstableEnvVar,
-
     /// An error occurred which can not be anticipated or handled by a library user.
     ///
     /// This is likely due to a bug in our code or a rare and unexpected error.

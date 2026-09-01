@@ -16,9 +16,6 @@ For all the examples, you'll need:
 - A tailnet policy configured to allow access between your local machine and the example code, and
 between the examples themselves
 
-Also note the `TS_RS_EXPERIMENT=this_is_unstable_software` environment variable is required for all
-the examples below; for an explanation, see [the Caveats section of the README](../../README.md#caveats).
-
 ## [UDP](udp)
 
 A UDP sender and receiver. The sender sends UDP datagrams to the receiver over the tailnet.

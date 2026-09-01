@@ -14,9 +14,6 @@ tailnet, referred to as `$AUTH_KEY` below
 examples take care of that for you
 - A tailnet policy configured to allow access between your local machine and the example code
 
-Also note the `TS_RS_EXPERIMENT=this_is_unstable_software` environment variable in all the examples
-below; for an explanation, see [the Caveats section of the README](../README.md#caveats).
-
 ## Overview
 
 Brief descriptions and links to each example.

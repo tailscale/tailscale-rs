@@ -10,7 +10,7 @@ First, start the receiver:
 
 ```sh
 # Terminal 1
-$ TS_RS_EXPERIMENT=this_is_unstable_software ./recv.py $AUTH_KEY_1 5678
+$ ./recv.py $AUTH_KEY_1 5678
 ...
 [<recv IPv4>:5678] udp bound, local endpoint: ('<recv IPv4>', 5678)
 ...
@@ -20,7 +20,7 @@ Then, in another terminal, start the sender:
 
 ```sh
 # Terminal 2
-$ TS_RS_EXPERIMENT=this_is_unstable_software ./send.py $AUTH_KEY_2 <recv IPv4> 5678 
+$ ./send.py $AUTH_KEY_2 <recv IPv4> 5678 
 ...
 [<send IPv4>:1234] udp bound, local endpoint: ('<send IPv4>', 1234)
 [<send IPv4>:1234-><recv IPv4>:5678|0001] sent message: b'HELLO'

@@ -197,7 +197,5 @@ async fn test_udp_unidir(tx: &UdpSocket, rx: &UdpSocket) {
 }
 
 async fn make_ts_device() -> Result<Device, Error> {
-    unsafe { std::env::set_var("TS_RS_EXPERIMENT", "this_is_unstable_software") };
-
     Device::new(&Config::default(), Some(ts_test_util::auth_key().unwrap())).await
 }
