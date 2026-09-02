@@ -6063,6 +6063,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts_future_util"
+version = "0.5.0"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "ts_hexdump"
 version = "0.5.0"
 dependencies = [
