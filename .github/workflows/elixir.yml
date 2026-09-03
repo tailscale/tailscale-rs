@@ -37,7 +37,7 @@ env:
 
   latest_elixir: &latest_elixir 1.19.5
   latest_otp: &latest_otp 28.4.2
-  latest_rust: &latest_rust 1.95.0
+  latest_rust: &latest_rust 1.98.1
 
 defaults:
   run:

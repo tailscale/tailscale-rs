@@ -8,6 +8,7 @@ Put changes for the upcoming release here!
 
 - Changed (Rust API, lang bindings): the `TS_RS_EXPERIMENT` environment variable is no longer required to use the
   library. The library logs a warning during initialization, as a reminder that it's still work-in-progress software.
+- Updated MSRV to 1.97.
 
 ## [0.5.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.5.0) - 2026-08-14
 

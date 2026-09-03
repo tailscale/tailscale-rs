@@ -45,7 +45,7 @@ env:
   python_version: 3.12
   # The Rust toolchain version to build the wheels with. Should be latest supported
   # version (MSRV + 1).
-  rust_toolchain: 1.95.0
+  rust_toolchain: 1.98.1
 
 jobs:
   build:

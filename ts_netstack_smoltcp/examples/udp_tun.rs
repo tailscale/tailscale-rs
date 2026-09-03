@@ -77,7 +77,7 @@ fn netstack_send(sock: impl Borrow<UdpSocket>, peer: SocketAddr) {
     sock.send_to_blocking(SocketAddr::from(([1, 2, 3, 4], 53)), b"hello")
         .unwrap();
 
-    for i in 0.. {
+    for i in 0..i32::MAX {
         sock.send_to_blocking(peer, format!("hello{i}").as_bytes())
             .unwrap();
         tracing::debug!(i, "sent hello packet");

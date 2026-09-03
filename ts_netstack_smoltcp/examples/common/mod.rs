@@ -203,7 +203,7 @@ where
 
     let mut last_send = std::time::Instant::now();
 
-    for i in 0.. {
+    for i in 0..i32::MAX {
         std::thread::sleep(
             core::time::Duration::from_millis(300).saturating_sub(last_send.elapsed()),
         );
@@ -233,7 +233,7 @@ where
 
     let mut ticker = tokio::time::interval(core::time::Duration::from_millis(300));
 
-    for i in 0.. {
+    for i in 0..i32::MAX {
         ticker.tick().await;
 
         sock.write_all(format!("hello {i}").as_bytes())

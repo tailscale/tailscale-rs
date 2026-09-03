@@ -80,7 +80,7 @@ async fn netstack_send(sock: impl Borrow<UdpSocket>, peer: SocketAddr) {
         .await
         .unwrap();
 
-    for i in 0.. {
+    for i in 0..i32::MAX {
         sock.send_to(peer, format!("hello{i}").as_bytes())
             .await
             .unwrap();
