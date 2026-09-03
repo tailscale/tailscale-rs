@@ -115,7 +115,7 @@ pub fn init_tracing() {
             .with_default_directive(LevelFilter::INFO.into())
             .from_env_lossy();
 
-        let fmt_layer = tracing_subscriber::fmt::layer();
+        let fmt_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
 
         let fmt_layer = if std::env::var("TS_RS_LOG_PRETTY") == Ok("1".into()) {
             fmt_layer.pretty().boxed()

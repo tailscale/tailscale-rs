@@ -20,9 +20,17 @@ smallvec.workspace = true
 tokio.workspace = true
 tokio-stream = "0.1"
 tracing.workspace = true
+itertools.workspace = true
+bytes.workspace = true
+heapless.workspace = true
+static_assertions.workspace = true
+regex = "1.13"
+ts_future_util.workspace = true
 
 [dev-dependencies]
 ts_cli_util.workspace = true
+clap.workspace = true
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -35,7 +43,11 @@ windows = { version = "0.62", features = [
 rtnetlink = "0.21"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+nom = "8.0"
+zerocopy = { version = "0.8", features = ["derive"] }
 nix = "0.31"
+libc = "0.2"
+bitflags = "2.13"
 socket2 = "0.6"
 tokio = { workspace = true, features = ["net"] }
 

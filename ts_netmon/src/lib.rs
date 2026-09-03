@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 
 #[cfg(target_os = "macos")]
-pub mod darwin;
+pub mod bsd;
 mod family;
 mod id;
 #[cfg(target_os = "linux")]
