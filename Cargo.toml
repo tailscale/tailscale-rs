@@ -18,6 +18,7 @@ members = [
     "ts_dynbitset",
     "ts_elixir/native/ts_elixir",
     "ts_ffi",
+    "ts_future_util",
     "ts_hexdump",
     "ts_http_util",
     "ts_keys",
@@ -123,6 +124,7 @@ ts_dataplane = { path = "ts_dataplane", version = "0.5.0" }
 ts_derp = { path = "ts_derp", version = "0.5.0" }
 ts_disco_protocol = { path = "ts_disco_protocol", version = "0.5.0" }
 ts_dynbitset = { path = "ts_dynbitset", version = "0.5.0" }
+ts_future_util = { path = "ts_future_util", version = "0.5.0" }
 ts_hexdump = { path = "ts_hexdump", version = "0.5.0" }
 ts_keys = { path = "ts_keys", version = "0.5.0" }
 ts_kv_store = { path = "ts_kv_store", version = "0.5.0" }
