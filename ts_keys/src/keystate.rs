@@ -1,8 +1,8 @@
 use core::fmt::{Debug, Display, Formatter};
 
 use crate::{
-    DiscoKeyPair, MachineKeyPair, MachinePrivateKey, NetworkLockKeyPair, NetworkLockPrivateKey,
-    NodeKeyPair, NodePrivateKey,
+    DiscoKeyPair, Export, ExportableKey, MachineKeyPair, MachinePrivateKey, NetworkLockKeyPair,
+    NetworkLockPrivateKey, NodeKeyPair, NodePrivateKey,
 };
 
 /// The portion of the key state that should be retained between runs of the same device.
@@ -13,21 +13,21 @@ use crate::{
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PersistState {
     /// The [`MachinePrivateKey`] for the hardware this Tailnet peer runs on.
-    pub machine_key: MachinePrivateKey,
+    pub machine_key: Export<MachinePrivateKey>,
 
     /// The [`NetworkLockPrivateKey`] for this Tailnet peer, for use with Tailnet Lock.
-    pub network_lock_key: NetworkLockPrivateKey,
+    pub network_lock_key: Export<NetworkLockPrivateKey>,
 
     /// The [`NodePrivateKey`] for this Tailnet peer.
-    pub node_key: NodePrivateKey,
+    pub node_key: Export<NodePrivateKey>,
 }
 
 impl From<&NodeState> for PersistState {
     fn from(value: &NodeState) -> Self {
         Self {
-            node_key: value.node_keys.private.clone(),
-            machine_key: value.machine_keys.private.clone(),
-            network_lock_key: value.network_lock_keys.private.clone(),
+            node_key: value.node_keys.private.clone().into(),
+            machine_key: value.machine_keys.private.clone().into(),
+            network_lock_key: value.network_lock_keys.private.clone().into(),
         }
     }
 }
@@ -41,16 +41,16 @@ impl From<NodeState> for PersistState {
 impl Default for PersistState {
     fn default() -> Self {
         Self {
-            machine_key: MachinePrivateKey::random(),
-            network_lock_key: NetworkLockPrivateKey::random(),
-            node_key: NodePrivateKey::random(),
+            machine_key: MachinePrivateKey::random().export(),
+            network_lock_key: NetworkLockPrivateKey::random().export(),
+            node_key: NodePrivateKey::random().export(),
         }
     }
 }
 
 /// The complete runtime key state for a Tailscale node.
-#[derive(Clone, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[derive(Clone)]
+//#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 pub struct NodeState {
     /// The [`DiscoKeyPair`] this Tailnet peer uses for the Disco protocol.
     ///
@@ -87,17 +87,22 @@ impl Display for NodeState {
 impl NodeState {
     /// Generate a new [`NodeState`]. All keys get random values.
     pub fn generate() -> Self {
-        Default::default()
+        Self {
+            machine_keys: MachineKeyPair::random(),
+            node_keys: NodeKeyPair::random(),
+            disco_keys: DiscoKeyPair::random(),
+            network_lock_keys: NetworkLockKeyPair::random(),
+        }
     }
 }
 
 impl From<&PersistState> for NodeState {
     fn from(value: &PersistState) -> Self {
         Self {
-            disco_keys: Default::default(),
-            node_keys: value.node_key.clone().into(),
-            machine_keys: value.machine_key.clone().into(),
-            network_lock_keys: value.network_lock_key.clone().into(),
+            disco_keys: DiscoKeyPair::random(),
+            node_keys: value.node_key.clone().import().into(),
+            machine_keys: value.machine_key.clone().import().into(),
+            network_lock_keys: value.network_lock_key.clone().import().into(),
         }
     }
 }
