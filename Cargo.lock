@@ -6005,6 +6005,8 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
+ "rand 0.10.2",
+ "tailscale",
  "tokio",
  "tracing",
  "ts_cli_util",
