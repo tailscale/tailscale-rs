@@ -17,7 +17,9 @@ clap.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures.workspace = true
 tracing.workspace = true
+rand.workspace = true
 
+tailscale.workspace = true
 ts_cli_util.workspace = true
 ts_keys.workspace = true
 ts_packetfilter.workspace = true

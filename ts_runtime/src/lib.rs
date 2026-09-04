@@ -115,7 +115,11 @@ impl kameo::Actor for Runtime {
             &slf,
             (
                 env.clone(),
-                Default::default(),
+                netstack::netcore::Config {
+                    tcp_buffer_size: 64 * 1024,
+                    command_channel_capacity: Some(128),
+                    ..Default::default()
+                },
                 netstack_id,
                 netstack_up,
                 Arc::new(Mutex::new(netstack_down)),
