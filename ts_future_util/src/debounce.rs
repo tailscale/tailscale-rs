@@ -11,9 +11,19 @@ use core::{
 
 use futures_core::Stream;
 
+/// Signature of the tokio sleep function, aliased for convenience.
+#[cfg(feature = "tokio")]
+pub type TokioSleepFn = fn(Duration) -> tokio::time::Sleep;
+
 /// [`Debounce`] using [`tokio::time::sleep`] as its timer.
 #[cfg(feature = "tokio")]
-pub type TokioDebounce<S> = Debounce<S, fn() -> tokio::time::Sleep, tokio::time::Sleep>;
+pub type TokioDebounce<S, T = <S as Stream>::Item> =
+    Debounce<S, T, TokioSleepFn, tokio::time::Sleep, DefaultFold<T, <S as Stream>::Item>>;
+
+/// Type of the default fold function, which just passes through stream updates.
+///
+/// Convenience alias.
+pub type DefaultFold<T, U = T> = fn(&mut Option<T>, U);
 
 pin_project_lite::pin_project! {
     /// A wrapper that debounces stream items.
@@ -41,12 +51,14 @@ pin_project_lite::pin_project! {
     /// windows:    |<--  w1  -->|<--  w2  -->|
     /// output:     e1          e3            e5
     /// ```
-    pub struct Debounce<S, F, Timer>
-    where
-        S: Stream,
-        S: ?Sized,
-    {
-        slot: Option<S::Item>,
+    ///
+    /// # Customizing updates (`debounce_fold`)
+    ///
+    /// It's possible to provide a custom function that defines how updates are applied to
+    /// the slot (pending-value) in order to produce different semantics than the most-
+    /// recent stream value: see [`Debounce::debounce_fold`].
+    pub struct Debounce<S, T, F, Timer, Fold> {
+        slot: Option<T>,
         stream_done: bool,
 
         #[pin]
@@ -54,12 +66,14 @@ pin_project_lite::pin_project! {
         make_timer: F,
         window: Duration,
 
+        fold: Fold,
+
         #[pin]
         stream: S,
     }
 }
 
-impl<S, F, Timer> Debounce<S, F, Timer>
+impl<S, F, Timer> Debounce<S, S::Item, F, Timer, DefaultFold<S::Item>>
 where
     S: Stream,
 {
@@ -72,12 +86,69 @@ where
             stream_done: false,
             make_timer,
             window,
+            fold: fold_passthru,
+        }
+    }
+}
+
+impl<S, T, F, Timer, Fold> Debounce<S, T, F, Timer, Fold>
+where
+    S: Stream,
+{
+    /// Modify this [`Debounce`] to use the given `fold` function, which describes how the
+    /// slot value is updated by items yielded from the underlying stream. The slot value is
+    /// the value that will be yielded whenever the current debounce period is over. If not
+    /// currently in a debounce period, setting the slot value to `Some` causes that value
+    /// to yield immediately and a debounce period to start.
+    ///
+    /// Standard behavior is achieved by setting the slot value to `Some(next_value)`.
+    ///
+    /// Setting the slot item to `None` means that when the current debounce period ends,
+    /// nothing will be yielded (if this is still the slot value). This can be used to
+    /// implement cancellation semantics.
+    ///
+    /// Calling this function wipes the current slot value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use std::time::Duration;
+    /// # use ts_future_util::DebounceExt;
+    /// # use futures_util::StreamExt;
+    ///
+    /// # let xs = tokio::runtime::Runtime::new().unwrap().block_on(async move {
+    /// let xs = futures_util::stream::iter([1u8, 2, 3, 4])
+    ///     .debounce(Duration::from_millis(100))
+    ///     .fold_debounce::<_, u8>(|slot, new| {
+    ///         *slot.get_or_insert_default() += new;
+    ///     })
+    ///     .collect::<Vec<u8>>()
+    ///     .await;
+    /// # xs
+    /// # });
+    ///
+    /// // The first value is yielded right away, then the next 3 items are
+    /// // debounced and summed (2 + 3 + 4 = 9).
+    /// assert_eq!(xs, [1, 9]);
+    /// ```
+    pub fn fold_debounce<NewFold, U>(self, fold: NewFold) -> Debounce<S, U, F, Timer, NewFold>
+    where
+        NewFold: FnMut(&mut Option<U>, S::Item),
+    {
+        Debounce {
+            fold,
+            stream: self.stream,
+            make_timer: self.make_timer,
+            slot: None,
+            window: self.window,
+            timer: self.timer,
+            stream_done: self.stream_done,
         }
     }
 }
 
 #[cfg(feature = "tokio")]
-impl<S> Debounce<S, fn(Duration) -> tokio::time::Sleep, tokio::time::Sleep>
+impl<S> Debounce<S, S::Item, TokioSleepFn, tokio::time::Sleep, DefaultFold<S::Item>>
 where
     S: Stream,
 {
@@ -87,13 +158,14 @@ where
     }
 }
 
-impl<S, F, Timer> Stream for Debounce<S, F, Timer>
+impl<S, T, F, Timer, Fold> Stream for Debounce<S, T, F, Timer, Fold>
 where
     S: Stream,
     F: FnMut(Duration) -> Timer,
     Timer: Future,
+    Fold: FnMut(&mut Option<T>, S::Item),
 {
-    type Item = S::Item;
+    type Item = T;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut slf = self.as_mut().project();
@@ -137,7 +209,7 @@ where
                             && let Poll::Ready(x) = slf.stream.as_mut().poll_next(cx)
                         {
                             if let Some(item) = x {
-                                *slf.slot = Some(item);
+                                (slf.fold)(slf.slot, item);
                             } else {
                                 *slf.stream_done = true;
                             }
@@ -166,18 +238,21 @@ where
 
             // Drain any ready items out of the stream.
             while let Some(item) = core::task::ready!(slf.stream.as_mut().poll_next(cx)) {
-                // If we don't have a timer, we're not in a debounce window right now.
-                // Start one and immediately yield the item.
-                if slf.timer.is_none() {
-                    debug_assert!(slf.slot.is_none());
+                // Immediately fold the value into the slot.
+                (slf.fold)(slf.slot, item);
+
+                // If we don't have a timer, we're not in a debounce window right now. If the fold
+                // function slotted a value, start a timer and immediately yield the value.
+                if slf.timer.is_none()
+                    && let Some(item) = slf.slot.take()
+                {
                     slf.timer.set(Some((slf.make_timer)(*slf.window)));
 
                     return Poll::Ready(Some(item));
                 }
 
-                // We're in a debounce window: just update the value in the slot and try to read
-                // more out of the stream.
-                *slf.slot = Some(item);
+                // Otherwise, either the fold fn cleared the slot or we're in a debounce window:
+                // try to read more out of the stream.
             }
 
             // Stream has just been polled to exhaustion. Fall through the loop to try to poll the
@@ -187,7 +262,11 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        S::size_hint(&self.stream)
+        // We may yield fewer items than the underlying stream's lower bound, but we will never
+        // yield more than its upper bound.
+        let (_lower, upper) = S::size_hint(&self.stream);
+
+        (0, upper)
     }
 }
 
@@ -203,7 +282,7 @@ pub trait DebounceExt: Stream + Sized {
     fn debounce(
         self,
         window: Duration,
-    ) -> Debounce<Self, fn(Duration) -> tokio::time::Sleep, tokio::time::Sleep> {
+    ) -> Debounce<Self, Self::Item, TokioSleepFn, tokio::time::Sleep, DefaultFold<Self::Item>> {
         Debounce::tokio(self, window)
     }
 
@@ -226,7 +305,16 @@ pub trait DebounceExt: Stream + Sized {
     /// The return value of the timer function is any future: when it completes, the debounce window
     /// is considered elapsed. Generally, this will just be a constructor for a timer which elapses
     /// after the passed-in [`Duration`].
-    fn debounce_with<F, Timer>(self, window: Duration, make_timer: F) -> Debounce<Self, F, Timer>
+    ///
+    /// # Customizing updates
+    ///
+    /// For customizing how values from the underlying stream are folded into the
+    /// [`Debounce`]'s pending slot, see [`Debounce::fold_debounce`].
+    fn debounce_with<F, Timer>(
+        self,
+        window: Duration,
+        make_timer: F,
+    ) -> Debounce<Self, Self::Item, F, Timer, DefaultFold<Self::Item>>
     where
         F: FnMut(Duration) -> Timer,
         Timer: Future,
@@ -236,6 +324,10 @@ pub trait DebounceExt: Stream + Sized {
 }
 
 impl<T> DebounceExt for T where T: Stream + Sized {}
+
+fn fold_passthru<T>(acc: &mut Option<T>, next: T) {
+    *acc = Some(next);
+}
 
 #[cfg(test)]
 mod test {
@@ -248,7 +340,8 @@ mod test {
     use super::*;
 
     type BoxFut = Pin<Box<dyn Future<Output = ()> + Send>>;
-    type BoxDebounce<S> = Debounce<S, Box<dyn FnMut(Duration) -> BoxFut>, BoxFut>;
+    type BoxDebounce<S, T = <S as Stream>::Item> =
+        Debounce<S, T, Box<dyn FnMut(Duration) -> BoxFut>, BoxFut, DefaultFold<T>>;
 
     #[track_caller]
     fn with_noop_cx<T>(f: impl FnOnce(&mut Context) -> T) -> T {
