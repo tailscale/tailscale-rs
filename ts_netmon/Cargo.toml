@@ -15,10 +15,10 @@ cfg-if.workspace = true
 flume.workspace = true
 futures-util.workspace = true
 ipnet.workspace = true
-pin-project-lite = "0.2"
+pin-project-lite.workspace = true
 smallvec.workspace = true
 tokio.workspace = true
-tokio-stream = "0.1"
+tokio-stream.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

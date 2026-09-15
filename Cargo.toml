@@ -74,6 +74,7 @@ crypto_box = "0.9"
 divan = "0.1"
 flume = "0.12"
 futures = { version = "0.3", default-features = false }
+futures-core = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 gethostname = "1.1"
 hashbrown = "0.17"
@@ -101,6 +102,7 @@ smoltcp = { version = "0.13", default-features = false }
 thiserror = { version = "2", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros"] }
 tokio-util = { version = "0.7", default-features = false }
+tokio-stream = { version = "0.1", default-features = false }
 tracing = { version = "0.1", default-features = false, features = ["attributes"] }
 tracing-test = "0.2"
 url = { version = "2", default-features = false }

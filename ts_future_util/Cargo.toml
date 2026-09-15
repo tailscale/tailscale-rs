@@ -11,14 +11,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-futures-core = { version = "0.3", default-features = false }
-pin-project-lite = "0.2"
+futures-core.workspace = true
+pin-project-lite.workspace = true
 
 tokio = { workspace = true, optional = true, features = ["time"] }
 
 [dev-dependencies]
-futures-util = "0.3"
-tokio-stream = "0.1"
+futures-util.workspace = true
+tokio-stream = { workspace = true, features = ["default"] }
 
 tokio.workspace = true
 
