@@ -20,7 +20,6 @@ use core::{
 pub struct BaseIndex(pub NonZeroU8);
 
 impl Debug for BaseIndex {
-    #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let (pfx, bits) = self.prefix();
         write!(f, "BaseIndex({} => {pfx}/{bits})", self.0.get())
@@ -28,7 +27,6 @@ impl Debug for BaseIndex {
 }
 
 impl Display for BaseIndex {
-    #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         Display::fmt(&self.0.get(), f)
     }
@@ -40,13 +38,11 @@ impl BaseIndex {
     /// # Panics
     ///
     /// If `val` is zero.
-    #[inline]
     pub const fn new(val: u8) -> Self {
         Self::try_new(val).expect("index value was zero")
     }
 
     /// Construct a new index value. Fails if the value is zero.
-    #[inline]
     pub const fn try_new(val: u8) -> Option<Self> {
         let Some(idx) = NonZeroU8::new(val) else {
             return None;
@@ -56,7 +52,6 @@ impl BaseIndex {
     }
 
     /// Retrieve the value of this index in its `u8` representation.
-    #[inline]
     pub const fn get(&self) -> u8 {
         self.0.get()
     }
@@ -67,7 +62,6 @@ impl BaseIndex {
     /// # Panics
     ///
     /// If `prefix_len` >= 8.
-    #[inline]
     pub const fn from_prefix(octet: u8, prefix_len: u8) -> Self {
         assert!(
             prefix_len <= 7,
@@ -79,7 +73,6 @@ impl BaseIndex {
     /// Maps octet/7 prefixes to indices in `128..255`. Optimization over
     /// [`Self::from_prefix`] which saves a little bit of math if the prefix
     /// length is known to be `/7`.
-    #[inline]
     pub const fn from_pfx_7(octet: u8) -> Self {
         let ret = Self::new(0x80 + (octet.unbounded_shr(1)));
         debug_assert!(ret.prefix().1 == 7);
@@ -101,7 +94,6 @@ impl BaseIndex {
 
     /// Compute the bit position of a prefix represented by this index at a
     /// given trie depth.
-    #[inline]
     pub const fn prefix_bits(&self, depth: usize) -> u8 {
         let pfx_len_in_stride = self.len() - 1;
         let base_bits = depth * 8;
@@ -114,7 +106,6 @@ impl BaseIndex {
     /// This base index encodes a prefix of up to 8 bits inside a single stride
     /// (octet). This function computes the numerical start and end of the value
     /// range for that prefix.
-    #[inline]
     pub const fn range(&self) -> core::ops::RangeInclusive<u8> {
         let (first, pfx_len) = self.prefix();
         let last = first | !net_mask(pfx_len);
@@ -124,14 +115,12 @@ impl BaseIndex {
 
     /// Like go's `bits.Len8`: compute the number of bits required to represent
     /// this index.
-    #[inline]
     #[allow(clippy::len_without_is_empty)]
     pub const fn len(&self) -> u8 {
         (u8::BITS - self.get().leading_zeros()) as _
     }
 
     /// Sort indexes in prefix sort order.
-    #[inline]
     pub fn cmp_rank(&self, other: &Self) -> core::cmp::Ordering {
         let (a_octet, a_bits) = self.prefix();
         let (b_octet, b_bits) = other.prefix();
@@ -140,11 +129,9 @@ impl BaseIndex {
     }
 
     /// Return a formatter for prefix notation: `addr/len`.
-    #[inline]
     pub const fn fmt_prefix(&self) -> impl Debug + use<> {
         struct PrefixFormatter(u8, u8);
         impl Debug for PrefixFormatter {
-            #[inline]
             fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
                 write!(f, "{}/{}", self.0, self.1)
             }
@@ -163,7 +150,6 @@ impl BaseIndex {
     /// let idx = BaseIndex::from_prefix(0, 4);
     /// assert_eq!(idx.parent(), Some(BaseIndex::from_prefix(0, 3)));
     /// ```
-    #[inline]
     pub const fn parent(&self) -> Option<BaseIndex> {
         let val = self.0.get();
         if val == 1 {
@@ -185,7 +171,6 @@ impl BaseIndex {
     ///     Some((BaseIndex::from_prefix(0, 1), BaseIndex::from_prefix(128, 1)))
     /// );
     /// ```
-    #[inline]
     pub const fn children(&self) -> Option<(BaseIndex, BaseIndex)> {
         let val = self.0.get();
         if val >= 128 {
@@ -197,21 +182,18 @@ impl BaseIndex {
 }
 
 impl From<BaseIndex> for u8 {
-    #[inline]
     fn from(value: BaseIndex) -> Self {
         value.get()
     }
 }
 
 impl From<BaseIndex> for NonZeroU8 {
-    #[inline]
     fn from(value: BaseIndex) -> Self {
         value.0
     }
 }
 
 impl From<NonZeroU8> for BaseIndex {
-    #[inline]
     fn from(value: NonZeroU8) -> Self {
         Self(value)
     }
@@ -220,14 +202,12 @@ impl From<NonZeroU8> for BaseIndex {
 impl TryFrom<u8> for BaseIndex {
     type Error = ();
 
-    #[inline]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Self::try_new(value).ok_or(())
     }
 }
 
 /// 8-bit left-aligned network mask for the given number of prefix bits.
-#[inline]
 pub const fn net_mask(bits: u8) -> u8 {
     assert!(bits <= 8);
 

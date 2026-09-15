@@ -104,7 +104,6 @@ pub trait PrefixOpsExt: PrefixOps {
     /// assert!(node.supersets_prefix(child1));
     /// assert!(node.supersets_prefix(child2));
     /// ```
-    #[inline]
     fn supersets_prefix(&self, idx: BaseIndex) -> bool {
         use core::borrow::Borrow;
         self.prefix_bitset().intersects(crate::lpm(idx).borrow())
@@ -114,7 +113,6 @@ pub trait PrefixOpsExt: PrefixOps {
     ///
     /// This is sugar over [`PrefixReadOps::lookup_index`] to only return the
     /// matched value.
-    #[inline]
     fn lookup(&self, idx: BaseIndex) -> Option<&Self::T> {
         let (_idx, ret) = self.lookup_index(idx)?;
         Some(ret)
@@ -132,7 +130,6 @@ pub trait PrefixOpsExt: PrefixOps {
     /// let node = DefaultNode::EMPTY.with_prefix(idx, 12);
     /// assert_eq!(node.get_prefix_exact(idx).copied(), Some(12));
     /// ```
-    #[inline]
     fn with_prefix(mut self, idx: BaseIndex, value: Self::T) -> Self
     where
         Self: Sized,

@@ -21,7 +21,6 @@ use core::fmt;
 pub struct CapabilityVersion(u16);
 
 impl Default for CapabilityVersion {
-    #[inline]
     fn default() -> Self {
         Self::CURRENT
     }

@@ -25,20 +25,17 @@ pub enum SrcIp<'a> {
 impl<'a> SrcIp<'a> {
     /// Return a [`nom::Parser`] that can parse a `SrcIp` from a string, as it would appear
     /// in the netmap.
-    #[inline]
     pub fn parser() -> impl Parser<&'a str, Output = Self, Error = nom::error::Error<&'a str>> {
         alt((IpRange::parser().map(Self::from), parse_cap))
     }
 
     /// Construct a new `SrcIp` from the given capability string.
-    #[inline]
     pub const fn from_cap(cap: &'a str) -> Self {
         Self::NodeCap(cap)
     }
 }
 
 impl Display for SrcIp<'_> {
-    #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::IpRange(r) => Display::fmt(r, f),
@@ -48,21 +45,18 @@ impl Display for SrcIp<'_> {
 }
 
 impl From<IpRange> for SrcIp<'_> {
-    #[inline]
     fn from(value: IpRange) -> Self {
         Self::IpRange(value)
     }
 }
 
 impl From<IpAddr> for SrcIp<'_> {
-    #[inline]
     fn from(value: IpAddr) -> Self {
         IpRange::from(value).into()
     }
 }
 
 impl From<IpNet> for SrcIp<'_> {
-    #[inline]
     fn from(value: IpNet) -> Self {
         IpRange::from(value).into()
     }
@@ -71,7 +65,6 @@ impl From<IpNet> for SrcIp<'_> {
 impl<'a> TryFrom<&'a str> for SrcIp<'a> {
     type Error = nom::error::Error<&'a str>;
 
-    #[inline]
     fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         let (rest, val) = Self::parser().parse_complete(s).finish()?;
         debug_assert!(rest.is_empty());
@@ -80,7 +73,6 @@ impl<'a> TryFrom<&'a str> for SrcIp<'a> {
     }
 }
 
-#[inline]
 fn parse_cap(s: &str) -> IResult<&str, SrcIp<'_>> {
     preceded(tag("cap:"), rest)
         .map(SrcIp::NodeCap)

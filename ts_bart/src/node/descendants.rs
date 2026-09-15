@@ -9,7 +9,6 @@ where
 {
     /// Get all the descendant [`Child`]ren of this node. Order is depth-first,
     /// in-order by address.
-    #[inline]
     pub fn descendants(
         &self,
         include_self: bool,
@@ -19,7 +18,6 @@ where
 
     /// Get all the descendant [`Node`]s of this node. Order is depth-first,
     /// in-order by address.
-    #[inline]
     pub fn descendant_nodes(
         &self,
         include_self: bool,
@@ -49,7 +47,6 @@ impl<'a, T, C> DescendantIter<'a, T, C>
 where
     C: Storage + ?Sized,
 {
-    #[inline]
     fn new(node: &'a Node<T, C>, include_self: bool) -> Self {
         Self {
             // The first address in the path is ignored.

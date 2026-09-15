@@ -19,17 +19,14 @@ use crate::{
 macro_rules! impl_filter_for_map {
     ($ty:ident) => {
         impl FilterStorage for $ty<String, Ruleset> {
-            #[inline]
             fn insert_dyn(&mut self, name: &str, ruleset: &mut dyn Iterator<Item = Rule>) {
                 self.insert(name.to_string(), ruleset.collect());
             }
 
-            #[inline]
             fn remove(&mut self, name: &str) {
                 self.remove(name);
             }
 
-            #[inline]
             fn clear(&mut self) {
                 self.clear();
             }
@@ -104,12 +101,10 @@ mod test {
         assert!(filters.can_access(&info, caps.into_iter()));
     }
 
-    #[inline]
     fn assert_match<'s>(filters: &dyn Filter, caps: impl IntoIterator<Item = &'s str> + Clone) {
         assert_match_src(filters, caps, SRC);
     }
 
-    #[inline]
     fn default_rule() -> Rule {
         Rule {
             src: SrcMatch {

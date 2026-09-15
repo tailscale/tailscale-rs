@@ -16,7 +16,6 @@ pub struct SimpleTable<Node> {
 
 impl<Node> SimpleTable<Node> {
     /// Get a handle to the root node.
-    #[inline]
     pub const fn root(&self) -> &Node {
         &self.root
     }
@@ -39,12 +38,10 @@ where
 {
     type Value = Node::T;
 
-    #[inline]
     fn contains(&self, ip: IpAddr) -> bool {
         iptrie::contains(&self.root, ip)
     }
 
-    #[inline]
     fn insert(&mut self, prefix: ipnet::IpNet, val: Node::T) -> Option<Node::T> {
         let ret = iptrie::insert(&mut self.root, prefix.trunc(), val);
 
@@ -55,14 +52,12 @@ where
         ret
     }
 
-    #[inline]
     fn remove(&mut self, prefix: ipnet::IpNet) -> Option<Node::T> {
         iptrie::remove(&mut self.root, prefix).inspect(|_| {
             self.size -= 1;
         })
     }
 
-    #[inline]
     fn modify_impl(
         &mut self,
         prefix: ipnet::IpNet,
@@ -100,13 +95,11 @@ where
         ret
     }
 
-    #[inline]
     fn clear(&mut self) {
         self.root = Node::default();
         self.size = 0;
     }
 
-    #[inline]
     fn lookup(&self, ip: IpAddr) -> Option<&Node::T> {
         iptrie::lookup_address(&self.root, ip)
     }
@@ -115,22 +108,18 @@ where
         iptrie::lookup_address_all(&self.root, ip)
     }
 
-    #[inline]
     fn lookup_prefix_exact(&self, prefix: ipnet::IpNet) -> Option<&Node::T> {
         iptrie::lookup_prefix_exact(&self.root, prefix)
     }
 
-    #[inline]
     fn lookup_prefix(&self, prefix: ipnet::IpNet) -> Option<&Node::T> {
         iptrie::lookup_prefix_lpm(&self.root, prefix).map(|(_, t)| t)
     }
 
-    #[inline]
     fn lookup_prefix_lpm(&self, prefix: ipnet::IpNet) -> Option<(ipnet::IpNet, &Node::T)> {
         iptrie::lookup_prefix_lpm(&self.root, prefix)
     }
 
-    #[inline]
     fn size(&self) -> usize {
         self.size
     }

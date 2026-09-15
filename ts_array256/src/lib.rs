@@ -39,7 +39,6 @@ impl<S> Default for Array256<S>
 where
     S: Default,
 {
-    #[inline]
     fn default() -> Self {
         Self {
             bitset: Bitset256::EMPTY,
@@ -170,7 +169,6 @@ where
 
     /// Get a reference to the internal [`Bitset256`] which stores the occupied
     /// storage indices.
-    #[inline]
     pub const fn bitset(&self) -> &Bitset256 {
         &self.bitset
     }
@@ -179,13 +177,11 @@ where
     ///
     /// Assumes that the bitset has _already_ been populated with the item at
     /// `idx`, may panic otherwise.
-    #[inline]
     const fn storage_index(&self, idx: u8) -> usize {
         self.bitset.rank256(idx as _) - 1
     }
 
     /// Iterate over all occupied entries in the array.
-    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (u8, &S::T)>
     where
         S: AsRef<[S::T]>,
@@ -194,7 +190,6 @@ where
     }
 
     /// Iterate over occupied entries in the array starting after index `n`.
-    #[inline]
     pub fn iter_after(&self, n: u8) -> impl Iterator<Item = (u8, &S::T)>
     where
         S: AsRef<[S::T]>,
@@ -208,7 +203,6 @@ where
     }
 
     /// Iterate over mutable references to all occupied entries in the array.
-    #[inline]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (u8, &mut S::T)>
     where
         S: AsMut<[S::T]>,
@@ -221,7 +215,6 @@ where
 
     /// Provide a [`Debug`] instance for this value when `T` is not necessarily
     /// `Debug`.
-    #[inline]
     pub fn custom_storage_fmt<'slf, 'f, U>(
         &'slf self,
         f: &'f dyn Fn(&'slf S::T) -> U,
@@ -261,7 +254,6 @@ where
     }
 
     /// Clone self with a custom function supporting clone of &T.
-    #[inline]
     pub fn clone_with(&self, f: &dyn Fn(&S::T) -> S::T) -> Self
     where
         S: FromIterator<S::T>,
@@ -280,7 +272,6 @@ where
 {
     type Output = S::T;
 
-    #[inline]
     fn index(&self, index: u8) -> &Self::Output {
         self.get(index).unwrap()
     }
@@ -299,7 +290,6 @@ impl<S> FromIterator<(u8, S::T)> for Array256<S>
 where
     S: ConstEmptyArrayStorage + AsMut<[S::T]>,
 {
-    #[inline]
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (u8, S::T)>,

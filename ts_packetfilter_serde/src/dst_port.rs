@@ -30,7 +30,6 @@ mod port_range {
         last: u16,
     }
 
-    #[inline]
     pub fn serialize<S>(t: &RangeInclusive<u16>, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -42,7 +41,6 @@ mod port_range {
         .serialize(s)
     }
 
-    #[inline]
     pub fn deserialize<'de, D>(de: D) -> Result<RangeInclusive<u16>, D::Error>
     where
         D: Deserializer<'de>,

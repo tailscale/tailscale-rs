@@ -78,7 +78,6 @@ impl State {
     /// Mix data into the handshake state.
     ///
     /// This is the MixHash() operation in the Noise spec.
-    #[inline]
     pub fn mix_hash(self, data: &[u8]) -> Self {
         self.mix_hash_gather(&[data])
     }

@@ -123,7 +123,6 @@ impl<T> PortTrie<T> {
     }
 
     /// Look up all matching rules for `port`.
-    #[inline]
     pub fn lookup(&self, port: u16) -> impl Iterator<Item = &T> {
         let mut done = false;
         self.prefix_matches(port)
@@ -194,7 +193,6 @@ impl<T> PortTrie<T> {
         .flat_map(move |child| child.lookup(port))
     }
 
-    #[inline]
     const fn port_byte(port: u16) -> u8 {
         (port >> 8) as u8
     }
@@ -213,7 +211,6 @@ impl<T> Child<T> {
             .filter_map(|bit| self.prefixes.get(bit as _))
     }
 
-    #[inline]
     const fn port_byte(port: u16) -> u8 {
         (port & 0xff) as _
     }

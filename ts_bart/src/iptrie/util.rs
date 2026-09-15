@@ -11,7 +11,6 @@ const DEPTH_MASK: usize = MAX_DEPTH - 1;
 
 /// Return whether the given prefix is a fringe address (/8) at the given
 /// depth.
-#[inline]
 pub const fn is_fringe(depth: usize, prefix: &ipnet::IpNet) -> bool {
     let (octet_count, overflow_bits) = stride_count_and_overflow(prefix);
     depth == octet_count - 1 && overflow_bits == 0

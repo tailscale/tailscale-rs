@@ -80,7 +80,6 @@ where
     C: Storage + ?Sized,
     T: Clone,
 {
-    #[inline]
     fn clone(&self) -> Self {
         Self {
             prefixes: self.prefixes.clone(),
@@ -144,7 +143,6 @@ impl<T, C> Default for Node<T, C>
 where
     C: Storage + ?Sized,
 {
-    #[inline]
     fn default() -> Self {
         Self::EMPTY
     }
@@ -161,7 +159,6 @@ where
     };
 
     /// Returns whether the node is empty.
-    #[inline]
     pub const fn is_empty(&self) -> bool {
         self.prefixes.is_empty() && self.children.is_empty()
     }

@@ -82,14 +82,12 @@ where
 {
     type T = T;
 
-    #[inline]
     fn insert(&mut self, index: usize, value: Self::T) {
         self.insert(index, value)
             .map_err(|_| ())
             .expect("heapless::Vec was too small to act as ArrayStorage");
     }
 
-    #[inline]
     fn remove(&mut self, index: usize) -> Self::T {
         self.remove(index)
     }

@@ -58,7 +58,6 @@ impl ReceivedHandshake {
     /// # Panics
     ///
     /// If `packet` is the wrong size.
-    #[inline]
     pub fn finish(self, packet: &mut [u8]) -> Session {
         let ephemeral = X25519KeyPair::random();
         self.finish_with_ephemeral(packet, ephemeral)
@@ -94,7 +93,6 @@ impl SentHandshake {
     /// # Panics
     ///
     /// If `packet` is not [`SentHandshake::INIT_SIZE`] bytes.
-    #[inline]
     pub fn new(
         my_static: X25519KeyPair,
         peer_static: x25519_dalek::PublicKey,

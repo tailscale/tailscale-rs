@@ -136,7 +136,6 @@ where
 {
     type Output = <[u8] as Index<T>>::Output;
 
-    #[inline]
     fn index(&self, index: T) -> &Self::Output {
         self.contents.index(index)
     }
@@ -673,7 +672,6 @@ where
 {
     type Output = <[u8] as Index<T>>::Output;
 
-    #[inline]
     fn index(&self, index: T) -> &Self::Output {
         self.contents.index(index)
     }
@@ -683,21 +681,18 @@ impl<T> IndexMut<T> for PacketMut
 where
     [u8]: IndexMut<T>,
 {
-    #[inline]
     fn index_mut(&mut self, index: T) -> &mut Self::Output {
         self.contents.index_mut(index)
     }
 }
 
 impl LowerHex for PacketMut {
-    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         hex_fmt(self.iter(), Case::Lower, f)
     }
 }
 
 impl UpperHex for PacketMut {
-    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         hex_fmt(self.iter(), Case::Upper, f)
     }

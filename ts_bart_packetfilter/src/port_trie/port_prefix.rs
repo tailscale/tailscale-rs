@@ -36,7 +36,6 @@ impl PortPrefix {
         }
     }
 
-    #[inline]
     const fn singleton(port: u16) -> Self {
         Self::Singleton(port)
     }
@@ -57,7 +56,6 @@ impl PortPrefix {
         }
     }
 
-    #[inline]
     pub const fn start(&self) -> u16 {
         let (addr, _len) = self.prefix_form();
         addr
@@ -80,13 +78,11 @@ impl PortPrefix {
 }
 
 impl From<PortPrefix> for RangeInclusive<u16> {
-    #[inline]
     fn from(value: PortPrefix) -> Self {
         value.start()..=value.end()
     }
 }
 
-#[inline]
 pub const fn iter_prefixes(ports: RangeInclusive<u16>) -> impl Iterator<Item = PortPrefix> {
     PortPrefixIter {
         start: *ports.start(),

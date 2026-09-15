@@ -5,7 +5,6 @@ use crate::{
 };
 
 /// Insert a route into the trie rooted at `node` with the given prefix.
-#[inline]
 pub fn insert<N>(node: &mut N, prefix: ipnet::IpNet, val: N::T) -> Option<N::T>
 where
     N: StrideOps,

@@ -61,7 +61,6 @@ pub type SimpleTable<Storage> = ts_bart::table::SimpleTable<Node<Storage>>;
 pub type Table<Storage> = ts_bart::table::SplitStackTable<Node<Storage>>;
 
 #[allow(dead_code)]
-#[inline]
 pub const fn dummy_contents() -> TableContents {
     // core::net::IpAddr::V4(core::net::Ipv4Addr::new(0, 0, 0, 0))
 }

@@ -64,7 +64,6 @@ pub fn rule_to_pf(rule: &pf_serde::FilterRule) -> Option<pf::Rule> {
 }
 
 /// Convert the given `MapResponse`-deserialized rules into [`pf`] format.
-#[inline]
 pub fn rules_to_pf<'r, 'f>(
     rules: impl IntoIterator<Item = &'f pf_serde::FilterRule<'r>>,
 ) -> impl Iterator<Item = pf::Rule>
@@ -76,7 +75,6 @@ where
 
 /// Report whether the special key indicating that the filter state should be
 /// cleared is present and has a `null` value.
-#[inline]
 pub fn should_clear_storage<K, V>(packet_filters: &BTreeMap<K, Option<V>>) -> bool
 where
     K: Borrow<str> + Ord,

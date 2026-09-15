@@ -65,7 +65,6 @@ const WHITEN_INCREMENT: u32 = !WHITEN_MASK + 1;
 /// operations, only those needed for wireguard's use of timestamps for
 /// replay protection.
 impl TAI64N {
-    #[inline]
     pub fn now() -> Self {
         Self::from(SystemTime::now())
     }
@@ -87,14 +86,12 @@ impl TAI64N {
 }
 
 impl Debug for TAI64N {
-    #[inline]
     fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
         write!(f, "TAI64N({}.{})", self.secs, self.nanos)
     }
 }
 
 impl Display for TAI64N {
-    #[inline]
     fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
         write!(f, "{}.{}", self.secs, self.nanos)
     }

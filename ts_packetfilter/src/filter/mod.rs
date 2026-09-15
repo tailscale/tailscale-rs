@@ -95,7 +95,6 @@ pub trait FilterExt: Filter {
     ///
     /// Sugar over [`Filter::match_for`] for cases where the name of the matched
     /// ruleset isn't needed.
-    #[inline]
     fn can_access<'s>(&self, info: &PacketInfo, caps: impl IntoIterator<Item = &'s str>) -> bool {
         let mut cap_iter = caps.into_iter();
         self.matches(info, &mut cap_iter)
@@ -107,7 +106,6 @@ impl<T> FilterExt for T where T: Filter + ?Sized {}
 /// Extension methods for [`FilterStorage`].
 pub trait FilterStorageExt: FilterStorage {
     /// Insert a new ruleset into packet filter storage under the given key.
-    #[inline]
     fn insert(&mut self, name: &str, ruleset: impl IntoIterator<Item = Rule>) {
         let mut it = ruleset.into_iter();
         self.insert_dyn(name, &mut it)

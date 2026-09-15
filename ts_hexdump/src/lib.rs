@@ -294,7 +294,6 @@ pub trait AsHexExt: IntoIterator + private::Sealed {
 /// hex_fmt(&[0xab, 0xcd, 0xef], Case::Lower, &mut s).unwrap();
 /// assert_eq!("abcdef", s);
 /// ```
-#[inline]
 pub fn hex_fmt<'a>(
     i: impl IntoIterator<Item = &'a u8>,
     case: Case,

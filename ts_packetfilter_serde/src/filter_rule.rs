@@ -82,14 +82,12 @@ impl<'a, 'de: 'a> serde::Deserialize<'de> for FilterRule<'a> {
 }
 
 impl<'a> From<AppRule<'a>> for FilterRule<'a> {
-    #[inline]
     fn from(value: AppRule<'a>) -> Self {
         FilterRule::Application(value)
     }
 }
 
 impl<'a> From<NetworkRule<'a>> for FilterRule<'a> {
-    #[inline]
     fn from(value: NetworkRule<'a>) -> Self {
         FilterRule::Network(value)
     }
@@ -117,7 +115,6 @@ pub struct NetworkRule<'a> {
 }
 
 impl Default for NetworkRule<'_> {
-    #[inline]
     fn default() -> Self {
         Self {
             src_ips: Default::default(),
@@ -145,7 +142,6 @@ pub struct AppRule<'a> {
 
 impl<'a> FilterRule<'a> {
     /// Get a reference to the contained [`NetworkRule`] if this is one.
-    #[inline]
     pub const fn as_network(&self) -> Option<&NetworkRule<'a>> {
         match self {
             FilterRule::Network(r) => Some(r),
@@ -154,7 +150,6 @@ impl<'a> FilterRule<'a> {
     }
 
     /// Convert this into a [`NetworkRule`] if it is one.
-    #[inline]
     pub fn into_network(self) -> Option<NetworkRule<'a>> {
         match self {
             FilterRule::Network(r) => Some(r),
@@ -163,7 +158,6 @@ impl<'a> FilterRule<'a> {
     }
 
     /// Get a reference to the contained [`AppRule`] if this is one.
-    #[inline]
     pub const fn as_app(&self) -> Option<&AppRule<'a>> {
         match self {
             FilterRule::Application(r) => Some(r),
@@ -172,7 +166,6 @@ impl<'a> FilterRule<'a> {
     }
 
     /// Convert this into an [`AppRule`] if it is one.
-    #[inline]
     pub fn into_app(self) -> Option<AppRule<'a>> {
         match self {
             FilterRule::Application(r) => Some(r),
@@ -181,13 +174,11 @@ impl<'a> FilterRule<'a> {
     }
 
     /// Report whether this is a [`NetworkRule`].
-    #[inline]
     pub const fn is_network(&self) -> bool {
         matches!(self, FilterRule::Network(_))
     }
 
     /// Report whether this is an [`AppRule`].
-    #[inline]
     pub const fn is_app(&self) -> bool {
         matches!(self, FilterRule::Application(_))
     }

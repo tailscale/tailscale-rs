@@ -68,7 +68,6 @@ pub trait StrideOps: Default + PrefixOps {
     fn direct_children(&self) -> impl Iterator<Item = (u8, Child<&Self, &Self::T>)>;
 
     /// Get the number of direct children of this node.
-    #[inline]
     fn child_count(&self) -> usize {
         self.child_bitset().count_ones()
     }
@@ -84,7 +83,6 @@ mod private {
 /// Extension methods for nodes implementing [`StrideOps`].
 pub trait StrideOpsExt: StrideOps + private::Sealed {
     /// Report whether the node has no children and prefixes.
-    #[inline]
     fn is_empty(&self) -> bool {
         self.prefix_count() == 0 && self.child_count() == 0
     }
@@ -104,14 +102,12 @@ pub trait StrideOpsExt: StrideOps + private::Sealed {
     ///         .into_child(),
     /// );
     /// ```
-    #[inline]
     fn with_child(mut self, addr: u8, child: impl Into<Child<Self, Self::T>>) -> Self {
         self.insert_child(addr, child.into());
         self
     }
 
     /// Wrap this node in a [`Child::Path`].
-    #[inline]
     fn into_child(self) -> Child<Self, Self::T> {
         Child::Path(self)
     }

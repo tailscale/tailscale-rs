@@ -113,7 +113,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If `bit` is out of the valid range for this bitset.
-    #[inline]
     pub const fn set(&mut self, bit: usize) {
         self.0[word_idx(bit)] |= subword_idx(bit);
     }
@@ -123,7 +122,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If `bit` is out of the valid range for this bitset.
-    #[inline]
     pub const fn with_bit(mut self, bit: usize) -> Self {
         self.set(bit);
         self
@@ -134,7 +132,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If any bit in `bits` is out of the valid range for this bitset.
-    #[inline]
     pub const fn with_bits(mut self, bits: &[usize]) -> Self {
         // While loop construction to support `const`: see the comment
         // at the top of the impl block for details.
@@ -152,7 +149,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If `bit` is out of the valid range for this bitset.
-    #[inline]
     pub const fn clear(&mut self, bit: usize) {
         let idx = word_idx(bit);
         self.0[idx] &= !subword_idx(bit);
@@ -163,7 +159,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If `bit` is out of the valid range for this bitset.
-    #[inline]
     pub const fn without_bit(mut self, bit: usize) -> Self {
         self.clear(bit);
         self
@@ -174,7 +169,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If any bit in `bits` is out of the valid range for this bitset.
-    #[inline]
     pub const fn without_bits(mut self, bits: &[usize]) -> Self {
         let mut i = 0;
 
@@ -191,7 +185,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// # Panics
     ///
     /// If `bit` is out of the valid range for this bitset.
-    #[inline]
     pub const fn test(&self, bit: usize) -> bool {
         (self.0[word_idx(bit)] & subword_idx(bit)) != 0
     }
@@ -298,7 +291,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     }
 
     /// Report if all bits are empty.
-    #[inline]
     pub const fn is_empty(&self) -> bool {
         let mut i = 0;
 
@@ -314,7 +306,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     }
 
     /// Report whether this bitset intersects `other`.
-    #[inline]
     pub fn intersects(&self, other: &Self) -> bool {
         self.word_iter()
             .zip(other.word_iter())
@@ -322,7 +313,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     }
 
     /// The number of set bits.
-    #[inline]
     pub const fn count_ones(&self) -> usize {
         let mut i = 0;
         let mut sum = 0;
@@ -336,13 +326,11 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     }
 
     /// Iterate over the values of the word in self in order.
-    #[inline]
     fn word_iter(&self) -> impl DoubleEndedIterator<Item = u64> + ExactSizeIterator + use<N_WORDS> {
         self.0.into_iter()
     }
 
     /// Union `other`'s bits by mutating this value in-place.
-    #[inline]
     pub const fn union_inplace(&mut self, other: &Self) {
         let mut i = 0;
         while i < N_WORDS {
@@ -352,7 +340,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     }
 
     /// Intersect `other`'s bits by mutating this value in-place.
-    #[inline]
     pub const fn intersect_inplace(&mut self, other: &Self) {
         let mut i = 0;
         while i < N_WORDS {
@@ -362,7 +349,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     }
 
     /// Invert all bits in this bitset in-place.
-    #[inline]
     pub const fn invert_inplace(&mut self) {
         let mut i = 0;
 
@@ -501,7 +487,6 @@ impl Bitset256 {
 impl<const N_WORDS: usize> core::ops::BitAnd for Bitset<N_WORDS> {
     type Output = Self;
 
-    #[inline]
     fn bitand(mut self, rhs: Self) -> Self::Output {
         self.intersect_inplace(&rhs);
         self
@@ -509,7 +494,6 @@ impl<const N_WORDS: usize> core::ops::BitAnd for Bitset<N_WORDS> {
 }
 
 impl<const N_WORDS: usize> core::ops::BitAndAssign for Bitset<N_WORDS> {
-    #[inline]
     fn bitand_assign(&mut self, rhs: Self) {
         self.intersect_inplace(&rhs);
     }
@@ -518,7 +502,6 @@ impl<const N_WORDS: usize> core::ops::BitAndAssign for Bitset<N_WORDS> {
 impl<const N_WORDS: usize> core::ops::BitOr for Bitset<N_WORDS> {
     type Output = Self;
 
-    #[inline]
     fn bitor(mut self, rhs: Self) -> Self::Output {
         self.union_inplace(&rhs);
         self
@@ -526,7 +509,6 @@ impl<const N_WORDS: usize> core::ops::BitOr for Bitset<N_WORDS> {
 }
 
 impl<const N_WORDS: usize> core::ops::BitOrAssign for Bitset<N_WORDS> {
-    #[inline]
     fn bitor_assign(&mut self, rhs: Self) {
         self.union_inplace(&rhs);
     }
@@ -535,7 +517,6 @@ impl<const N_WORDS: usize> core::ops::BitOrAssign for Bitset<N_WORDS> {
 impl<const N_WORDS: usize> core::ops::Not for Bitset<N_WORDS> {
     type Output = Self;
 
-    #[inline]
     fn not(mut self) -> Self::Output {
         self.invert_inplace();
         self
@@ -590,7 +571,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// If the shift amount cannot fit in a `usize`. This should only be possible on targets where
     /// `usize` is 16 bits, which the Rust specification allows but is extremely uncommon in
     /// practice.
-    #[inline]
     pub fn unbounded_shl(mut self, rhs: u32) -> Self {
         self.unbounded_shl_inplace(rhs);
         self
@@ -643,7 +623,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// If the shift amount cannot fit in a `usize`. This should only be possible on targets where
     /// `usize` is 16 bits, which the Rust specification allows but is extremely uncommon in
     /// practice.
-    #[inline]
     pub fn unbounded_shr(mut self, rhs: u32) -> Self {
         self.unbounded_shr_inplace(rhs);
         self
@@ -655,7 +634,6 @@ macro_rules! shift_impl {
         impl<const N_WORDS: usize> core::ops::Shl<$t> for Bitset<N_WORDS> {
             type Output = Self;
 
-            #[inline]
             fn shl(mut self, rhs: $t) -> Self::Output {
                 self <<= rhs;
                 self
@@ -663,7 +641,6 @@ macro_rules! shift_impl {
         }
 
         impl<const N_WORDS: usize> core::ops::ShlAssign<$t> for Bitset<N_WORDS> {
-            #[inline]
             fn shl_assign(&mut self, rhs: $t) {
                 // This comparison is a no-op for unsigned $t, but required for signed $t.
                 #[allow(unused_comparisons)]
@@ -684,7 +661,6 @@ macro_rules! shift_impl {
         impl<const N_WORDS: usize> core::ops::Shr<$t> for Bitset<N_WORDS> {
             type Output = Self;
 
-            #[inline]
             fn shr(mut self, rhs: $t) -> Self::Output {
                 self >>= rhs;
                 self
@@ -692,7 +668,6 @@ macro_rules! shift_impl {
         }
 
         impl<const N_WORDS: usize> core::ops::ShrAssign<$t> for Bitset<N_WORDS> {
-            #[inline]
             fn shr_assign(&mut self, rhs: $t) {
                 // This comparison is a no-op for unsigned $t, but required for signed $t.
                 #[allow(unused_comparisons)]
@@ -728,14 +703,12 @@ shift_impl!(usize);
 shift_impl!(isize);
 
 impl<const N_WORDS: usize> From<[u64; N_WORDS]> for Bitset<N_WORDS> {
-    #[inline]
     fn from(value: [u64; N_WORDS]) -> Self {
         Self(value)
     }
 }
 
 impl<const N_WORDS: usize> From<Bitset<N_WORDS>> for [u64; N_WORDS] {
-    #[inline]
     fn from(value: Bitset<N_WORDS>) -> Self {
         value.0
     }
@@ -754,18 +727,15 @@ impl<const N_WORDS: usize> FromIterator<usize> for Bitset<N_WORDS> {
 }
 
 impl<'a, const N_WORDS: usize> FromIterator<&'a usize> for Bitset<N_WORDS> {
-    #[inline]
     fn from_iter<I: IntoIterator<Item = &'a usize>>(iter: I) -> Self {
         Self::from_iter(iter.into_iter().copied())
     }
 }
 
-#[inline]
 const fn word_idx(bit: usize) -> usize {
     bit / 64
 }
 
-#[inline]
 const fn subword_idx(bit: usize) -> u64 {
     const MASK: usize = 63;
 
@@ -774,7 +744,6 @@ const fn subword_idx(bit: usize) -> u64 {
 
 /// Like go's `bits.Len64`: compute the number of bits required to represent
 /// `val`.
-#[inline]
 const fn len(val: u64) -> usize {
     (u64::BITS - val.leading_zeros()) as _
 }

@@ -49,27 +49,22 @@ pub enum BoxStorage {}
 impl Storage for InlineStorage {
     type Container<T> = T;
 
-    #[inline]
     fn new<T>(t: T) -> Self::Container<T> {
         t
     }
 
-    #[inline]
     fn into_inner<T>(container: Self::Container<T>) -> T {
         container
     }
 
-    #[inline]
     fn as_ref<T>(container: &Self::Container<T>) -> &T {
         container
     }
 
-    #[inline]
     fn as_mut<T>(container: &mut Self::Container<T>) -> &mut T {
         container
     }
 
-    #[inline]
     fn clone<T>(container: &Self::Container<T>) -> Self::Container<T>
     where
         T: Clone,
@@ -81,27 +76,22 @@ impl Storage for InlineStorage {
 impl Storage for BoxStorage {
     type Container<T> = Box<T>;
 
-    #[inline]
     fn new<T>(t: T) -> Self::Container<T> {
         Box::new(t)
     }
 
-    #[inline]
     fn into_inner<T>(container: Self::Container<T>) -> T {
         *container
     }
 
-    #[inline]
     fn as_ref<T>(container: &Self::Container<T>) -> &T {
         container.as_ref()
     }
 
-    #[inline]
     fn as_mut<T>(container: &mut Self::Container<T>) -> &mut T {
         container.as_mut()
     }
 
-    #[inline]
     fn clone<T>(container: &Self::Container<T>) -> Self::Container<T>
     where
         T: Clone,

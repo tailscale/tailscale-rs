@@ -41,7 +41,6 @@ impl IpRange {
     /// the format in which it appears in a `MapResponse`.
     ///
     /// The [`Display`] impl for this type roundtrips with the parser.
-    #[inline]
     pub fn parser<'a>()
     -> impl Parser<&'a str, Output = Self, Error = nom::error::Error<&'a str>> + 'static {
         alt((parse_wildcard, parse_range, parse_prefix))
@@ -120,14 +119,12 @@ impl Display for IpRange {
 }
 
 impl From<IpAddr> for IpRange {
-    #[inline]
     fn from(value: IpAddr) -> Self {
         Self::Prefix(value.into())
     }
 }
 
 impl From<IpNet> for IpRange {
-    #[inline]
     fn from(value: IpNet) -> Self {
         Self::Prefix(value.trunc())
     }
@@ -145,7 +142,6 @@ impl<'a> TryFrom<&'a str> for IpRange {
     }
 }
 
-#[inline]
 fn parse_wildcard(s: &str) -> IResult<&str, IpRange> {
     value(IpRange::Wildcard, char('*')).parse_complete(s)
 }
@@ -171,7 +167,6 @@ fn parse_prefix(s: &str) -> IResult<&str, IpRange> {
 }
 
 impl serde::Serialize for IpRange {
-    #[inline]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

@@ -39,7 +39,6 @@ impl Bitset256 {
     /// assert_eq!(b.rank256(119), 2);
     /// assert_eq!(b.rank256(120), 3);
     /// ```
-    #[inline]
     pub const fn rank256(&self, i: usize) -> usize {
         let mut mask = Self::rank_mask256(i);
 
@@ -52,7 +51,6 @@ impl Bitset256 {
     /// another bitset.
     ///
     /// Uses a lookup-table if the `lut` feature is enabled.
-    #[inline]
     pub(super) const fn rank_mask256(n: usize) -> Self {
         cfg_if::cfg_if! {
             if #[cfg(feature = "lut")] {
@@ -79,7 +77,6 @@ impl<const N_WORDS: usize> Bitset<N_WORDS> {
     /// assert_eq!(b.rank(119), 2);
     /// assert_eq!(b.rank(120), 3);
     /// ```
-    #[inline]
     pub const fn rank(&self, i: usize) -> usize {
         let mut mask = Self::build_rank_mask(i);
 

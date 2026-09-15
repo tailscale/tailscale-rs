@@ -19,7 +19,6 @@ use crate::base_index::BaseIndex;
 /// let index = BaseIndex::from_pfx_7(1);
 /// assert!(prefix_set.intersects(ts_bart::lpm(index).borrow()));
 /// ```
-#[inline]
 pub const fn lookup(index: BaseIndex) -> impl Borrow<Bitset256> + 'static {
     // The `impl Borrow` return allows us to return either the bitset or a
     // 'static reference to one in the table independent of the "lut" flag.

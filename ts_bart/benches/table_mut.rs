@@ -141,7 +141,6 @@ fn remove_hit(bencher: Bencher) {
         .bench_values(|table| black_box(table).remove(pfx));
 }
 
-#[inline]
 fn prune_table<T>(table: &mut dyn RoutingTable<Value = T>, keep_root: ipnet::IpNet)
 where
     T: 'static,

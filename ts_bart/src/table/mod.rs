@@ -276,7 +276,6 @@ pub trait RoutingTableExt: RoutingTable + private::Sealed {
     /// assert_eq!(None, result);
     /// assert_eq!(Some(&4), table.lookup("1.2.3.4".parse().unwrap()));
     /// ```
-    #[inline]
     fn modify(
         &mut self,
         prefix: ipnet::IpNet,

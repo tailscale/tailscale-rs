@@ -26,7 +26,6 @@ use crate::base_index::BaseIndex;
 /// let test_idx = BaseIndex::from_prefix(0, 5);
 /// assert!(prefixes.intersects(&Bitset256::EMPTY.with_bit(test_idx.get() as _)));
 /// ```
-#[inline]
 pub const fn prefix(index: BaseIndex) -> impl Borrow<Bitset256> + 'static {
     cfg_if::cfg_if! {
         if #[cfg(feature = "lut")] {
@@ -42,7 +41,6 @@ pub const fn prefix(index: BaseIndex) -> impl Borrow<Bitset256> + 'static {
 /// we're using a priori knowledge to select the meaning of [`BaseIndex`]: a
 /// "fringe" index is actually the index value plus 256 in terms of Knuth's
 /// encoding.
-#[inline]
 pub const fn fringe(index: BaseIndex) -> impl Borrow<Bitset256> + 'static {
     cfg_if::cfg_if! {
         if #[cfg(feature = "lut")] {

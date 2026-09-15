@@ -29,19 +29,16 @@ where
     Node: node::StrideOps,
 {
     /// Report the total number of IPv4 routes stored in the table.
-    #[inline]
     pub fn size4(&self) -> usize {
         self.table4.size()
     }
 
     /// Report the total number of IPv6 routes stored in the table.
-    #[inline]
     pub fn size6(&self) -> usize {
         self.table6.size()
     }
 
     /// Get a reference to the root node for the given ip stack.
-    #[inline]
     pub const fn root(&self, ipv4: bool) -> &Node {
         if ipv4 {
             self.table4.root()
@@ -50,12 +47,10 @@ where
         }
     }
 
-    #[inline]
     const fn stack_table(&self, ipv4: bool) -> &table::SimpleTable<Node> {
         if ipv4 { &self.table4 } else { &self.table6 }
     }
 
-    #[inline]
     const fn stack_table_mut(&mut self, ipv4: bool) -> &mut table::SimpleTable<Node> {
         if ipv4 {
             &mut self.table4
@@ -71,23 +66,19 @@ where
 {
     type Value = Node::T;
 
-    #[inline]
     fn contains(&self, ip: IpAddr) -> bool {
         self.stack_table(ip.is_ipv4()).contains(ip)
     }
 
-    #[inline]
     fn insert(&mut self, prefix: ipnet::IpNet, val: Node::T) -> Option<Node::T> {
         self.stack_table_mut(prefix.addr().is_ipv4())
             .insert(prefix, val)
     }
 
-    #[inline]
     fn remove(&mut self, prefix: ipnet::IpNet) -> Option<Node::T> {
         self.stack_table_mut(prefix.addr().is_ipv4()).remove(prefix)
     }
 
-    #[inline]
     fn modify_impl(
         &mut self,
         prefix: ipnet::IpNet,
@@ -97,13 +88,11 @@ where
             .modify_impl(prefix, modify)
     }
 
-    #[inline]
     fn clear(&mut self) {
         self.table4.clear();
         self.table6.clear();
     }
 
-    #[inline]
     fn lookup(&self, ip: IpAddr) -> Option<&Node::T> {
         self.stack_table(ip.is_ipv4()).lookup(ip)
     }
@@ -112,25 +101,21 @@ where
         self.stack_table(ip.is_ipv4()).lookup_all(ip)
     }
 
-    #[inline]
     fn lookup_prefix_exact(&self, prefix: ipnet::IpNet) -> Option<&Node::T> {
         self.stack_table(prefix.addr().is_ipv4())
             .lookup_prefix_exact(prefix)
     }
 
-    #[inline]
     fn lookup_prefix(&self, prefix: ipnet::IpNet) -> Option<&Node::T> {
         self.stack_table(prefix.addr().is_ipv4())
             .lookup_prefix(prefix)
     }
 
-    #[inline]
     fn lookup_prefix_lpm(&self, prefix: ipnet::IpNet) -> Option<(ipnet::IpNet, &Node::T)> {
         self.stack_table(prefix.addr().is_ipv4())
             .lookup_prefix_lpm(prefix)
     }
 
-    #[inline]
     fn size(&self) -> usize {
         self.table4.size() + self.table6.size()
     }

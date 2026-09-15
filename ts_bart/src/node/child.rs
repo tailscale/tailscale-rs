@@ -32,7 +32,6 @@ where
     Node: Debug,
     T: Debug,
 {
-    #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Path(inner) => inner.fmt(f),
@@ -47,7 +46,6 @@ where
 impl<Node, T> Child<&Node, &T> {
     /// When this holds refs, clone the values in the refs to return a
     /// child-of-owned.
-    #[inline]
     pub fn cloned(self) -> Child<Node, T>
     where
         Node: Clone,
@@ -66,7 +64,6 @@ impl<Node, T> Child<&Node, &T> {
 
 impl<Node, T> Child<Node, T> {
     /// Convert this ref-to-child into a child-of-ref.
-    #[inline]
     pub const fn as_ref(&self) -> Child<&Node, &T> {
         match self {
             Self::Path(node) => Child::Path(node),
@@ -79,7 +76,6 @@ impl<Node, T> Child<Node, T> {
     }
 
     /// Convert this ref-mut-to-child into a child-of-ref-mut.
-    #[inline]
     pub const fn as_mut(&mut self) -> Child<&mut Node, &mut T> {
         match self {
             Self::Path(node) => Child::Path(node),
@@ -92,7 +88,6 @@ impl<Node, T> Child<Node, T> {
     }
 
     /// If this is a path node, apply `f` to the contained value.
-    #[inline]
     pub fn map_node<Nu>(self, f: impl FnOnce(Node) -> Nu) -> Child<Nu, T> {
         match self {
             Self::Path(node) => Child::Path(f(node)),
@@ -103,7 +98,6 @@ impl<Node, T> Child<Node, T> {
 
     /// Get the value directly contained in this node, if it's a leaf or fringe.
     /// Return `None` iff this is a [`Path`][Child::Path].
-    #[inline]
     pub fn into_value(self) -> Option<T> {
         match self {
             Child::Leaf { value, .. } | Child::Fringe(value) => Some(value),
@@ -113,7 +107,6 @@ impl<Node, T> Child<Node, T> {
 
     /// When `Node` is a [`Storage`], this is [`as_ref`][Self::as_ref] except
     /// that it also unwraps the node container type.
-    #[inline]
     pub fn as_node_ref<C, Inner>(&self) -> Child<&Inner, &T>
     where
         C: Storage<Container<Inner> = Node> + ?Sized,
@@ -123,7 +116,6 @@ impl<Node, T> Child<Node, T> {
 
     /// When `Node` is a [`Storage`], this is [`as_mut`][Self::as_mut] except
     /// that it also unwraps the node container type.
-    #[inline]
     pub fn as_node_mut<C, Inner>(&mut self) -> Child<&mut Inner, &mut T>
     where
         C: Storage<Container<Inner> = Node> + ?Sized,
@@ -132,7 +124,6 @@ impl<Node, T> Child<Node, T> {
     }
 
     /// Return the child node if this is a [`Path`][Child::Path].
-    #[inline]
     pub fn into_node(self) -> Option<Node> {
         match self {
             Child::Path(node) => Some(node),
