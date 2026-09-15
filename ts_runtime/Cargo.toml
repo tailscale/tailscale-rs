@@ -39,7 +39,7 @@ kameo_actors = "0.6"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
-tokio-stream = { version = "0.1", default-features = false, features = ["time", "sync"] }
+tokio-stream = { workspace = true, features = ["time", "sync"] }
 tracing.workspace = true
 smallvec.workspace = true
 smol_str = "0.3"
