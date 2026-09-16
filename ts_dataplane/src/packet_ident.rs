@@ -103,7 +103,8 @@ impl PacketIdent {
     /// Checks certain invariants that must be true if this is Wireguard; does not establish
     /// conclusive proof.
     pub fn could_be_wireguard(pkt: &[u8]) -> bool {
-        if pkt.len() < 5 {
+        // The smallest valid WireGuard packet is a `packet_data` message with a zero-byte payload.
+        if pkt.len() < 16 {
             return false;
         }
 
@@ -112,7 +113,7 @@ impl PacketIdent {
             return false;
         }
 
-        [0u8; 4] == pkt[1..=4]
+        [0u8; 3] == pkt[1..=3]
     }
 }
 
