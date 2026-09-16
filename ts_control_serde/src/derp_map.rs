@@ -339,6 +339,7 @@ pub struct DerpMap<'a> {
     /// If there aren't any non-default DERP servers in [`DerpMap::regions`], this field is
     /// ignored. This field is only meaningful if [`DerpMap::regions`] is also populated, which
     /// indicates a change in the set of DERP regions/servers.
+    #[serde(rename = "omitDefaultRegions")]
     pub omit_default_regions: bool,
 }
 
