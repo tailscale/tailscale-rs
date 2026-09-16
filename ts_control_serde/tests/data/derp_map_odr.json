@@ -1,0 +1,47 @@
+{
+  "Regions": {
+    "1": {
+      "RegionID": 1,
+      "RegionCode": "nyc",
+      "RegionName": "New York City",
+      "Latitude": 40.7128,
+      "Longitude": -74.006,
+      "Nodes": [
+        {
+          "Name": "1h",
+          "RegionID": 1,
+          "HostName": "derp1h.tailscale.com",
+          "IPv4": "199.38.181.93",
+          "IPv6": "2607:f740:f::afd",
+          "CanPort80": true
+        },
+        {
+          "Name": "1g",
+          "RegionID": 1,
+          "HostName": "derp1g.tailscale.com",
+          "IPv4": "209.177.145.120",
+          "IPv6": "2607:f740:f::3eb",
+          "CanPort80": true
+        },
+        {
+          "Name": "1f",
+          "RegionID": 1,
+          "HostName": "derp1f.tailscale.com",
+          "IPv4": "199.38.181.104",
+          "IPv6": "2607:f740:f::bc",
+          "CanPort80": true
+        },
+        {
+          "Name": "1i",
+          "RegionID": 1,
+          "HostName": "derp1i.tailscale.com",
+          "IPv4": "199.38.181.103",
+          "IPv6": "2607:f740:f::e19",
+          "STUNOnly": true,
+          "CanPort80": true
+        }
+      ]
+    }
+  },
+  "omitDefaultRegions": true
+}
