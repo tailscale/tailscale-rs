@@ -243,8 +243,8 @@ pub struct Node<'a> {
 
     /// The list of DNS servers that should be used when this node is WireGuard-only and being used
     /// as an exit node.
-    #[serde(rename = "ExitNodeDNSResolvers", borrow)]
-    pub exit_node_dns_resolvers: Vec<DnsResolver<'a>>,
+    #[serde(rename = "ExitNodeDNSResolvers")]
+    pub exit_node_dns_resolvers: Vec<DnsResolver>,
 }
 
 pub mod legacy_derp_string {

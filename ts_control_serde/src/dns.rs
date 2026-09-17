@@ -1,4 +1,8 @@
-use alloc::{collections::BTreeMap, string::ToString, vec::Vec};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use serde::{Deserializer, Serializer};
@@ -8,7 +12,7 @@ use serde::{Deserializer, Serializer};
 #[serde(default, rename_all = "PascalCase")]
 pub struct Config<'a> {
     /// DNS resolvers to use, in order of preference.
-    pub resolvers: Vec<Option<Resolver<'a>>>,
+    pub resolvers: Vec<Option<Resolver>>,
 
     /// Map of DNS name suffixes to a set of resolvers to use.
     ///
@@ -20,13 +24,13 @@ pub struct Config<'a> {
     /// If the value is `None` or empty, the suffix should still be handled by Tailscale's
     /// built-in resolver `100.100.100.100`, such as for the purpose of handling
     /// `extra_records`.
-    pub routes: BTreeMap<&'a str, Option<Vec<Option<Resolver<'a>>>>>,
+    pub routes: BTreeMap<&'a str, Option<Vec<Option<Resolver>>>>,
 
     /// Like [`resolvers`][Config::resolvers], but only used if split DNS is requested
     /// in a configuration that doesn't work yet without explicit default resolvers.
     ///
     /// See: <https://github.com/tailscale/tailscale/issues/1743>
-    pub fallback_resolvers: Vec<Option<Resolver<'a>>>,
+    pub fallback_resolvers: Vec<Option<Resolver>>,
 
     /// Search domains to use.
     ///
@@ -71,10 +75,9 @@ pub struct Config<'a> {
 /// Configuration for one DNS resolver.
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 #[serde(rename_all = "PascalCase")]
-pub struct Resolver<'a> {
+pub struct Resolver {
     /// The address of the DNS resolver, as described by [`ResolverAddr`].
-    #[serde(borrow)]
-    pub addr: ResolverAddr<'a>,
+    pub addr: ResolverAddr,
 
     /// Optional suggested resolution for a DNS-over-TLS or DNS-over-HTTPS resolver, if the
     /// URL doesn't reference an IP address directly.
@@ -95,7 +98,7 @@ pub struct Resolver<'a> {
 
 /// The address of a DNS resolver.
 #[derive(Debug, Clone)]
-pub enum ResolverAddr<'a> {
+pub enum ResolverAddr {
     /// Classic plaintext DNS on the given address.
     Plaintext(SocketAddr),
 
@@ -103,18 +106,18 @@ pub enum ResolverAddr<'a> {
     ///
     /// As of 2022-09-08, only used for certain well-known resolvers, so bootstrapping isn't
     /// required.
-    Https(&'a str),
+    Https(String),
 
     /// DNS over HTTP over WireGuard.
     ///
     /// Implemented in the peer API for exit nodes and app connectors.
-    HttpWireguard(&'a str),
+    HttpWireguard(String),
 
     /// DNS over TLS.
-    Tls(&'a str),
+    Tls(String),
 }
 
-impl serde::Serialize for ResolverAddr<'_> {
+impl serde::Serialize for ResolverAddr {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -133,14 +136,14 @@ impl serde::Serialize for ResolverAddr<'_> {
     }
 }
 
-impl<'a, 'de: 'a> serde::Deserialize<'de> for ResolverAddr<'a> {
+impl<'de> serde::Deserialize<'de> for ResolverAddr {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         use serde::de::Error;
 
-        let s = <&'a str as serde::Deserialize>::deserialize(deserializer)?;
+        let s = <String as serde::Deserialize>::deserialize(deserializer)?;
 
         if s.starts_with("https://") {
             return Ok(ResolverAddr::Https(s));

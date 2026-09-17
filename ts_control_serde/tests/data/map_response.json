@@ -1178,6 +1178,9 @@
         },
         {
           "Addr": "2620:111:8007::53"
+        },
+        {
+          "Addr": "https://dns.nextdns.io/abc123?device_id=12345\u0026device_name=nextdns-test\u0026device_model=potato4\u0026device_ip=100.123.123.123"
         }
       ]
     },
