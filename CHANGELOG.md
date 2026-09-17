@@ -2,10 +2,17 @@
 
 Record breaking or significant changes here. All dates are UTC.
 
-## Unreleased - September 2026
+## Unreleased - October 2026
 
 Put changes for the upcoming release here!
 
+## [0.6.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.5.0) - 2026-09-17
+
+- **Security** (ts_tunnel): we've completed a third-party security audit of the cryptography in ts_tunnel, and this
+  release remediates all security-relevant findings. A number of low-priority findings and "things to think about" are
+  open in [GitHub Issues](https://github.com/tailscale/tailscale-rs/issues/162), but aren't security-relevant at the
+  moment; as such, we're comfortable recommending `tailscale-rs` from a security perspective. We've removed the README
+  security caveats and env var requirement (see below).
 - **Breaking** (Rust API): changed the key types of `tailscale::keys::PersistState` to new "exportable" keys. This
   should require no changes to code if you're just serializing/deserializing `PersistStates` without touching the
   contents.
@@ -17,9 +24,13 @@ Put changes for the upcoming release here!
   pair types allow code to explicitly opt into serializability.
 - Changed (Rust API, lang bindings): the `TS_RS_EXPERIMENT` environment variable is no longer required to use the
   library. The library logs a warning during initialization, as a reminder that it's still work-in-progress software.
-- Updated MSRV to 1.97.
-- Added (ts_netmon): support for macOS. This brings macOS support for direct peer-to-peer connections to parity with 
+- Changed (ts_runtime): the overlay netstack is now configured with 64KiB TCP rx/tx buffers (up from 16KiB) and a deeper
+  command channel queue, improving throughput for file downloads.
+- Added (ts_netmon): support for macOS. This brings macOS support for direct peer-to-peer connections to parity with
   Linux and Windows. [#396](https://github.com/tailscale/tailscale-rs/pull/396)
+- Fixed (ts_control_serde): `DerpMap::omit_default_regions` is now correctly deserialized from the control plane. Thanks
+  to @valkum for the report! [#416](https://github.com/tailscale/tailscale-rs/pull/416)
+- Updated MSRV to 1.97.
 
 ## [0.5.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.5.0) - 2026-08-14
 

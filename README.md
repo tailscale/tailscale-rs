@@ -22,7 +22,7 @@ Add this dependency line to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tailscale = { version = "0.5" }
+tailscale = { version = "0.6" }
 ```
 
 Examples of using the `tailscale` crate can be found in [`examples/`](examples/README.md).
@@ -68,7 +68,8 @@ and to see where the community runs with it, but please be aware of a few import
 
 - There are no compatibility guarantees at the moment. We may break dependent code in order to get things right,
   although we will try to avoid doing so gratuitously.
-- Direct connections via NAT traversal is a work in progress. Communication may fall back to DERP relaying in more cases,
+- Direct connections via NAT traversal is a work in progress. Communication may fall back to DERP relaying in more
+  cases,
   with a corresponding hit to latency and throughput.
 - Core networking functionality is implemented. Many other features are still either in progress or not implemented yet.
   See [Status](#status) for details.
@@ -87,7 +88,8 @@ The current MSRV is 1.97. The current edition is Rust 2024.
 `tailscale-rs` has a rolling MSRV (Minimum Supported Rust Version) policy to support the current and previous Rust
 compiler versions, and the latest [edition of Rust](https://doc.rust-lang.org/edition-guide/editions/index.html).
 
-We may periodically lag the MSRV behind this latest version/edition in rare cases for our dependencies to catch up and for us to perform any necessary
+We may periodically lag the MSRV behind this latest version/edition in rare cases for our dependencies to catch up and
+for us to perform any necessary
 fixes.
 
 ## Platform Support
@@ -101,7 +103,8 @@ We support the following platforms and architectures:
 ## Status
 
 `tailscale-rs` is a work-in-progress. We're still rapidly iterating, fixing bugs, and adding new features.
-We aim to keep this section up-to-date, but our [issue tracker](https://github.com/tailscale/tailscale-rs/issues) is the best way to see the latest updates.
+We aim to keep this section up-to-date, but our [issue tracker](https://github.com/tailscale/tailscale-rs/issues) is the
+best way to see the latest updates.
 
 ### Implemented
 

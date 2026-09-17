@@ -55,6 +55,9 @@ audit-as-crates-io = false
 [policy.ts_ffi]
 audit-as-crates-io = false
 
+[policy.ts_future_util]
+audit-as-crates-io = false
+
 [policy.ts_hexdump]
 audit-as-crates-io = false
 
@@ -62,6 +65,12 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy.ts_keys]
+audit-as-crates-io = false
+
+[policy.ts_kv_store]
+audit-as-crates-io = false
+
+[policy.ts_kv_store_tokio]
 audit-as-crates-io = false
 
 [policy.ts_netcheck]
@@ -814,10 +823,6 @@ criteria = "safe-to-run"
 [[exemptions.quinn-udp]]
 version = "0.5.14"
 criteria = "safe-to-run"
-
-[[exemptions.quote]]
-version = "1.0.45"
-criteria = "safe-to-deploy"
 
 [[exemptions.r-efi]]
 version = "5.3.0"
