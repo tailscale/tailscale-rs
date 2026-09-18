@@ -1,9 +1,9 @@
 # Tailscale
 
 Experimental bindings to [`tailscale-rs`](https://github.com/tailscale/tailscale-rs) in Elixir.
-Please see the warnings there: in short, this is early-days, unstable software containing unaudited
-cryptography. **Do not** build production code around this, and please understand that we may break
-the API as we iterate.
+
+This software is under active development; we may break the API as we iterate. Please see the [Caveats section of our
+README](https://github.com/tailscale/tailscale-rs#caveats) for more information.
 
 ## code sample
 
