@@ -113,6 +113,7 @@ These are features that we currently implement:
 - Basics
     - Create TCP and UDP sockets on the tailnet
     - Communicate with peers via public DERP relays
+    - Communicate with peers via direct connections in many cases
     - Communicate with the Tailscale Go client, `tsnet`, and `libtailscale`
 - Language support
     - Rust API
@@ -123,8 +124,10 @@ These are features that we currently implement:
 These are features or efforts we have in the pipeline and are actively working towards, but provide no guarantees on
 timeline or completion:
 
-- Direct connections (NAT traversal, STUN, and Disco)
+- DNS forwarding
+- Integrations with more HTTP client/server libraries
 - Peer lookups (addressing peers by hostname)
+- Port mapping
 
 ### Unsupported
 
