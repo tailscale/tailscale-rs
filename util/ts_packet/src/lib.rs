@@ -709,8 +709,6 @@ mod tests {
     use alloc::string::String;
     use core::fmt::Write;
 
-    use ts_util::fmt::{AsHexExt, HexCase};
-
     use super::*;
 
     /// Simple byte sequence for testing hexdumps, etc.
