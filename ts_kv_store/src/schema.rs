@@ -1,9 +1,6 @@
 //! Traits and macros for defining the KvStore schema.
 
-use std::{
-    any::{Any, TypeId},
-    hash::Hash,
-};
+use std::{any::Any, hash::Hash};
 
 use crate::{
     Owner,
@@ -68,30 +65,6 @@ pub trait TableDesc: Sized + 'static {
     /// Compare two references to this table's value type, returns `true` if the value type impls
     /// `PartialEq` and the values are equal. **Panics** if `Self::Value` does not impl `PartialEq`.
     fn value_eq(a: &Self::Value, b: &Self::Value) -> bool;
-}
-
-/// Similar to `TableDesc::get_table_mut`, but allows for getting two different tables at one time.
-///
-/// SAFETY: A and B must represent distinct tables.
-#[allow(clippy::type_complexity)]
-pub(crate) fn get_two_tables_mut<
-    Storage: GeneratedStorage,
-    A: TableDesc<Storage = Storage> + Any,
-    B: TableDesc<Storage = Storage> + Any,
->(
-    storage: &mut Storage,
-) -> (
-    &mut Table<A, A::IndexStorage>,
-    &mut Table<B, B::IndexStorage>,
-) {
-    debug_assert_ne!(TypeId::of::<A>(), TypeId::of::<B>());
-
-    // SAFETY: `A` and `B` are different tables, so `get_table_mut` will return pointers to
-    // different `Table` objects.
-    let storage = storage as *mut _;
-    let a = A::get_table_mut(unsafe { &mut *storage });
-    let b = B::get_table_mut(unsafe { &mut *storage });
-    (a, b)
 }
 
 /// A table where changes can generate notifications to subscribers.

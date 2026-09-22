@@ -16,7 +16,7 @@ use std::{
 
 use crate::{
     Error, IndexIterator, Owner, Result, TableIterator,
-    iter::{self, IndexIteratorMut, TableIteratorMut},
+    iter::{self, TableIteratorMut},
     schema::{self, IndexDesc, TableDesc},
     storage::Storage,
 };
@@ -204,20 +204,6 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
     Ops<TableStorage>
 {
     type IndexDesc: IndexDesc<Storage = TableStorage>;
-
-    fn len(self) -> usize {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
-        base.len(storage.txn_id())
-    }
-
-    fn is_empty(self) -> bool {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
-        base.is_empty(storage.txn_id())
-    }
 
     fn check_consistent(self) -> Result<()> {
         let storage = self.read_lock();
@@ -493,139 +479,6 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         TableIteratorMut::<'guard, Self::WriteLock, Self::TableDesc, iter::Values>::new(
             guard, owner,
         )
-    }
-}
-
-pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
-    OpsMut<TableStorage>
-{
-    type IndexDesc: IndexDesc<Storage = TableStorage>;
-
-    fn clear(self, owner: Owner)
-    where
-        IndexValue<Self::IndexDesc>: Hash + Eq,
-    {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-
-        let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
-        base.assert_owner(owner);
-        base.clear(txn_id, max_committed_id);
-    }
-
-    fn insert(self, key: BaseKey<Self::IndexDesc>, value: BaseValue<Self::IndexDesc>, owner: Owner)
-    where
-        IndexValue<Self::IndexDesc>: Hash + Eq,
-    {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-        let base = Base::<Self::IndexDesc>::get_table_mut(&mut storage.tables);
-        base.assert_owner(owner);
-
-        base.insert(key, value, txn_id, max_committed_id);
-    }
-
-    fn with_mut<Q, T>(
-        self,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<Self::IndexDesc>, &mut BaseValue<Self::IndexDesc>) -> T,
-        owner: Owner,
-    ) -> Result<T>
-    where
-        IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        BaseKey<Self::IndexDesc>: Clone,
-        IndexValue<Self::IndexDesc>: Hash + Eq,
-        BaseValue<Self::IndexDesc>: Clone + PartialEq,
-    {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-        let (base, index) = schema::get_two_tables_mut::<_, Base<Self::IndexDesc>, Self::IndexDesc>(
-            &mut storage.tables,
-        );
-        if index.is_poisoned(txn_id) {
-            return Err(Error::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::NAME,
-            ));
-        }
-        base.assert_owner(owner);
-
-        let base_key = index.get(key, txn_id).ok_or(Error::NotPresent)?;
-        base.with_mut(base_key, |v| f(base_key, v), txn_id, max_committed_id)
-            .ok_or(Error::NotPresent)
-    }
-
-    fn remove<Q>(self, key: &Q, owner: Owner)
-    where
-        IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
-        IndexValue<Self::IndexDesc>: Hash + Eq + ToOwned<Owned = BaseKey<Self::IndexDesc>>,
-    {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-
-        let (base, index) = schema::get_two_tables_mut::<_, Base<Self::IndexDesc>, Self::IndexDesc>(
-            &mut storage.tables,
-        );
-        base.assert_owner(owner);
-
-        let Some(base_key) = index.get(key, txn_id) else {
-            return;
-        };
-        base.remove(base_key, txn_id, max_committed_id);
-        index.remove(key, txn_id, max_committed_id);
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn iter_mut<'guard>(
-        self,
-        owner: Owner,
-    ) -> impl Iterator<
-        Item = (
-            &'guard IndexKey<Self::IndexDesc>,
-            &'guard BaseKey<Self::IndexDesc>,
-            &'guard mut BaseValue<Self::IndexDesc>,
-        ),
-    >
-    where
-        Self::WriteLock: 'guard,
-        Self::IndexDesc: 'guard,
-        IndexValue<Self::IndexDesc>: Hash + Eq,
-        BaseKey<Self::IndexDesc>: Clone,
-        BaseValue<Self::IndexDesc>: Clone + PartialEq,
-    {
-        let guard = self.write_lock();
-        IndexIteratorMut::<'guard, Self::WriteLock, Self::IndexDesc>::new(guard, owner)
-    }
-
-    fn values_mut<'guard>(
-        self,
-        owner: Owner,
-    ) -> impl Iterator<
-        Item = (
-            &'guard BaseKey<Self::IndexDesc>,
-            &'guard mut BaseValue<Self::IndexDesc>,
-        ),
-    >
-    where
-        Self::WriteLock: 'guard,
-        BaseValue<Self::IndexDesc>: Clone + PartialEq,
-    {
-        let guard = self.write_lock();
-        TableIteratorMut::<
-            'guard,
-            Self::WriteLock,
-            <Self::IndexDesc as IndexDesc>::BaseTable,
-            iter::KeysAndValues,
-        >::new(guard, owner)
     }
 }
 

@@ -3,7 +3,11 @@
 use std::{borrow::Borrow, hash::Hash};
 
 use crate::{
-    Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner, index::KvTableIndex, operations::{Ops, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut}, schema::{self, Notifiable}, storage::Storage,
+    Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner,
+    index::KvTableIndex,
+    operations::{Ops, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut},
+    schema::{self, Notifiable},
+    storage::Storage,
 };
 
 impl<'store, TableStorage: schema::GeneratedStorage> Ops<TableStorage>

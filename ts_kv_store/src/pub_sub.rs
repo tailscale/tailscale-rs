@@ -935,40 +935,6 @@ mod tests {
         }
     }
 
-    /// A comparable projection of a `Rows` notification.
-    #[derive(Debug, PartialEq)]
-    enum RowsKind {
-        KeyUpsert(u32, Row),
-        KeyRemove(u32),
-        TableUpsert(Vec<u32>),
-        TableRemove(Vec<u32>),
-        TableClear,
-    }
-
-    impl From<&Notification> for RowsKind {
-        fn from(n: &Notification) -> RowsKind {
-            let Notification::Rows(e) = n else {
-                panic!();
-            };
-            match e {
-                Event::KeyUpsert(k, v) => RowsKind::KeyUpsert(*k, v.clone()),
-                Event::KeyRemove(k) => RowsKind::KeyRemove(*k),
-                Event::TableUpsert(ks) => {
-                    let mut ks = ks.clone();
-                    ks.sort();
-                    RowsKind::TableUpsert(ks)
-                }
-                Event::TableRemove(ks) => {
-                    let mut ks = ks.clone();
-                    ks.sort();
-                    RowsKind::TableRemove(ks)
-                }
-                Event::TableClear => RowsKind::TableClear,
-                _ => unreachable!(),
-            }
-        }
-    }
-
     /// A comparable projection of a `Count` singleton notification.
     #[derive(Debug, PartialEq)]
     enum CountKind {
@@ -2776,25 +2742,6 @@ mod tests {
         );
     }
 
-    /// Seed `Rows` with `(key, name)` pairs (each row's `count` starts at 0) in a committed
-    /// transaction. Names must be distinct, since `name` is an index key.
-    fn seed_rows(store: &KvStore, rows: &[(u32, &str)]) {
-        let mut txn = store.begin_transaction(OWNER);
-        {
-            let mut t = txn.table::<Rows>();
-            for (k, name) in rows {
-                t.insert(
-                    *k,
-                    Row {
-                        name: (*name).to_owned(),
-                        count: 0,
-                    },
-                );
-            }
-        }
-        txn.commit().unwrap();
-    }
-
     #[test]
     fn e2e_with_mut_without_change_notifies_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
@@ -3106,74 +3053,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![ItemsKind::TableClear, ItemsKind::TableUpsert(vec![2])]
         );
-    }
-
-    #[test]
-    fn e2e_index_with_mut_without_change_notifies_nothing() {
-        let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let subscriber = store.register_subscriber(OWNER);
-        let sub = store.table::<Rows>(OWNER).subscribe(subscriber).unwrap();
-        seed_rows(&store, &[(1, "a"), (2, "b")]);
-        rec.reset();
-
-        assert_eq!(
-            store
-                .table_by::<index::Rows::name>(OWNER)
-                .with_mut("a", |k, v| (*k, v.count)),
-            Ok((1, 0))
-        );
-
-        assert!(rec.notifications_for(sub).is_empty());
-        assert_eq!(rec.total_calls(), 0);
-    }
-
-    #[test]
-    fn e2e_index_with_mut_changing_value_notifies_base_table() {
-        let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let subscriber = store.register_subscriber(OWNER);
-        let sub = store.table::<Rows>(OWNER).subscribe(subscriber).unwrap();
-        seed_rows(&store, &[(1, "a"), (2, "b")]);
-        rec.reset();
-
-        store
-            .table_by::<index::Rows::name>(OWNER)
-            .with_mut("a", |_, v| v.count += 1)
-            .unwrap();
-
-        assert_eq!(
-            rec.notifications_for(sub)
-                .iter()
-                .map(RowsKind::from)
-                .collect::<Vec<_>>(),
-            vec![RowsKind::KeyUpsert(
-                1,
-                Row {
-                    name: "a".to_owned(),
-                    count: 1,
-                }
-            )]
-        );
-    }
-
-    #[test]
-    fn e2e_index_iter_mut_without_mutation_notifies_nothing() {
-        let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let subscriber = store.register_subscriber(OWNER);
-        let sub = store.table::<Rows>(OWNER).subscribe(subscriber).unwrap();
-        seed_rows(&store, &[(1, "a"), (2, "b")]);
-        rec.reset();
-
-        // Iterating an index takes its mutable references via a different path (`Table::get_mut`)
-        // to the one `iter_mut` on a plain table uses.
-        let visited = store
-            .table_by::<index::Rows::name>(OWNER)
-            .with_iter_mut(|it| it.count());
-        assert_eq!(visited, 2);
-
-        assert!(rec.notifications_for(sub).is_empty());
-        assert_eq!(rec.total_calls(), 0);
     }
 }

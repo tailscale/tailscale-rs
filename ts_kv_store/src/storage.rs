@@ -900,29 +900,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         get_from_table::<D, Q>(&self.delete_mask, &self.data, key, txn_id)
     }
 
-    /// Get a mutable reference to a value.
-    ///
-    /// Unlike most methods, `get_mut` will not update indexes after mutation. It is the caller's
-    /// responsibility to call `rebuild_indexes_for_key` whether the value is mutated or not (because
-    /// this method does clear the index for the returned key/value).
-    pub(crate) fn get_mut<Q>(
-        &mut self,
-        key: &Q,
-        txn_id: TxnId,
-        max_committed_id: TxnId,
-    ) -> Option<&mut D::Value>
-    where
-        D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
-        D::Value: Clone + PartialEq,
-    {
-        let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
-        record_mut_ref(&mut self.modified, key, txn_id, max_committed_id);
-        self.indexes.on_remove(value, txn_id, max_committed_id);
-
-        Some(value)
-    }
-
     pub(crate) fn with_mut<Q, T>(
         &mut self,
         key: &Q,
