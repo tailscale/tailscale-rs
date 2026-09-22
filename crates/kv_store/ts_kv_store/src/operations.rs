@@ -3,22 +3,16 @@
 //! The high-level setup is that `Ops` and `OpsMut` abstract access to the underlying storage of the
 //! KvStore. That access might be via a transaction or table or index or direct. The actual functionality
 //! is implemented on subtraits of these: `SingletonOps` and `SingletonOpsMut` for operating on singleton
-//! key/values, `TabularOps` and `TabularOpsMut` for operating on tables of data, and `IndexedOps` and
-//! `IndexedOpsMut` for operating on tables via an index.
+//! key/values, `TabularOps` and `TabularOpsMut` for operating on tables of data, and `IndexedOps` for
+//! operating on tables via an index.
 
-#![allow(clippy::wrong_self_convention)]
-
-use std::{
-    borrow::Borrow,
-    hash::Hash,
-    sync::{RwLockReadGuard, RwLockWriteGuard},
-};
+use std::{borrow::Borrow, hash::Hash, sync::RwLockReadGuard};
 
 use crate::{
-    Error, IndexIterator, Owner, Result, TableIterator,
-    iter::{self, TableIteratorMut},
-    schema::{self, IndexDesc, TableDesc},
-    storage::Storage,
+    Error, Owner, Result, iter,
+    schema::{self, IndexDesc, SingletonDesc, TableDesc},
+    storage::{Storage, Table, VersionedValue},
+    transactions::TxnId,
 };
 
 pub(crate) trait Ops<TableStorage: schema::GeneratedStorage>: Sized {
@@ -27,68 +21,98 @@ pub(crate) trait Ops<TableStorage: schema::GeneratedStorage>: Sized {
     fn read_lock(self) -> Self::ReadLock;
 }
 
-pub(crate) trait StorageGuardMut<TableStorage: schema::GeneratedStorage> {
-    fn storage(&mut self) -> &mut Storage<TableStorage>;
-}
-
+/// Read access to the store's data for an operation.
+///
+/// Operations only access the table or singleton they operate on (and, for an index, its base
+/// table), never the whole store.
 pub(crate) trait StorageGuard<TableStorage: schema::GeneratedStorage> {
-    fn storage(&self) -> &Storage<TableStorage>;
+    /// The id of the current transaction.
+    fn txn_id(&self) -> TxnId;
+
+    /// The table accessor for `D`.
+    fn table<D: TableDesc<Storage = TableStorage>>(&self) -> &Table<D, D::IndexStorage>;
+
+    /// The value of the singleton described by `S`.
+    fn singleton<S: SingletonDesc<Storage = TableStorage>>(
+        &self,
+    ) -> &VersionedValue<Option<S::Value>>;
 }
 
-impl<'store, TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
-    for RwLockReadGuard<'store, Storage<TableStorage>>
-{
-    fn storage(&self) -> &Storage<TableStorage> {
-        self
+/// Write access to the store's data for an operation.
+pub(crate) trait StorageGuardMut<TableStorage: schema::GeneratedStorage> {
+    /// The id of the current transaction.
+    fn txn_id(&self) -> TxnId;
+
+    /// The table accessor for `D`.
+    fn table_mut<D: TableDesc<Storage = TableStorage>>(&mut self)
+    -> &mut Table<D, D::IndexStorage>;
+
+    /// The value of the singleton described by `S`.
+    fn singleton_mut<S: SingletonDesc<Storage = TableStorage>>(
+        &mut self,
+    ) -> &mut VersionedValue<Option<S::Value>>;
+}
+
+impl<TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage> for Storage<TableStorage> {
+    fn txn_id(&self) -> TxnId {
+        Storage::txn_id(self)
+    }
+
+    fn table<D: TableDesc<Storage = TableStorage>>(&self) -> &Table<D, D::IndexStorage> {
+        D::get_table(&self.tables)
+    }
+
+    fn singleton<S: SingletonDesc<Storage = TableStorage>>(
+        &self,
+    ) -> &VersionedValue<Option<S::Value>> {
+        S::get_ref(&self.tables)
     }
 }
 
-impl<'store, TableStorage: schema::GeneratedStorage> StorageGuardMut<TableStorage>
-    for RwLockWriteGuard<'store, Storage<TableStorage>>
+impl<TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
+    for RwLockReadGuard<'_, Storage<TableStorage>>
 {
-    fn storage(&mut self) -> &mut Storage<TableStorage> {
-        self
+    fn txn_id(&self) -> TxnId {
+        (**self).txn_id()
+    }
+
+    fn table<D: TableDesc<Storage = TableStorage>>(&self) -> &Table<D, D::IndexStorage> {
+        (**self).table::<D>()
+    }
+
+    fn singleton<S: SingletonDesc<Storage = TableStorage>>(
+        &self,
+    ) -> &VersionedValue<Option<S::Value>> {
+        (**self).singleton::<S>()
     }
 }
 
-impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
-    for &'a RwLockReadGuard<'inner, Storage<TableStorage>>
+impl<TableStorage: schema::GeneratedStorage, G: StorageGuard<TableStorage> + ?Sized>
+    StorageGuard<TableStorage> for &G
 {
-    fn storage(&self) -> &Storage<TableStorage> {
-        self
+    fn txn_id(&self) -> TxnId {
+        (**self).txn_id()
     }
-}
 
-impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage>
-    for &'a RwLockWriteGuard<'inner, Storage<TableStorage>>
-{
-    fn storage(&self) -> &Storage<TableStorage> {
-        self
+    fn table<D: TableDesc<Storage = TableStorage>>(&self) -> &Table<D, D::IndexStorage> {
+        (**self).table::<D>()
     }
-}
 
-impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuardMut<TableStorage>
-    for &'a mut RwLockWriteGuard<'inner, Storage<TableStorage>>
-{
-    fn storage(&mut self) -> &mut Storage<TableStorage> {
-        self
+    fn singleton<S: SingletonDesc<Storage = TableStorage>>(
+        &self,
+    ) -> &VersionedValue<Option<S::Value>> {
+        (**self).singleton::<S>()
     }
 }
 
 pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
     Ops<TableStorage>
 {
-    fn get<D: schema::SingletonDesc<Storage = TableStorage>>(
-        self,
-        _owner: Owner,
-    ) -> Option<D::Value>
+    fn get<D: schema::SingletonDesc<Storage = TableStorage>>(self, owner: Owner) -> Option<D::Value>
     where
         D::Value: Clone,
     {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        storage.get_singleton_value::<D>(txn_id).cloned()
+        self.with::<D, _>(D::Value::clone, owner)
     }
 
     fn with<D: schema::SingletonDesc<Storage = TableStorage>, T>(
@@ -96,10 +120,8 @@ pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
         f: impl FnOnce(&D::Value) -> T,
         _owner: Owner,
     ) -> Option<T> {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let value = storage.get_singleton_value::<D>(txn_id)?;
+        let guard = self.read_lock();
+        let value = guard.singleton::<D>().get(guard.txn_id())?.as_ref()?;
         Some(f(value))
     }
 }
@@ -110,29 +132,23 @@ pub(crate) trait TabularOps<TableStorage: schema::GeneratedStorage>:
     type TableDesc: TableDesc<Storage = TableStorage>;
 
     fn len(self) -> usize {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let table = Self::TableDesc::get_table(&storage.tables);
-        table.len(storage.txn_id())
+        let guard = self.read_lock();
+        guard.table::<Self::TableDesc>().len(guard.txn_id())
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn is_empty(self) -> bool {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let table = Self::TableDesc::get_table(&storage.tables);
-        table.is_empty(storage.txn_id())
+        let guard = self.read_lock();
+        guard.table::<Self::TableDesc>().is_empty(guard.txn_id())
     }
 
-    fn get<Q>(self, key: &Q, _owner: Owner) -> Option<<Self::TableDesc as TableDesc>::Value>
+    fn get<Q>(self, key: &Q, owner: Owner) -> Option<<Self::TableDesc as TableDesc>::Value>
     where
         <Self::TableDesc as TableDesc>::Value: Clone,
         <Self::TableDesc as TableDesc>::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let table = Self::TableDesc::get_table(&storage.tables);
-        table.get(key, storage.txn_id()).cloned()
+        self.with(key, Clone::clone, owner)
     }
 
     fn with<Q, T>(
@@ -145,52 +161,40 @@ pub(crate) trait TabularOps<TableStorage: schema::GeneratedStorage>:
         <Self::TableDesc as TableDesc>::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let table = Self::TableDesc::get_table(&storage.tables);
-        let value = table.get(key, storage.txn_id())?;
+        let guard = self.read_lock();
+        let value = guard.table::<Self::TableDesc>().get(key, guard.txn_id())?;
         Some(f(value))
     }
 
-    fn iter<'guard>(
+    fn with_iter<T>(
         self,
-        _owner: Owner,
-    ) -> impl Iterator<
-        Item = (
-            &'guard <Self::TableDesc as TableDesc>::Key,
-            &'guard <Self::TableDesc as TableDesc>::Value,
-        ),
-    >
-    where
-        Self::ReadLock: 'guard,
-        Self::TableDesc: 'guard,
-    {
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<
+                Item = (
+                    &'a <Self::TableDesc as TableDesc>::Key,
+                    &'a <Self::TableDesc as TableDesc>::Value,
+                ),
+            >,
+        ) -> T,
+    ) -> T {
         let guard = self.read_lock();
-        TableIterator::<'guard, Self::ReadLock, Self::TableDesc, iter::KeysAndValues>::new(guard)
+        f(&mut iter::table_iter::<Self::TableDesc>(&guard))
     }
 
-    fn keys<'guard>(
+    fn with_keys<T>(
         self,
-        _owner: Owner,
-    ) -> impl Iterator<Item = &'guard <Self::TableDesc as TableDesc>::Key>
-    where
-        Self::ReadLock: 'guard,
-        Self::TableDesc: 'guard,
-    {
+        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a <Self::TableDesc as TableDesc>::Key>) -> T,
+    ) -> T {
         let guard = self.read_lock();
-        TableIterator::<'guard, Self::ReadLock, Self::TableDesc, iter::Keys>::new(guard)
+        f(&mut iter::table_iter::<Self::TableDesc>(&guard).map(|(k, _)| k))
     }
 
-    fn values<'guard>(
+    fn with_values<T>(
         self,
-        _owner: Owner,
-    ) -> impl Iterator<Item = &'guard <Self::TableDesc as TableDesc>::Value>
-    where
-        Self::ReadLock: 'guard,
-        Self::TableDesc: 'guard,
-    {
+        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a <Self::TableDesc as TableDesc>::Value>) -> T,
+    ) -> T {
         let guard = self.read_lock();
-        TableIterator::<'guard, Self::ReadLock, Self::TableDesc, iter::Values>::new(guard)
+        f(&mut iter::table_iter::<Self::TableDesc>(&guard).map(|(_, v)| v))
     }
 }
 
@@ -206,24 +210,14 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
     type IndexDesc: IndexDesc<Storage = TableStorage>;
 
     fn check_consistent(self) -> Result<()> {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let index = <Self::IndexDesc as TableDesc>::get_table(&storage.tables);
-
-        if index.is_poisoned(storage.txn_id()) {
-            Err(crate::Error::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::NAME,
-            ))
-        } else {
-            Ok(())
-        }
+        check_consistent::<Self::IndexDesc>(&self.read_lock())
     }
 
     #[allow(clippy::type_complexity)]
     fn get<Q>(
         self,
         key: &Q,
-        _owner: Owner,
+        owner: Owner,
     ) -> Result<(BaseKey<Self::IndexDesc>, BaseValue<Self::IndexDesc>)>
     where
         BaseKey<Self::IndexDesc>: Clone,
@@ -232,21 +226,7 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         IndexValue<Self::IndexDesc>: Hash + Eq,
         Q: ?Sized + Hash + Eq,
     {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
-        let index = <Self::IndexDesc as TableDesc>::get_table(&storage.tables);
-        if index.is_poisoned(storage.txn_id()) {
-            return Err(Error::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::NAME,
-            ));
-        }
-        let base_key = index.get(key, storage.txn_id()).ok_or(Error::NotPresent)?;
-        let value = base
-            .get(base_key, storage.txn_id())
-            .cloned()
-            .ok_or(Error::NotPresent)?;
-        Ok((base_key.clone(), value))
+        self.with(key, |k, v| (k.clone(), v.clone()), owner)
     }
 
     fn with<Q, T>(
@@ -260,72 +240,73 @@ pub(crate) trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         IndexValue<Self::IndexDesc>: Hash + Eq,
         Q: ?Sized + Hash + Eq,
     {
-        let storage = self.read_lock();
-        let storage = storage.storage();
-        let base = Base::<Self::IndexDesc>::get_table(&storage.tables);
-        let index = <Self::IndexDesc>::get_table(&storage.tables);
-        if index.is_poisoned(storage.txn_id()) {
-            return Err(Error::NonUniqueIndexKey(
-                <Self::IndexDesc as TableDesc>::NAME,
-            ));
-        }
-        let base_key = index.get(key, storage.txn_id()).ok_or(Error::NotPresent)?;
-        let value = base
-            .get(base_key, storage.txn_id())
+        let guard = self.read_lock();
+        check_consistent::<Self::IndexDesc>(&guard)?;
+        let txn_id = guard.txn_id();
+        let base_key = guard
+            .table::<Self::IndexDesc>()
+            .get(key, txn_id)
+            .ok_or(Error::NotPresent)?;
+        let value = guard
+            .table::<Base<Self::IndexDesc>>()
+            .get(base_key, txn_id)
             .ok_or(Error::NotPresent)?;
 
         Ok(f(base_key, value))
     }
 
     #[allow(clippy::type_complexity)]
-    fn iter<'guard>(
+    fn with_iter<T>(
         self,
-        _owner: Owner,
-    ) -> impl Iterator<
-        Item = (
-            &'guard IndexKey<Self::IndexDesc>,
-            &'guard BaseKey<Self::IndexDesc>,
-            &'guard BaseValue<Self::IndexDesc>,
-        ),
-    >
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<
+                Item = (
+                    &'a IndexKey<Self::IndexDesc>,
+                    &'a BaseKey<Self::IndexDesc>,
+                    &'a BaseValue<Self::IndexDesc>,
+                ),
+            >,
+        ) -> T,
+    ) -> T
     where
-        Self::ReadLock: 'guard,
-        Self::IndexDesc: 'guard,
         IndexValue<Self::IndexDesc>: Hash + Eq,
     {
         let guard = self.read_lock();
-        IndexIterator::<'guard, <Self as Ops<_>>::ReadLock, Self::IndexDesc, iter::KeysAndValues>::new(
-            guard,
-        )
+        f(&mut iter::index_iter::<Self::IndexDesc>(&guard))
     }
 
-    fn keys<'guard>(self, _owner: Owner) -> impl Iterator<Item = &'guard IndexKey<Self::IndexDesc>>
-    where
-        Self::ReadLock: 'guard,
-        Self::IndexDesc: 'guard,
-    {
-        let guard = self.read_lock();
-        IndexIterator::<'guard, <Self as Ops<_>>::ReadLock, Self::IndexDesc, iter::Keys>::new(guard)
-    }
-
-    fn values<'guard>(
+    fn with_keys<T>(
         self,
-        _owner: Owner,
-    ) -> impl Iterator<
-        Item = (
-            &'guard BaseKey<Self::IndexDesc>,
-            &'guard BaseValue<Self::IndexDesc>,
-        ),
-    >
+        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<Self::IndexDesc>>) -> T,
+    ) -> T
     where
-        Self::ReadLock: 'guard,
-        Self::IndexDesc: 'guard,
         IndexValue<Self::IndexDesc>: Hash + Eq,
     {
         let guard = self.read_lock();
-        IndexIterator::<'guard, <Self as Ops<_>>::ReadLock, Self::IndexDesc, iter::Values>::new(
-            guard,
-        )
+        f(&mut iter::index_iter::<Self::IndexDesc>(&guard).map(|(k, ..)| k))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn with_values<T>(
+        self,
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<Item = (&'a BaseKey<Self::IndexDesc>, &'a BaseValue<Self::IndexDesc>)>,
+        ) -> T,
+    ) -> T
+    where
+        IndexValue<Self::IndexDesc>: Hash + Eq,
+    {
+        let guard = self.read_lock();
+        f(&mut iter::index_iter::<Self::IndexDesc>(&guard).map(|(_, bk, v)| (bk, v)))
+    }
+}
+
+/// Returns an error if the index `D` is poisoned (i.e., has non-unique keys).
+fn check_consistent<D: IndexDesc>(guard: &impl StorageGuard<D::Storage>) -> Result<()> {
+    if guard.table::<D>().is_poisoned(guard.txn_id()) {
+        Err(Error::NonUniqueIndexKey(D::NAME))
+    } else {
+        Ok(())
     }
 }
 
@@ -343,21 +324,19 @@ pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
         value: D::Value,
         owner: Owner,
     ) {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        assert_owner::<D>(owner);
+        let mut guard = self.write_lock();
+        assert_owner(D::OWNER, owner);
 
-        let txn_id = storage.txn_id();
-        storage.insert_singleton::<D>(value, txn_id);
+        let txn_id = guard.txn_id();
+        guard.singleton_mut::<D>().set(Some(value), txn_id);
     }
 
     fn remove<D: schema::SingletonDesc<Storage = TableStorage>>(self, owner: Owner) {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        assert_owner::<D>(owner);
+        let mut guard = self.write_lock();
+        assert_owner(D::OWNER, owner);
 
-        let txn_id = storage.txn_id();
-        storage.remove_singleton::<D>(txn_id);
+        let txn_id = guard.txn_id();
+        guard.singleton_mut::<D>().set(None, txn_id);
     }
 
     fn with_mut<D: schema::SingletonDesc<Storage = TableStorage>, T>(
@@ -368,12 +347,11 @@ pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
     where
         D::Value: Clone + PartialEq,
     {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        assert_owner::<D>(owner);
+        let mut guard = self.write_lock();
+        assert_owner(D::OWNER, owner);
 
-        let txn_id = storage.txn_id();
-        storage.with_mut_singleton::<D, T>(txn_id, f)
+        let txn_id = guard.txn_id();
+        guard.singleton_mut::<D>().with_mut_value(txn_id, f)
     }
 }
 
@@ -383,14 +361,12 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
     type TableDesc: TableDesc<Storage = TableStorage>;
 
     fn clear(self, owner: Owner) {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
+        let mut guard = self.write_lock();
+        let txn_id = guard.txn_id();
 
-        let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_owner(owner);
-        table.clear(txn_id, max_committed_id);
+        let table = guard.table_mut::<Self::TableDesc>();
+        assert_owner(Self::TableDesc::OWNER, owner);
+        table.clear(txn_id);
     }
 
     fn insert(
@@ -401,14 +377,12 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
     ) where
         <Self::TableDesc as TableDesc>::Key: Clone,
     {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-        let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_owner(owner);
+        let mut guard = self.write_lock();
+        let txn_id = guard.txn_id();
+        let table = guard.table_mut::<Self::TableDesc>();
+        assert_owner(Self::TableDesc::OWNER, owner);
 
-        table.insert(key, value, txn_id, max_committed_id);
+        table.insert(key, value, txn_id);
     }
 
     fn with_mut<Q, T>(
@@ -422,14 +396,12 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         Q: ?Sized + Hash + Eq + ToOwned<Owned = <Self::TableDesc as TableDesc>::Key>,
         <Self::TableDesc as TableDesc>::Value: Clone + PartialEq,
     {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-        let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_owner(owner);
+        let mut guard = self.write_lock();
+        let txn_id = guard.txn_id();
+        let table = guard.table_mut::<Self::TableDesc>();
+        assert_owner(Self::TableDesc::OWNER, owner);
 
-        table.with_mut(key, f, txn_id, max_committed_id)
+        table.with_mut(key, f, txn_id)
     }
 
     fn remove<Q>(self, key: &Q, owner: Owner)
@@ -437,59 +409,51 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         <Self::TableDesc as TableDesc>::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = <Self::TableDesc as TableDesc>::Key>,
     {
-        let mut storage = self.write_lock();
-        let storage = storage.storage();
-        let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
-        let table = Self::TableDesc::get_table_mut(&mut storage.tables);
-        table.assert_owner(owner);
-        table.remove(key, txn_id, max_committed_id);
+        let mut guard = self.write_lock();
+        let txn_id = guard.txn_id();
+        let table = guard.table_mut::<Self::TableDesc>();
+        assert_owner(Self::TableDesc::OWNER, owner);
+        table.remove(key, txn_id);
     }
 
-    fn iter_mut<'guard>(
+    fn with_iter_mut<T>(
         self,
         owner: Owner,
-    ) -> impl Iterator<
-        Item = (
-            &'guard <Self::TableDesc as TableDesc>::Key,
-            &'guard mut <Self::TableDesc as TableDesc>::Value,
-        ),
-    >
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<
+                Item = (
+                    &'a <Self::TableDesc as TableDesc>::Key,
+                    &'a mut <Self::TableDesc as TableDesc>::Value,
+                ),
+            >,
+        ) -> T,
+    ) -> T
     where
-        Self::WriteLock: 'guard,
-        Self::TableDesc: 'guard,
-        <<Self as TabularOpsMut<TableStorage>>::TableDesc as TableDesc>::Value: Clone + PartialEq,
+        <Self::TableDesc as TableDesc>::Value: Clone + PartialEq,
     {
-        let guard = self.write_lock();
-        TableIteratorMut::<'guard, Self::WriteLock, Self::TableDesc, iter::KeysAndValues>::new(
-            guard, owner,
-        )
+        let mut guard = self.write_lock();
+        iter::with_table_iter_mut::<Self::TableDesc, T>(&mut guard, owner, f)
     }
 
-    fn values_mut<'guard>(
+    fn with_values_mut<T>(
         self,
         owner: Owner,
-    ) -> impl Iterator<Item = &'guard mut <Self::TableDesc as TableDesc>::Value>
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<Item = &'a mut <Self::TableDesc as TableDesc>::Value>,
+        ) -> T,
+    ) -> T
     where
-        Self::WriteLock: 'guard,
-        Self::TableDesc: 'guard,
-        <<Self as TabularOpsMut<TableStorage>>::TableDesc as TableDesc>::Value: Clone + PartialEq,
+        <Self::TableDesc as TableDesc>::Value: Clone + PartialEq,
     {
-        let guard = self.write_lock();
-        TableIteratorMut::<'guard, Self::WriteLock, Self::TableDesc, iter::Values>::new(
-            guard, owner,
-        )
+        self.with_iter_mut(owner, |iter| f(&mut iter.map(|(_, v)| v)))
     }
 }
 
-#[allow(unused_variables)]
+/// Assert that `found` is the `expected` owner of some data (only in debug builds).
 #[track_caller]
-fn assert_owner<D: schema::SingletonDesc>(owner: Owner) {
-    #[cfg(debug_assertions)]
-    assert_eq!(
-        D::OWNER,
-        owner,
-        "Ownership violation: expected {}, found {owner}",
-        D::OWNER,
+pub(crate) fn assert_owner(expected: Owner, found: Owner) {
+    debug_assert_eq!(
+        expected, found,
+        "Ownership violation: expected {expected}, found {found}"
     );
 }

@@ -1,6 +1,6 @@
 //! # ts-kvstore
 //!
-//! An in-memory, async, concurrent, ACID, and strongly-typed KV store for the Rust Tailscale client.
+//! An in-memory, concurrent, ACID, and strongly-typed KV store for the Rust Tailscale client.
 //!
 //! # Example:
 //!
@@ -8,27 +8,30 @@
 //! # use ts_kv_store::{Owner, store};
 //! # const OWNER: Owner = "owner";
 //! store!(
-//!     kvs: { foo(u64; OWNER) }
+//!     kvs: { Foo(u64; OWNER) }
 //!     tables: { Nodes(u32 => String; OWNER) }
 //! );
 //!
 //! pub fn main() {
 //!     let store = KvStore::new();
 //!
-//!     store.insert::<foo>(OWNER, 42);
+//!     // Each singleton and table in the schema is a field of the store, and every operation on
+//!     // one takes the owner of the data it touches.
+//!     store.Foo.insert(OWNER, 42);
 //!
-//!     let nodes = store.table::<Nodes>(OWNER);
-//!     nodes.insert(4, "a".to_owned());
-//!     nodes.insert(0, "b".to_owned());
-//!     nodes.insert(10, "c".to_owned());
-//!     nodes.insert(400, "d".to_owned());
+//!     // A `with_owner` view of the store supplies that owner once, rather than on every call.
+//!     let owned = store.with_owner(OWNER);
+//!     owned.Nodes.insert(4, "a".to_owned());
+//!     owned.Nodes.insert(0, "b".to_owned());
+//!     owned.Nodes.insert(10, "c".to_owned());
+//!     owned.Nodes.insert(400, "d".to_owned());
 //!
-//!     assert_eq!(nodes.len(), 4);
+//!     assert_eq!(owned.Nodes.len(), 4);
 //!
 //!     println!(
 //!         "singleton: {}, row 4: {}",
-//!         store.get::<foo>(OWNER).unwrap(),
-//!         nodes.get(&4).unwrap(),
+//!         owned.Foo.get().unwrap(),
+//!         owned.Nodes.get(&4).unwrap(),
 //!     );
 //! }
 //! ```
@@ -37,13 +40,11 @@
 //!
 //! There are two broad kinds of data which can be stored in a KV store: singleton data and tabular
 //! data. The former are simple key/value pairs, the latter are tables of data where a key identifies
-//! a row in the table. Due to implementation details there are some differences in the APIs for each
-//! kind of data, but they have roughly the same operations available.
+//! a row in the table. They have roughly the same operations available.
 //!
 //! The store is strongly typed. Both singletons and tables must be statically declared and both keys
-//! and values have types from these declarations. Macros for these declarations are in the [`schema`]
-//! module. They expand into an empty type for each singleton or table, and trait impls for these
-//! types. The types are then used as type parameters for all operations.
+//! and values have types from these declarations. A store is declared using the `store` macro in the [`schema`]
+//! module. `store!` expands a store object and objects for each singleton and table.
 //!
 //! Each singleton KV pair has its own types. A table has a single key type and single value type
 //! for all rows in the table.
@@ -51,33 +52,35 @@
 //! The data store has raw and transactional APIs. The raw API guarantees that each operation is
 //! atomic, but has no guarantees across multiple operatons. The transactional API groups operations
 //! into transactions which are atomic and serializable. Both singleton and tabular data can be part
-//! of a transaction. The `Table` types used for accessing tabular data do not add any transactional
-//! elements. That is, operations on a `Table` created from the main store are not part of a transaction,
-//! and operations on a `Table` created from a transaction are only part of that transaction.
+//! of a transaction.
 //!
 //! Transactions may be read/write or read-only. Transactions can be committed or rolled-back, if a
 //! transaction is dropped without being committed, then it is rolled-back. The system should handle
 //! a panic or early return at any stage of a transaction (they are always atomic and leave the store
-//! internally consistent; i.e., transactions are ACID).
+//! internally consistent; i.e., transactions are ACID). If a panic unwinds out of an operation on a
+//! transaction (e.g., from a closure passed to `with_mut`) and is caught, then the operation may
+//! have been left partially done, so committing the transaction will fail (with
+//! [`Error::TransactionFailed`]) and roll it back.
 //!
-//! All data is owned. An owner is a simple token, its up to the user of the library to decide how
+//! All data is owned. An owner is a simple token, it's up to the user of the library to decide how
 //! to use these tokens and what rules to follow. Every KV pair has a single owner and can only be
 //! mutated by that owner. A table has a single owner for all rows. Reading data is not protected by
 //! ownership. Ownership for writes are currently only enforced in debug builds.
 //!
 //! An index is a table in the store that is derived from its base table and provides direct access
 //! to elements in the base table. Indexes are maintained by the store and are atomically updated
-//! when the base table is modified.
+//! when the base table is modified. Indexes only give immutable access to data (this is not a
+//! requirement for the properties of the store and could be extended in the future).
 //!
 //! For example, consider a table `Base` which maps `u64` keys to `Foo` values where `Foo` has a
 //! field `bar: Url` (and `bar` is a unique identifier for a `Foo` in `Base`). The schema would look
-//! like `tables!(Base(u64 => Foo; OWNER; index(bar: Url)));` which will create a `Base` table and an
-//! `index::Base::bar` table. By using `store.table_by::<index::Base::bar>(...)` the `Base` table
-//! can be accessed as if it were a table mapping `Url`s to `Foo`s. The index is maintained whenever
+//! like `store!(tables: { Base(u64 => Foo; OWNER; index(bar: Url)) });` which will create a `Base`
+//! table and an `index::Base::bar` table. By using `store.Base.indexes().bar` the `Base` table can
+//! be accessed somewhat like a table mapping `Url`s to `Foo`s. The index is maintained whenever
 //! `Base` is modified (directly or via any index) by using the `bar` field of the values in `Base`.
 //!
-//! The index table can be accessed directly like a normal table (`Url`), but I don't recommend it.
-//! The key type is `Url` and the value type is `u64`.
+//! The index table is itself stored as a table (inside the base tables `indexes` field) with key
+//! type `Url` and value type `u64`.
 //!
 //! Index fields must uniquely identify a row in the base table. If multiple rows in the base table
 //! have the same key in the index, then either a panic is triggered, or accessing or committing a
@@ -85,9 +88,9 @@
 //!
 //! # Async access
 //!
-//! ts-kvstore has a synchronous API and no async functions. It is safe to use it in an async context, as
-//! long as **a transaction or iterator is never live across an `await` point** (which can lead to degraded
-//! performance or deadlock). Transactions are `!Send` and `!Sync` to help prevent this.
+//! ts-kvstore has a synchronous API and no async functions. It is safe to use it in an async context,
+//! as long as **a transaction or iterator is never live across an `await` point** (which can lead to
+//! degraded performance or deadlock). Transactions are `!Send` and `!Sync` to help prevent this.
 //!
 //! A global lock is used internally and is held for the duration of a transaction. This is a `std`
 //! `RwLock` and so waiting for it will block the waiting thread (not just the async task). This is
@@ -100,11 +103,11 @@
 //! but there is no explicit publication). This crate provides a foundation for subscriptions and
 //! notifications, but not the mechanism for notification (e.g., async broadcast). Subscriptions and
 //! subscribers are kept pretty abstract and it is left for the notification implementation to map
-//! these concepts to concrete entities.
+//! these concepts to concrete entities. (See, e.g., ts_kv_store_tokio for a notifier using Tokio).
 //!
 //! Subscribers and subscriptions are essentially just opaque identifiers. Subscriptions always belong
 //! to a single subscriber. A subscriber has a single owner (multiple subscribers may have the same
-//! owner). Subscriptions watch either the whole store, a whole table, a single singleton, or a single
+//! owner). Subscriptions watch either the whole store, a whole table, a singleton, or a single
 //! key in a table. Subscribers can be added or removed (removing a subscriber also removes all its
 //! subscriptions; a subscriber with no subscriptions does nothing). Subscriptions can be added or
 //! removed (note that removing a subscription or subscriber requires searching through all
@@ -116,41 +119,43 @@
 //!
 //! Notifications are strongly typed and a `Notification` enum is generated by the [`schema`] macros.
 //! Notifications are grouped by subscription and are per-transaction (or per single raw operation).
-//! Notifications are not further grouped by subscriber, but a notifier could do so.
 //!
 //! # Implementation notes.
 //!
 //! The schema macros are an 'essential' component of the system, not just a convenience. Unfortunately
 //! Rust macros do not have visibility/privacy hygiene, so many internal types and traits are public.
 //! Anything marked as `doc(hidden)` is meant for internal use only and should not be considered
-//! part of the API.
+//! part of the API (no backwards compatability guarantee under semver for this crate).
 //!
 //! Part of the work of the macros is to generate an internal storage struct. To ensure an ergonomic
-//! API, the generic [`KvStore`] is wrapped in a local `KvStore` which can be deref-ed to the inner,
-//! generic type. Users of the library should only use the generated type, but see the generic type
-//! for documentation.
+//! API, the generic [`KvStore`] is wrapped in a local `KvStore` which can be `deref`-ed to the inner,
+//! generic type. Users of the library should only use the generated type, but the generic type has
+//! the documentation. The generated store has a field for each singleton and table. A convenience
+//! wrapper holding a store and owner is also generated.
 //!
-//! The implementation of storage for tabular data is one HashMap per table, and otherwise
-//! straightforward. For singleton data, we store values in an `Option` in fields with the name of
+//! The macros also create transaction types for each singleton and table.
+//!
+//! The implementation of storage for tabular data is one HashMap per table (plus several helper data
+//! structures). For singleton data, we store values in an `Option` in fields with the name of
 //! the singleton.
 //!
 //! The implementation of the storage operations (`get`, `insert`, etc.) is somewhat shared between
-//! the various types which support them (`KvStore`, the table types, the transaction types, index
-//! types, and transactional index types). These are implemented on traits in the `operations` module.
-//! For ease of use and documentation, the functions are implemented on each concrete type and
-//! delegated to the trait implementations. I.e., the traits and impls are an implementation detail.
+//! the various types which support them (singleton, table, index, and transaction types). These are
+//! implemented on traits in the `operations` module. For ease of use and documentation, the functions
+//! are implemented on each concrete type and delegated to the trait implementations. I.e., the traits
+//! and impls are an implementation detail.
 //!
 //! Transactions have an internal id (`TxnId`). Since we use a global lock to ensure serializability,
 //! transactions are only used to ensure atomicity. There can only ever be one (mutating) transaction
 //! in progress at a time. The store tracks the most recently committed transaction id, and optionally
 //! a current transaction id. Raw (non-transactional) writes are 'mini-transactions' of just a single
-//! operation. That means even raw operations consisting of multiple sub-operations are atomic. Raw
-//! reads use the most recently committed transaction id as their 'transaction' id.
+//! operation. That means even raw operations consisting of multiple sub-operations are atomic. Reads
+//! use the most recently committed transaction id as their 'transaction' id.
 //!
 //! The KV store uses a simplified version of MVCC to implement transactions. Only two versions are
 //! required for each key, one will be the currently committed version and one will either be empty,
 //! the version belonging to the currently in-progress transaction, or the version belonging to a
-//! partially rolled-back or abandoned transaction. So, every value in the store is stored internally as a
+//! partially rolled-back or abandoned transaction. Every value in the store is stored internally as a
 //! `VersionedValue`, which has these two slots and a version and value in each. Deletes are stored
 //! outside of the main storage in a per-table delete mask.
 //!
@@ -188,18 +193,19 @@ pub mod storage;
 pub mod transactions;
 
 #[doc(inline)]
-pub use index::KvTableIndex;
-#[doc(inline)]
-pub use iter::{IndexIterator, TableIterator};
+pub use index::{Index, IndexTransaction, IndexWithOwner, RoIndexTransaction};
 #[doc(inline)]
 pub use pub_sub::{
     Event, NoOpNotifier, Notifications, Notifier, SingletonEvent, Subscriber, Subscription,
 };
 #[doc(inline)]
-pub use raw::KvTable;
-pub use schema::GeneratedStorage;
+pub use raw::{Singleton, SingletonWithOwner, Table, TableWithOwner};
+pub use schema::{GeneratedStorage, GeneratedStore};
 #[doc(inline)]
-pub use transactions::{KvTableRoTransactional, KvTableTransactional, RoTransaction, Transaction};
+pub use transactions::{
+    RoSingletonTransaction, RoTableTransaction, RoTransaction, SingletonTransaction,
+    TableTransaction, Transaction,
+};
 
 /// A key-value store. See the crate docs for details. Its schema is described by `TableStorage`.
 pub struct KvStore<TableStorage: schema::GeneratedStorage> {
@@ -215,16 +221,14 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         KvStore { storage }
     }
 
+    #[doc(hidden)]
     /// Create a new KvStore with the supplied notifier.
+    ///
+    /// Intended to be used by macros. Prefer to use `GeneratedStore::from_notifier`.
     pub fn from_notifier(
         notifier: Weak<dyn Notifier<Notification = TableStorage::Notification>>,
     ) -> Self {
         Self::new_with_storage(RwLock::new(storage::Storage::new(notifier)))
-    }
-
-    /// A convenience for operating on a KV store with a specified owner.
-    pub fn with_owner(&self, owner: Owner) -> StoreWithOwner<'_, TableStorage> {
-        StoreWithOwner { store: self, owner }
     }
 
     /// Register a new subscriber (with the specified `Owner`) to the store.
@@ -243,10 +247,28 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// subscriptions is harmless but pointless.
     ///
     /// Does nothing if the subscriber is unknown (e.g., because it has already been removed).
-    pub fn remove_subscriber(&self, subscriber: Subscriber) {
+    pub fn remove_subscriber(&self, subscriber: impl Into<crate::Subscriber>) {
         self.get_read_lock()
             .subscriptions
-            .remove_subscriber(subscriber)
+            .remove_subscriber(subscriber.into())
+    }
+
+    /// Subscribe to the whole store.
+    pub fn subscribe_global(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> Result<crate::Subscription> {
+        let subs = &self.get_read_lock().subscriptions;
+        let id = subs.create_global_subscription(subscriber.into())?;
+
+        Ok(id)
+    }
+
+    /// Remove any subscriptions to the whole store.
+    pub fn unsubscribe_global(&self, subscription: crate::Subscription) {
+        self.get_read_lock()
+            .subscriptions
+            .remove_global_subscription(subscription);
     }
 
     /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
@@ -289,15 +311,6 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 }
 
-/// A reference to a store for a specified owner.
-///
-/// A convenience wrapper to avoid specifying an owner on every operation.
-#[derive(Clone)]
-pub struct StoreWithOwner<'a, TableStorage: schema::GeneratedStorage> {
-    store: &'a KvStore<TableStorage>,
-    owner: Owner,
-}
-
 /// A token indicating ownership of a KV singleton or table. See crate docs for what ownership means
 /// for a store.
 pub type Owner = &'static str;
@@ -309,6 +322,9 @@ pub enum Error {
     #[error("Key not found")]
     NotPresent,
     /// An inconsistency caused a transaction to fail. It has not been committed and can be re-tried.
+    ///
+    /// Also returned when committing a transaction in which an operation was interrupted by a
+    /// (caught) panic.
     #[error("Transaction failed")]
     TransactionFailed,
     /// An index had multiple primary keys for a single index key. If returned when committing a

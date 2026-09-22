@@ -1,44 +1,238 @@
 use std::{
     borrow::Borrow,
     hash::Hash,
-    sync::{RwLockReadGuard, RwLockWriteGuard},
+    marker::PhantomData,
+    sync::{Arc, RwLockReadGuard},
 };
 
 use crate::{
-    KvStore, Owner, Result, RoTransaction, Transaction,
-    operations::{Base, BaseKey, BaseValue, IndexValue, IndexedOps, Ops},
+    KvStore, Owner, Result, RoTableTransaction, TableTransaction, iter,
+    operations::{BaseKey, BaseValue, IndexValue, IndexedOps, Ops},
     schema::IndexDesc,
     storage::Storage,
+    transactions::TxnStorage,
 };
 
-/// An abstraction for operating on a table of key/values pairs via an index.
+/// Non-transactional accessor for a table of key/values pairs via an index.
 ///
-/// `KvTableIndex` has no transactional semantics and only exists as a convenience for accessing
-/// tabular data.
-///
-/// `D` describes the index table.
-/// `B` describes the base table.
-///
-/// SAFETY: `D` and `B` must describe different tables (this is enforced by the macros, but possible
-/// to violate if building a schema by hand).
-pub struct KvTableIndex<'store, D: IndexDesc> {
-    pub(crate) store: &'store KvStore<D::Storage>,
-    pub(crate) owner: Owner,
+/// `D` describes the index table, its base table is `D::BaseTable`.
+pub struct Index<D: IndexDesc> {
+    store: Arc<KvStore<D::Storage>>,
+    desc: PhantomData<D>,
 }
 
-impl<'idx, D: IndexDesc> Ops<D::Storage> for &'idx KvTableIndex<'_, D> {
-    type ReadLock = std::sync::RwLockReadGuard<'idx, Storage<D::Storage>>;
+impl<D: IndexDesc> Index<D> {
+    /// Create an index accessor for `store`.
+    #[doc(hidden)]
+    pub fn new(store: Arc<KvStore<D::Storage>>) -> Self {
+        Index {
+            store,
+            desc: PhantomData,
+        }
+    }
+
+    /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
+    pub fn check_consistent(&self) -> Result<()> {
+        <&Self as IndexedOps<_>>::check_consistent(self)
+    }
+
+    /// Get a row of the table from the store by cloning the value.
+    ///
+    /// Returns `Error::NotPresent` if there is no value for the specified key.
+    pub fn get<Q>(&self, owner: Owner, key: &Q) -> Result<(BaseKey<D>, BaseValue<D>)>
+    where
+        BaseKey<D>: Clone,
+        BaseValue<D>: Clone,
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+        IndexValue<D>: Eq + Hash,
+    {
+        <&Self as IndexedOps<_>>::get(self, key, owner)
+    }
+
+    /// Get immutable access to a row of the table in the store by reference.
+    ///
+    /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
+    pub fn with<Q, T>(
+        &self,
+        owner: Owner,
+        key: &Q,
+        f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T,
+    ) -> Result<T>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+        IndexValue<D>: Eq + Hash,
+    {
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, owner)
+    }
+
+    /// Iterate over all key/value pairs in the table.
+    ///
+    /// Access is scoped by a closure (rather than returning an iterator) because the store is
+    /// locked while iterating, and so references into the store must not outlive the iterator.
+    pub fn with_iter<F, T>(&self, _owner: Owner, f: F) -> T
+    where
+        IndexValue<D>: Eq + Hash,
+        F: for<'a> FnOnce(
+            &mut dyn Iterator<Item = (&'a D::Key, &'a BaseKey<D>, &'a BaseValue<D>)>,
+        ) -> T,
+    {
+        <&Self as IndexedOps<_>>::with_iter(self, f)
+    }
+
+    /// Iterate over all keys in the table.
+    pub fn with_keys<F, T>(&self, _owner: Owner, f: F) -> T
+    where
+        IndexValue<D>: Eq + Hash,
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a D::Key>) -> T,
+    {
+        <&Self as IndexedOps<_>>::with_keys(self, f)
+    }
+
+    /// Iterate over all values in the table.
+    pub fn with_values<F, T>(&self, _owner: Owner, f: F) -> T
+    where
+        IndexValue<D>: Eq + Hash,
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a BaseKey<D>, &'a BaseValue<D>)>) -> T,
+    {
+        <&Self as IndexedOps<_>>::with_values(self, f)
+    }
+}
+
+impl<'store, D: IndexDesc> Ops<D::Storage> for &'store Index<D> {
+    type ReadLock = RwLockReadGuard<'store, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
         self.store.get_read_lock()
     }
 }
 
-impl<D: IndexDesc> IndexedOps<D::Storage> for &KvTableIndex<'_, D> {
+impl<D: IndexDesc> IndexedOps<D::Storage> for &Index<D> {
     type IndexDesc = D;
 }
 
-impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
+/// Non-transactional accessor for a table of key/values pairs via an index, with a fixed owner.
+///
+/// `D` describes the index table, its base table is `D::BaseTable`.
+pub struct IndexWithOwner<D: IndexDesc> {
+    inner: Index<D>,
+    owner: Owner,
+}
+
+impl<D: IndexDesc> IndexWithOwner<D> {
+    #[doc(hidden)]
+    pub fn new(store: Arc<KvStore<D::Storage>>, owner: Owner) -> Self {
+        IndexWithOwner {
+            inner: Index::new(store),
+            owner,
+        }
+    }
+
+    /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
+    pub fn check_consistent(&self) -> Result<()> {
+        self.inner.check_consistent()
+    }
+
+    /// Get a row of the table from the store by cloning the value.
+    ///
+    /// Returns `Error::NotPresent` if there is no value for the specified key.
+    pub fn get<Q>(&self, key: &Q) -> Result<(BaseKey<D>, BaseValue<D>)>
+    where
+        BaseKey<D>: Clone,
+        BaseValue<D>: Clone,
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+        IndexValue<D>: Eq + Hash,
+    {
+        self.inner.get(self.owner, key)
+    }
+
+    /// Get immutable access to a row of the table in the store by reference.
+    ///
+    /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
+    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Result<T>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+        IndexValue<D>: Eq + Hash,
+    {
+        self.inner.with(self.owner, key, f)
+    }
+
+    /// Iterate over all key/value pairs in the table.
+    ///
+    /// Access is scoped by a closure (rather than returning an iterator) because the store is
+    /// locked while iterating, and so references into the store must not outlive the iteration.
+    /// Use a (read-only) transaction to get an iterator.
+    pub fn with_iter<F, T>(&self, f: F) -> T
+    where
+        IndexValue<D>: Eq + Hash,
+        F: for<'a> FnOnce(
+            &mut dyn Iterator<Item = (&'a D::Key, &'a BaseKey<D>, &'a BaseValue<D>)>,
+        ) -> T,
+    {
+        self.inner.with_iter(self.owner, f)
+    }
+
+    /// Iterate over all keys in the table.
+    pub fn with_keys<F, T>(&self, f: F) -> T
+    where
+        IndexValue<D>: Eq + Hash,
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a D::Key>) -> T,
+    {
+        self.inner.with_keys(self.owner, f)
+    }
+
+    /// Iterate over all values in the table.
+    pub fn with_values<F, T>(&self, f: F) -> T
+    where
+        IndexValue<D>: Eq + Hash,
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a BaseKey<D>, &'a BaseValue<D>)>) -> T,
+    {
+        self.inner.with_values(self.owner, f)
+    }
+}
+
+/// Transactional accessor for a table of key/values pairs via an index.
+///
+/// Note that like [`RoIndexTransaction`], this accessor only gives immutable access to the index,
+/// the difference is that this is built from a read/write transaction rather than a read-only one.
+///
+/// `D` describes the index table, its base table is `D::BaseTable`.
+pub struct IndexTransaction<'guard, 'txn, D: IndexDesc> {
+    base: &'txn TableTransaction<'guard, D::Storage, D::BaseTable>,
+    desc: PhantomData<D>,
+}
+
+impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
+    /// Create a view of the index `D` of the table viewed by `base`.
+    #[doc(hidden)]
+    pub fn new(base: &'txn TableTransaction<'guard, D::Storage, D::BaseTable>) -> Self {
+        IndexTransaction {
+            base,
+            desc: PhantomData,
+        }
+    }
+
+    fn owner(&self) -> Owner {
+        self.base.owner()
+    }
+}
+
+impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage> for &'a IndexTransaction<'guard, 'txn, D> {
+    type ReadLock = &'a TxnStorage<D::Storage>;
+
+    fn read_lock(self) -> Self::ReadLock {
+        self.base.read_lock()
+    }
+}
+
+impl<'guard, 'txn, D: IndexDesc> IndexedOps<D::Storage> for &IndexTransaction<'guard, 'txn, D> {
+    type IndexDesc = D;
+}
+
+impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
     /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
     pub fn check_consistent(&self) -> Result<()> {
         <&Self as IndexedOps<_>>::check_consistent(self)
@@ -55,7 +249,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::get(self, key, self.owner)
+        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.owner())
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -67,146 +261,63 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner)
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner())
     }
 
-    /// Iterate all the keys in the index and value in the base table.
+    /// Iterate all the keys in the index and values in the base table.
     pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
-        D: 'store,
-        Base<D>: 'store,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::iter(self, self.owner)
+        iter::index_iter::<D>(self.base.read_lock())
     }
 
     /// Iterate all the keys in the index.
     pub fn keys(&self) -> impl Iterator<Item = &D::Key>
     where
-        D: 'store,
-        Base<D>: 'store,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::keys(self, self.owner)
-    }
-
-    /// Iterate all the values in the base table.
-    pub fn values(&self) -> impl Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>
-    where
-        D: 'store,
-        Base<D>: 'store,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::values(self, self.owner)
+        self.iter().map(|(k, ..)| k)
     }
 }
 
-/// An abstraction for operating on a table of key/values pairs (accessed as part of a transaction) via an index.
+/// Read-only, transactional accessor for a table of key/values pairs via an index.
 ///
-/// `D` describes the index table.
-/// `B` describes the base table.
-///
-/// SAFETY: `D` and `B` must describe different tables (this is enforced by the macros, but possible
-/// to violate if building a schema by hand).
-pub struct KvTableTransactionalIndex<'guard, 'txn, D: IndexDesc> {
-    pub(crate) txn: &'txn mut Transaction<'guard, D::Storage>,
+/// `D` describes the index table, its base table is `D::BaseTable`.
+pub struct RoIndexTransaction<'guard, 'txn, D: IndexDesc> {
+    base: &'txn RoTableTransaction<'guard, D::Storage, D::BaseTable>,
+    desc: PhantomData<D>,
 }
 
-impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
-    for &'a KvTableTransactionalIndex<'guard, 'txn, D>
-{
-    type ReadLock = &'a RwLockWriteGuard<'guard, Storage<D::Storage>>;
-
-    fn read_lock(self) -> Self::ReadLock {
-        self.txn.guard.as_ref().unwrap()
-    }
-}
-
-impl<'guard, 'txn, D: IndexDesc> IndexedOps<D::Storage>
-    for &KvTableTransactionalIndex<'guard, 'txn, D>
-{
-    type IndexDesc = D;
-}
-
-impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
-    pub fn check_consistent(&self) -> Result<()> {
-        <&Self as IndexedOps<_>>::check_consistent(self)
+impl<'guard, 'txn, D: IndexDesc> RoIndexTransaction<'guard, 'txn, D> {
+    /// Create a view of the index `D` of the table viewed by `base`.
+    #[doc(hidden)]
+    pub fn new(base: &'txn RoTableTransaction<'guard, D::Storage, D::BaseTable>) -> Self {
+        RoIndexTransaction {
+            base,
+            desc: PhantomData,
+        }
     }
 
-    /// Get a row of the table from the store by cloning the value.
-    ///
-    /// Returns `Error::NotPresent` if there is no value for the specified key.
-    pub fn get<Q>(&self, key: &Q) -> Result<(BaseKey<D>, BaseValue<D>)>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
-        D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.txn.owner)
-    }
-
-    /// Get immutable access to a row of the table in the store by reference.
-    ///
-    /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Result<T>
-    where
-        D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.txn.owner)
-    }
-
-    /// Iterate all the keys in the index and value in the base table.
-    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
-    where
-        D: 'guard,
-        Base<D>: 'guard,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::iter(self, self.txn.owner)
-    }
-
-    /// Iterate all the keys in the index.
-    pub fn keys(&self) -> impl Iterator<Item = &D::Key>
-    where
-        D: 'guard,
-        Base<D>: 'guard,
-    {
-        <&Self as IndexedOps<_>>::keys(self, self.txn.owner)
+    fn owner(&self) -> Owner {
+        self.base.owner()
     }
 }
 
-/// An abstraction for operating on a table of key/values pairs (accessed as part of a transaction) via an index.
-///
-/// `D` describes the index table.
-/// `B` describes the base table.
-///
-/// SAFETY: `D` and `B` must describe different tables (this is enforced by the macros, but possible
-/// to violate if building a schema by hand).
-pub struct KvTableRoTransactionalIndex<'guard, 'txn, D: IndexDesc> {
-    pub(crate) txn: &'txn RoTransaction<'guard, D::Storage>,
-}
-
-impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage>
-    for &'a KvTableRoTransactionalIndex<'guard, 'txn, D>
-{
+impl<'guard, 'txn, 'a, D: IndexDesc> Ops<D::Storage> for &'a RoIndexTransaction<'guard, 'txn, D> {
     type ReadLock = &'a RwLockReadGuard<'guard, Storage<D::Storage>>;
 
     fn read_lock(self) -> Self::ReadLock {
-        &self.txn.guard
+        self.base.read_lock()
     }
 }
 
-impl<'guard, 'txn, D: IndexDesc> IndexedOps<D::Storage>
-    for &KvTableRoTransactionalIndex<'guard, 'txn, D>
-{
+impl<'guard, 'txn, D: IndexDesc> IndexedOps<D::Storage> for &RoIndexTransaction<'guard, 'txn, D> {
     type IndexDesc = D;
 }
 
-impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
+impl<'guard, 'txn, D: IndexDesc> RoIndexTransaction<'guard, 'txn, D> {
+    /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
     pub fn check_consistent(&self) -> Result<()> {
         <&Self as IndexedOps<_>>::check_consistent(self)
     }
@@ -222,7 +333,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.txn.owner)
+        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.owner())
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -234,30 +345,29 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.txn.owner)
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner())
     }
 
     /// Iterate all the keys in the index and value in the base table.
     pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
-        D: 'guard,
         IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::iter(self, self.txn.owner)
+        iter::index_iter::<D>(self.base.read_lock())
     }
 
     /// Iterate all the keys in the index.
     pub fn keys(&self) -> impl Iterator<Item = &D::Key>
     where
-        D: 'guard,
+        IndexValue<D>: Eq + Hash,
     {
-        <&Self as IndexedOps<_>>::keys(self, self.txn.owner)
+        self.iter().map(|(k, ..)| k)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{KvErrorExt, store};
+    use crate::{Error, KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -277,19 +387,14 @@ mod test {
     #[test]
     fn index_get_returns_none_when_absent() {
         let store = KvStore::new();
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .get("Alice")
-                .is_none()
-        );
+        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
     }
 
     #[test]
     fn index_get_returns_value_after_base_insert() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        let table = store.table_by::<index::Users::name>(OWNER);
+        store.Users.insert(OWNER, 1, row("Alice"));
+        let table = store.with_owner(OWNER).Users.indexes().name;
         let value = table.get("Alice").unwrap();
         assert_eq!(value, (1, row("Alice")));
     }
@@ -298,11 +403,9 @@ mod test {
     fn index_with_returns_none_and_does_not_call_f_when_absent() {
         let store = KvStore::new();
         let mut called = false;
-        let result = store
-            .table_by::<index::Users::name>(OWNER)
-            .with("Alice", |_, _| {
-                called = true;
-            });
+        let result = store.Users.indexes().name.with(OWNER, "Alice", |_, _| {
+            called = true;
+        });
         assert!(result.is_none());
         assert!(!called);
     }
@@ -310,71 +413,48 @@ mod test {
     #[test]
     fn index_with_returns_result_of_f() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        let len = store
-            .table_by::<index::Users::name>(OWNER)
-            .with("Alice", |k, v| {
-                assert_eq!(*k, 1);
-                v.name.len()
-            });
+        store.Users.insert(OWNER, 1, row("Alice"));
+        let len = store.Users.indexes().name.with(OWNER, "Alice", |k, v| {
+            assert_eq!(*k, 1);
+            v.name.len()
+        });
         assert_eq!(len.unwrap_opt(), Some(5));
-    }
-
-    #[test]
-    fn base_insert_is_visible_via_index() {
-        let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .get("Alice")
-                .is_some()
-        );
     }
 
     #[test]
     fn base_remove_makes_index_absent() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).remove(&1);
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .get("Alice")
-                .is_none()
-        );
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.remove(OWNER, &1);
+        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
     }
 
     #[test]
     fn index_iter_empty_on_fresh_store() {
         let store = KvStore::new();
-        let index = store.table_by::<index::Users::name>(OWNER);
-        let items: Vec<_> = index.iter().collect();
-        assert!(items.is_empty());
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        let count = index.with_iter(|i| i.count());
+        assert_eq!(count, 0);
     }
 
     #[test]
     fn index_iter_yields_index_key_and_base_value() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        let items: Vec<_> = store
-            .table_by::<index::Users::name>(OWNER)
-            .iter()
-            .map(|(k, bk, v)| (k.clone(), *bk, v.clone()))
-            .collect();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        let items: Vec<_> = store.Users.indexes().name.with_iter(OWNER, |i| {
+            i.map(|(k, bk, v)| (k.clone(), *bk, v.clone())).collect()
+        });
         assert_eq!(items, vec![("Alice".to_owned(), 1, row("Alice"))]);
     }
 
     #[test]
     fn index_iter_yields_all_rows() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
-        let mut items: Vec<_> = store
-            .table_by::<index::Users::name>(OWNER)
-            .iter()
-            .map(|(k, bk, v)| (k.clone(), *bk, v.clone()))
-            .collect();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        let mut items: Vec<_> = store.Users.indexes().name.with_iter(OWNER, |i| {
+            i.map(|(k, bk, v)| (k.clone(), *bk, v.clone())).collect()
+        });
         items.sort_by_key(|(k, ..)| k.clone());
         assert_eq!(
             items,
@@ -388,120 +468,115 @@ mod test {
     #[test]
     fn index_iter_keys_cloned_empty() {
         let store = KvStore::new();
-        let table = store.table_by::<index::Users::name>(OWNER);
+        let table = store.with_owner(OWNER).Users.indexes().name;
 
-        let keys: Vec<_> = table.keys().collect();
-        assert!(keys.is_empty());
+        let count = table.with_keys(|i| i.count());
+        assert_eq!(count, 0);
     }
 
     #[test]
     fn index_iter_keys_cloned_yields_index_keys() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
 
-        let table = store.table_by::<index::Users::name>(OWNER);
-        let mut keys: Vec<_> = table.keys().collect();
+        let table = store.with_owner(OWNER).Users.indexes().name;
+        let mut keys: Vec<_> = table.with_keys(|i| i.cloned().collect());
         keys.sort();
         assert_eq!(keys, vec!["Alice", "Bob"]);
     }
 
     #[test]
-    fn index_iter_values_cloned_empty() {
+    fn table_with_values_mut_non_unique_index_key_rolls_back() {
         let store = KvStore::new();
-        let table = store.table_by::<index::Users::name>(OWNER);
-        let values: Vec<_> = table.values().collect();
-        assert!(values.is_empty());
-    }
-
-    #[test]
-    fn index_iter_values_cloned_yields_base_values() {
-        let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
-        let table = store.table_by::<index::Users::name>(OWNER);
-        let mut values: Vec<_> = table.values().collect();
-        values.sort_by_key(|(_, r)| r.name.clone());
-        assert_eq!(values, vec![(&1, &row("Alice")), (&2, &row("Bob"))]);
-    }
-
-    #[test]
-    fn index_for_each_empty_calls_closure_zero_times() {
-        let store = KvStore::new();
-        let index = store.table_by::<index::Users::name>(OWNER);
-        let mut count = 0;
-        index.iter().for_each(|_| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn index_for_each_yields_index_key_and_base_value() {
-        let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        let index = store.table_by::<index::Users::name>(OWNER);
-        let mut items: Vec<_> = Vec::new();
-        index
-            .iter()
-            .for_each(|(k, bk, v)| items.push((k.clone(), *bk, v.clone())));
-        assert_eq!(items, vec![("Alice".to_owned(), 1, row("Alice"))]);
-    }
-
-    #[test]
-    fn index_for_each_yields_all_rows() {
-        let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
-        let index = store.table_by::<index::Users::name>(OWNER);
-        let mut items: Vec<_> = Vec::new();
-        index
-            .iter()
-            .for_each(|(k, bk, v)| items.push((k.clone(), *bk, v.clone())));
-        items.sort_by_key(|(k, ..)| k.clone());
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        let result = store.Users.with_values_mut(OWNER, |values| {
+            for v in values {
+                v.name = "Alice".to_owned();
+            }
+        });
+        assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
+        assert_eq!(store.Users.get(OWNER, &2), Some(row("Bob")));
         assert_eq!(
-            items,
-            vec![
-                ("Alice".to_owned(), 1, row("Alice")),
-                ("Bob".to_owned(), 2, row("Bob")),
-            ]
+            store.Users.indexes().name.get(OWNER, "Bob").unwrap(),
+            (2, row("Bob")),
         );
+    }
+
+    #[test]
+    fn table_with_iter_mut_non_unique_index_key_rolls_back() {
+        let store = KvStore::new();
+        let users = store.with_owner(OWNER).Users;
+        users.insert(1, row("Alice"));
+        users.insert(2, row("Bob"));
+        let result = users.with_iter_mut(|i| {
+            for (_, v) in i {
+                v.name = "Alice".to_owned();
+            }
+        });
+        assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
+        assert_eq!(users.get(&2), Some(row("Bob")));
     }
 
     #[test]
     fn table_with_iter_mut_updates_index() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.Users.insert(OWNER, 1, row("Alice"));
         store
-            .table::<Users>(OWNER)
-            .with_iter_mut(|i| i.next().unwrap().1.name = "Charlie".to_owned());
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .get("Alice")
-                .is_none()
-        );
+            .Users
+            .with_iter_mut(OWNER, |i| i.next().unwrap().1.name = "Charlie".to_owned())
+            .unwrap();
+        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
         assert_eq!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .get("Charlie")
-                .unwrap(),
+            store.Users.indexes().name.get(OWNER, "Charlie").unwrap(),
             (1, row("Charlie")),
         );
     }
 
     #[test]
-    fn index_table_used_directly_supports_with_mut() {
+    fn base_insert_overwrite_updates_index() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 1, row("Bob"));
 
-        let index_table = store.table::<index::Users::name>(OWNER);
-        assert_eq!(index_table.get("Alice"), Some(1));
-        // Repointing the index entry at the other base row.
-        assert_eq!(
-            index_table.with_mut("Alice", |k| std::mem::replace(k, 2)),
-            Ok(1)
-        );
-        assert_eq!(index_table.get("Alice"), Some(2));
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert!(index.get("Alice").is_none());
+        assert_eq!(index.get("Bob").unwrap(), (1, row("Bob")));
+    }
+
+    #[test]
+    fn base_with_mut_updates_index() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store
+            .Users
+            .with_mut(OWNER, &1, |r| r.name = "Bob".to_owned())
+            .unwrap();
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert!(index.get("Alice").is_none());
+        assert_eq!(index.get("Bob").unwrap(), (1, row("Bob")));
+    }
+
+    #[test]
+    fn index_with_values_yields_base_keys_and_values() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+
+        let mut values: Vec<_> = store
+            .Users
+            .indexes()
+            .name
+            .with_values(OWNER, |i| i.map(|(bk, v)| (*bk, v.clone())).collect());
+        values.sort_by_key(|(bk, _)| *bk);
+        assert_eq!(values, vec![(1, row("Alice")), (2, row("Bob"))]);
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert_eq!(index.with_values(|i| i.count()), 2);
     }
 }
 
@@ -527,46 +602,30 @@ mod test_two_indexes {
     const OWNER: &str = "owner";
 
     #[test]
-    fn both_indexes_queryable_after_base_insert() {
-        let store = KvStore::new();
-        store
-            .table::<People>(OWNER)
-            .insert(1, person("a@example.com", b"alice"));
-        assert!(
-            store
-                .table_by::<index::People::email>(OWNER)
-                .get("a@example.com")
-                .is_some()
-        );
-        assert!(
-            store
-                .table_by::<index::People::username>(OWNER)
-                .get(b"alice".as_slice())
-                .is_some()
-        );
-    }
-
-    #[test]
     fn each_index_returns_correct_value() {
         let store = KvStore::new();
         store
-            .table::<People>(OWNER)
-            .insert(1, person("a@example.com", b"alice"));
+            .People
+            .insert(OWNER, 1, person("a@example.com", b"alice"));
         store
-            .table::<People>(OWNER)
-            .insert(2, person("b@example.com", b"bob"));
+            .People
+            .insert(OWNER, 2, person("b@example.com", b"bob"));
 
         assert_eq!(
             store
-                .table_by::<index::People::email>(OWNER)
-                .get("a@example.com")
+                .People
+                .indexes()
+                .email
+                .get(OWNER, "a@example.com")
                 .unwrap(),
             (1, person("a@example.com", b"alice"))
         );
         assert_eq!(
             store
-                .table_by::<index::People::username>(OWNER)
-                .get(b"bob".as_slice())
+                .People
+                .indexes()
+                .username
+                .get(OWNER, b"bob".as_slice())
                 .unwrap(),
             (2, person("b@example.com", b"bob"))
         );
@@ -576,19 +635,23 @@ mod test_two_indexes {
     fn base_remove_clears_both_indexes() {
         let store = KvStore::new();
         store
-            .table::<People>(OWNER)
-            .insert(1, person("a@example.com", b"alice"));
-        store.table::<People>(OWNER).remove(&1);
+            .People
+            .insert(OWNER, 1, person("a@example.com", b"alice"));
+        store.People.remove(OWNER, &1);
         assert!(
             store
-                .table_by::<index::People::email>(OWNER)
-                .get("a@example.com")
+                .People
+                .indexes()
+                .email
+                .get(OWNER, "a@example.com")
                 .is_none()
         );
         assert!(
             store
-                .table_by::<index::People::username>(OWNER)
-                .get(b"alice".as_slice())
+                .People
+                .indexes()
+                .username
+                .get(OWNER, b"alice".as_slice())
                 .is_none()
         );
     }
@@ -597,19 +660,23 @@ mod test_two_indexes {
     fn base_clear_clears_both_indexes() {
         let store = KvStore::new();
         store
-            .table::<People>(OWNER)
-            .insert(1, person("a@example.com", b"alice"));
-        store.table::<People>(OWNER).clear();
+            .People
+            .insert(OWNER, 1, person("a@example.com", b"alice"));
+        store.People.clear(OWNER);
         assert!(
             store
-                .table_by::<index::People::email>(OWNER)
-                .get("a@example.com")
+                .People
+                .indexes()
+                .email
+                .get(OWNER, "a@example.com")
                 .is_none()
         );
         assert!(
             store
-                .table_by::<index::People::username>(OWNER)
-                .get(b"alice".as_slice())
+                .People
+                .indexes()
+                .username
+                .get(OWNER, b"alice".as_slice())
                 .is_none()
         );
     }
@@ -618,35 +685,46 @@ mod test_two_indexes {
     fn table_with_iter_mut_updates_both_indexes() {
         let store = KvStore::new();
         store
-            .table::<People>(OWNER)
-            .insert(1, person("a@example.com", b"alice"));
-        store.table::<People>(OWNER).with_iter_mut(|i| {
-            let v = &mut i.next().unwrap().1;
-            v.email = "b@example.com".to_owned();
-            v.username = b"bob".to_vec();
-        });
+            .People
+            .insert(OWNER, 1, person("a@example.com", b"alice"));
+        store
+            .People
+            .with_iter_mut(OWNER, |i| {
+                let v = &mut i.next().unwrap().1;
+                v.email = "b@example.com".to_owned();
+                v.username = b"bob".to_vec();
+            })
+            .unwrap();
         assert!(
             store
-                .table_by::<index::People::email>(OWNER)
-                .get("a@example.com")
+                .People
+                .indexes()
+                .email
+                .get(OWNER, "a@example.com")
                 .is_none()
         );
         assert!(
             store
-                .table_by::<index::People::username>(OWNER)
-                .get(b"alice".as_slice())
+                .People
+                .indexes()
+                .username
+                .get(OWNER, b"alice".as_slice())
                 .is_none()
         );
         assert!(
             store
-                .table_by::<index::People::email>(OWNER)
-                .get("b@example.com")
+                .People
+                .indexes()
+                .email
+                .get(OWNER, "b@example.com")
                 .is_some()
         );
         assert!(
             store
-                .table_by::<index::People::username>(OWNER)
-                .get(b"bob".as_slice())
+                .People
+                .indexes()
+                .username
+                .get(OWNER, b"bob".as_slice())
                 .is_some()
         );
     }
@@ -654,7 +732,7 @@ mod test_two_indexes {
 
 #[cfg(test)]
 mod test_transactional_index {
-    use crate::{KvErrorExt, store};
+    use crate::{Error, KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -676,17 +754,17 @@ mod test_transactional_index {
     #[test]
     fn txn_index_get_returns_none_when_absent() {
         let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        let txn = store.begin_transaction(OWNER);
+        assert!(txn.Users.indexes().name.get("Alice").is_none());
     }
 
     #[test]
     fn txn_base_insert_updates_index() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
+        txn.Users.insert(1, row("Alice"));
         assert_eq!(
-            txn.table_by::<index::Users::name>().get("Alice").unwrap(),
+            txn.Users.indexes().name.get("Alice").unwrap(),
             (1, row("Alice"))
         );
     }
@@ -695,12 +773,11 @@ mod test_transactional_index {
     fn txn_base_mutate_updates_index_on_field_change() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>()
-            .with_mut(&1, |v| v.name = "Bob".to_owned());
-        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        txn.Users.insert(1, row("Alice"));
+        txn.Users.with_mut(&1, |v| v.name = "Bob".to_owned());
+        assert!(txn.Users.indexes().name.get("Alice").is_none());
         assert_eq!(
-            txn.table_by::<index::Users::name>().get("Bob").unwrap(),
+            txn.Users.indexes().name.get("Bob").unwrap(),
             (
                 1,
                 Row {
@@ -715,31 +792,76 @@ mod test_transactional_index {
     fn txn_base_remove_updates_index() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>().remove(&1);
-        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        txn.Users.insert(1, row("Alice"));
+        txn.Users.remove(&1);
+        assert!(txn.Users.indexes().name.get("Alice").is_none());
     }
 
     #[test]
     fn txn_base_clear_updates_index() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>().insert(2, row("Bob"));
-        txn.table::<Users>().clear();
-        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
-        assert!(txn.table_by::<index::Users::name>().get("Bob").is_none());
+        txn.Users.insert(1, row("Alice"));
+        txn.Users.insert(2, row("Bob"));
+        txn.Users.clear();
+        assert!(txn.Users.indexes().name.get("Alice").is_none());
+        assert!(txn.Users.indexes().name.get("Bob").is_none());
+    }
+
+    #[test]
+    fn txn_remove_already_removed_key_keeps_other_rows_index_entry() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.remove(&1);
+        txn.Users.insert(2, row("Alice"));
+        // A no-op, but row 1's stale value shares an index key with row 2.
+        txn.Users.remove(&1);
+        assert_eq!(
+            txn.Users.indexes().name.get("Alice").unwrap(),
+            (2, row("Alice"))
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store.Users.indexes().name.get(OWNER, "Alice").unwrap(),
+            (2, row("Alice"))
+        );
+    }
+
+    #[test]
+    fn txn_remove_absent_key_after_clear_keeps_other_rows_index_entry() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.clear();
+        txn.Users.insert(2, row("Alice"));
+        // A no-op, but row 1's cleared value shares an index key with row 2.
+        txn.Users.remove(&1);
+        assert_eq!(
+            txn.Users.indexes().name.get("Alice").unwrap(),
+            (2, row("Alice"))
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store.Users.indexes().name.get(OWNER, "Alice").unwrap(),
+            (2, row("Alice"))
+        );
     }
 
     #[test]
     fn txn_base_iter_mut_updates_index_on_field_change() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>().iter_mut().next().unwrap().1.name = "Charlie".to_owned();
-        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        txn.Users.insert(1, row("Alice"));
+        txn.Users
+            .with_iter_mut(|i| i.next().unwrap().1.name = "Charlie".to_owned());
+        assert!(txn.Users.indexes().name.get("Alice").is_none());
         assert_eq!(
-            txn.table_by::<index::Users::name>().get("Charlie").unwrap(),
+            txn.Users.indexes().name.get("Charlie").unwrap(),
             (
                 1,
                 Row {
@@ -757,15 +879,17 @@ mod test_transactional_index {
     fn txn_base_iter_mut_after_clear_keeps_new_rows_indexed() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>().clear();
-        txn.table::<Users>().insert(2, row("Bob"));
-        for (_, v) in txn.table::<Users>().iter_mut() {
-            v.name.push('!');
-        }
+        txn.Users.insert(1, row("Alice"));
+        txn.Users.clear();
+        txn.Users.insert(2, row("Bob"));
+        txn.Users.with_iter_mut(|i| {
+            for (_, v) in i {
+                v.name.push('!');
+            }
+        });
         txn.commit().unwrap();
 
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.get("Alice").is_none());
         assert!(index.get("Bob").is_none());
         assert_eq!(index.get("Bob!").unwrap(), (2, row("Bob!")));
@@ -775,12 +899,12 @@ mod test_transactional_index {
     fn txn_base_iter_mut_after_clear_unmodified_stays_indexed() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().clear();
-        txn.table::<Users>().insert(2, row("Bob"));
-        for (_, _v) in txn.table::<Users>().iter_mut() {}
+        txn.Users.clear();
+        txn.Users.insert(2, row("Bob"));
+        txn.Users.with_iter_mut(|i| i.for_each(|_| {}));
         txn.commit().unwrap();
 
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
     }
 
@@ -790,15 +914,17 @@ mod test_transactional_index {
     fn txn_base_iter_mut_after_remove_keeps_index_consistent() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice"));
-        txn.table::<Users>().insert(2, row("Bob"));
-        txn.table::<Users>().remove(&1);
-        for (_, v) in txn.table::<Users>().iter_mut() {
-            v.name.push('!');
-        }
+        txn.Users.insert(1, row("Alice"));
+        txn.Users.insert(2, row("Bob"));
+        txn.Users.remove(&1);
+        txn.Users.with_iter_mut(|i| {
+            for (_, v) in i {
+                v.name.push('!');
+            }
+        });
         txn.commit().unwrap();
 
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.get("Alice").is_none());
         assert!(index.get("Alice!").is_none());
         assert!(index.get("Bob").is_none());
@@ -809,16 +935,16 @@ mod test_transactional_index {
     fn ro_txn_index_get_returns_none_when_absent() {
         let store = KvStore::new();
         let txn = store.begin_ro_transaction(OWNER);
-        assert!(txn.table_by::<index::Users::name>().get("Alice").is_none());
+        assert!(txn.Users.indexes().name.get("Alice").is_none());
     }
 
     #[test]
     fn ro_txn_index_get_returns_value_inserted_before_txn() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.Users.insert(OWNER, 1, row("Alice"));
         let txn = store.begin_ro_transaction(OWNER);
         assert_eq!(
-            txn.table_by::<index::Users::name>().get("Alice").unwrap(),
+            txn.Users.indexes().name.get("Alice").unwrap(),
             (1, row("Alice"))
         );
     }
@@ -826,10 +952,12 @@ mod test_transactional_index {
     #[test]
     fn ro_txn_index_with_returns_some() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
+        store.Users.insert(OWNER, 1, row("Alice"));
         let txn = store.begin_ro_transaction(OWNER);
         assert_eq!(
-            txn.table_by::<index::Users::name>()
+            txn.Users
+                .indexes()
+                .name
                 .with("Alice", |k, v| {
                     assert_eq!(*k, 1);
                     v.name.len()
@@ -842,11 +970,11 @@ mod test_transactional_index {
     #[test]
     fn ro_txn_index_iter_cloned_yields_rows() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
         let txn = store.begin_ro_transaction(OWNER);
 
-        let table = txn.table_by::<index::Users::name>();
+        let table = txn.Users.indexes().name;
         let mut rows: Vec<_> = table.iter().collect();
         rows.sort_by(|a, b| a.0.cmp(b.0));
         assert_eq!(
@@ -859,17 +987,123 @@ mod test_transactional_index {
     }
 
     #[test]
-    fn ro_txn_index_for_each_yields_rows() {
+    fn ro_txn_index_keys_yields_index_keys() {
         let store = KvStore::new();
-        store.table::<Users>(OWNER).insert(1, row("Alice"));
-        store.table::<Users>(OWNER).insert(2, row("Bob"));
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
         let txn = store.begin_ro_transaction(OWNER);
-        let mut names: Vec<String> = Vec::new();
-        txn.table_by::<index::Users::name>()
+
+        let mut keys: Vec<_> = txn.Users.indexes().name.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn txn_index_iter_and_keys_see_pending_changes() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.insert(2, row("Bob"));
+        txn.Users.remove(&1);
+        txn.Users.insert(3, row("Carol"));
+
+        let index = txn.Users.indexes().name;
+        let mut rows: Vec<_> = index
             .iter()
-            .for_each(|(k, ..)| names.push(k.clone()));
-        names.sort();
-        assert_eq!(names, vec!["Alice".to_owned(), "Bob".to_owned()]);
+            .map(|(k, bk, v)| (k.clone(), *bk, v.clone()))
+            .collect();
+        rows.sort_by_key(|(_, bk, _)| *bk);
+        assert_eq!(
+            rows,
+            vec![
+                ("Bob".to_owned(), 2, row("Bob")),
+                ("Carol".to_owned(), 3, row("Carol")),
+            ]
+        );
+
+        let mut keys: Vec<_> = index.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["Bob", "Carol"]);
+    }
+
+    #[test]
+    fn txn_index_changes_rolled_back_on_drop() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.Users.insert(3, row("Carol"));
+            txn.Users.remove(&1);
+            txn.Users.with_mut(&2, |r| r.name = "Robert".to_owned());
+        }
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert!(index.get("Carol").is_none());
+        assert!(index.get("Robert").is_none());
+        assert_eq!(index.get("Alice").unwrap(), (1, row("Alice")));
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    #[test]
+    fn txn_index_clear_rolled_back_on_drop() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.Users.clear();
+            // Reuses an index key of a cleared row.
+            txn.Users.insert(3, row("Alice"));
+        }
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert_eq!(index.with_keys(|i| i.count()), 2);
+        assert_eq!(index.get("Alice").unwrap(), (1, row("Alice")));
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    // `with_mut` updates the index after each row, so swapping two rows' index keys one row at a
+    // time passes through a state where both rows have the same key, which poisons the index.
+    #[test]
+    fn txn_swap_index_keys_with_mut_poisons_index() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.with_mut(&1, |r| r.name = "Bob".to_owned());
+        txn.Users.with_mut(&2, |r| r.name = "Alice".to_owned());
+        assert_eq!(txn.commit(), Err(Error::NonUniqueIndexKey("Users by name")));
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert_eq!(index.get("Alice").unwrap(), (1, row("Alice")));
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    // `with_iter_mut` only rebuilds the index once every row has been visited, so the same swap
+    // succeeds.
+    #[test]
+    fn txn_swap_index_keys_with_iter_mut_succeeds() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.with_iter_mut(|i| {
+            for (_, r) in i {
+                r.name = if r.name == "Alice" { "Bob" } else { "Alice" }.to_owned();
+            }
+        });
+        txn.commit().unwrap();
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert_eq!(index.get("Alice").unwrap(), (2, row("Alice")));
+        assert_eq!(index.get("Bob").unwrap(), (1, row("Bob")));
     }
 }
 
@@ -903,10 +1137,10 @@ mod test_poison {
     fn ops_return_error_when_poisoned() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-        txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+        txn.Users.insert(1, row("Alice", "alice1@x.com"));
+        txn.Users.insert(2, row("Alice", "alice2@x.com"));
 
-        let index_name = txn.table_by::<index::Users::name>();
+        let index_name = txn.Users.indexes().name;
         assert_eq!(
             index_name.check_consistent(),
             Err(Error::NonUniqueIndexKey("Users by name"))
@@ -923,49 +1157,36 @@ mod test_poison {
     #[test]
     fn check_consistent_ok_when_unique() {
         let store = KvStore::new();
-        store
-            .table::<Users>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .check_consistent()
-                .is_ok()
-        );
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
+        assert!(store.Users.indexes().name.check_consistent().is_ok());
     }
 
     #[test]
     fn base_table_unaffected_when_index_poisoned() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-        txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+        txn.Users.insert(1, row("Alice", "alice1@x.com"));
+        txn.Users.insert(2, row("Alice", "alice2@x.com"));
 
         // The `name` index is poisoned, but the base table can still be read by primary key.
-        assert_eq!(
-            txn.table::<Users>().get(&1),
-            Some(row("Alice", "alice1@x.com"))
-        );
-        assert_eq!(
-            txn.table::<Users>().get(&2),
-            Some(row("Alice", "alice2@x.com"))
-        );
+        assert_eq!(txn.Users.get(&1), Some(row("Alice", "alice1@x.com")));
+        assert_eq!(txn.Users.get(&2), Some(row("Alice", "alice2@x.com")));
     }
 
     #[test]
     fn sibling_index_not_poisoned() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-        txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+        txn.Users.insert(1, row("Alice", "alice1@x.com"));
+        txn.Users.insert(2, row("Alice", "alice2@x.com"));
 
         // `name` is poisoned (both "Alice")...
         assert!(matches!(
-            txn.table_by::<index::Users::name>().check_consistent(),
+            txn.Users.indexes().name.check_consistent(),
             Err(Error::NonUniqueIndexKey(_))
         ));
         // ...but `email` has distinct keys and stays consistent.
-        let email_index = txn.table_by::<index::Users::email>();
+        let email_index = txn.Users.indexes().email;
         assert!(email_index.check_consistent().is_ok());
         assert_eq!(
             email_index.get("alice1@x.com").unwrap(),
@@ -978,50 +1199,19 @@ mod test_poison {
     }
 
     #[test]
-    fn txn_get_returns_error_when_poisoned() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-        txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
-
-        assert!(matches!(
-            txn.table_by::<index::Users::name>().get("Alice"),
-            Err(Error::NonUniqueIndexKey(_))
-        ));
-    }
-
-    #[test]
-    fn txn_check_consistent_errors_when_poisoned() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-        txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
-
-        assert!(matches!(
-            txn.table_by::<index::Users::name>().check_consistent(),
-            Err(Error::NonUniqueIndexKey(_))
-        ));
-    }
-
-    #[test]
     fn txn_commit_fails_when_index_poisoned() {
         let store = KvStore::new();
         {
             let mut txn = store.begin_transaction(OWNER);
-            txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-            txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+            txn.Users.insert(1, row("Alice", "alice1@x.com"));
+            txn.Users.insert(2, row("Alice", "alice2@x.com"));
             assert!(matches!(txn.commit(), Err(Error::NonUniqueIndexKey(_))));
         }
 
         // The failed commit rolled everything back: the store is clean and consistent.
-        assert!(store.table::<Users>(OWNER).get(&1).is_none());
-        assert!(store.table::<Users>(OWNER).get(&2).is_none());
-        assert!(
-            store
-                .table_by::<index::Users::name>(OWNER)
-                .check_consistent()
-                .is_ok()
-        );
+        assert!(store.Users.get(OWNER, &1).is_none());
+        assert!(store.Users.get(OWNER, &2).is_none());
+        assert!(store.Users.indexes().name.check_consistent().is_ok());
     }
 
     #[test]
@@ -1029,39 +1219,37 @@ mod test_poison {
         let store = KvStore::new();
         {
             let mut txn = store.begin_transaction(OWNER);
-            txn.table::<Users>().insert(1, row("Alice", "alice1@x.com"));
-            txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+            txn.Users.insert(1, row("Alice", "alice1@x.com"));
+            txn.Users.insert(2, row("Alice", "alice2@x.com"));
             // dropped without committing
         }
 
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.check_consistent().is_ok());
         assert!(index.get("Alice").is_none());
-        assert!(store.table::<Users>(OWNER).is_empty());
+        assert!(store.Users.is_empty());
     }
 
     #[test]
     fn txn_poison_against_committed_rolled_back() {
         let store = KvStore::new();
         // Commit Alice(1) first, so the "Alice" name-index entry is already committed.
-        store
-            .table::<Users>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
         {
             // This txn collides with the *already-committed* "Alice" index entry, so the index is
             // poisoned without it ever being recorded as `modified` within the txn.
             let mut txn = store.begin_transaction(OWNER);
-            txn.table::<Users>().insert(2, row("Alice", "alice2@x.com"));
+            txn.Users.insert(2, row("Alice", "alice2@x.com"));
             // rollback on drop
         }
 
         // An unrelated, valid commit must succeed — the rolled-back poison must not leak into it.
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Users>().insert(3, row("Bob", "bob@x.com"));
+        txn.Users.insert(3, row("Bob", "bob@x.com"));
         txn.commit().unwrap();
 
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(
             index.check_consistent().is_ok(),
             "index should not be poisoned after the colliding txn was rolled back"
@@ -1074,18 +1262,38 @@ mod test_poison {
     }
 
     #[test]
+    fn txn_poison_healed_by_clear() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.insert(1, row("Alice", "alice1@x.com"));
+        txn.Users.insert(2, row("Alice", "alice2@x.com"));
+        txn.Users.clear();
+        txn.Users.insert(3, row("Alice", "alice3@x.com"));
+        assert!(txn.Users.indexes().name.check_consistent().is_ok());
+        txn.commit().unwrap();
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (3, row("Alice", "alice3@x.com"))
+        );
+    }
+
+    #[test]
     fn assert_unique_distinct_keys_ok() {
         let store = KvStore::new();
         store
-            .table::<AssertingUsers>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
+            .AssertingUsers
+            .insert(OWNER, 1, row("Alice", "alice1@x.com"));
         store
-            .table::<AssertingUsers>(OWNER)
-            .insert(2, row("Bob", "bob@x.com"));
+            .AssertingUsers
+            .insert(OWNER, 2, row("Bob", "bob@x.com"));
         assert_eq!(
             store
-                .table_by::<index::AssertingUsers::name>(OWNER)
-                .get("Alice")
+                .AssertingUsers
+                .indexes()
+                .name
+                .get(OWNER, "Alice")
                 .unwrap(),
             (1, row("Alice", "alice1@x.com"))
         );
@@ -1096,90 +1304,77 @@ mod test_poison {
     fn assert_unique_duplicate_base_insert_panics() {
         let store = KvStore::new();
         store
-            .table::<AssertingUsers>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
+            .AssertingUsers
+            .insert(OWNER, 1, row("Alice", "alice1@x.com"));
         store
-            .table::<AssertingUsers>(OWNER)
-            .insert(2, row("Alice", "alice2@x.com"));
+            .AssertingUsers
+            .insert(OWNER, 2, row("Alice", "alice2@x.com"));
     }
 
     #[test]
     fn raw_base_try_insert_duplicate_errors_and_rolls_back() {
         let store = KvStore::new();
-        store
-            .table::<Users>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
         // The duplicate "Alice" name-index key makes the insert fail.
         assert!(matches!(
             store
-                .table::<Users>(OWNER)
-                .try_insert(2, row("Alice", "alice2@x.com")),
+                .Users
+                .try_insert(OWNER, 2, row("Alice", "alice2@x.com")),
             Err(Error::NonUniqueIndexKey(_))
         ));
 
         // The failed insert rolled back: the index is consistent and only the original row remains.
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.check_consistent().is_ok());
         assert_eq!(
             index.get("Alice").unwrap(),
             (1, row("Alice", "alice1@x.com"))
         );
         assert_eq!(
-            store.table::<Users>(OWNER).get(&1),
+            store.Users.get(OWNER, &1),
             Some(row("Alice", "alice1@x.com"))
         );
-        assert_eq!(store.table::<Users>(OWNER).get(&2), None);
+        assert_eq!(store.Users.get(OWNER, &2), None);
     }
 
     #[test]
     fn raw_base_insert_duplicate_panics_and_rolls_back() {
         let store = KvStore::new();
-        store
-            .table::<Users>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            store
-                .table::<Users>(OWNER)
-                .insert(2, row("Alice", "alice2@x.com"));
+            store.Users.insert(OWNER, 2, row("Alice", "alice2@x.com"));
         }));
         assert!(result.is_err(), "duplicate raw insert should panic");
 
         // The panicked insert has been rolled back, leaving the store consistent.
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.check_consistent().is_ok());
         assert_eq!(
             index.get("Alice").unwrap(),
             (1, row("Alice", "alice1@x.com"))
         );
-        assert_eq!(store.table::<Users>(OWNER).get(&2), None);
+        assert_eq!(store.Users.get(OWNER, &2), None);
     }
 
     #[test]
     fn raw_with_mut_collision_returns_error_and_rolls_back() {
         let store = KvStore::new();
-        store
-            .table::<Users>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
-        store
-            .table::<Users>(OWNER)
-            .insert(2, row("Bob", "bob@x.com"));
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
+        store.Users.insert(OWNER, 2, row("Bob", "bob@x.com"));
 
         // Renaming Bob to "Alice" collides on the `name` index, so the mini-transaction fails.
         assert!(matches!(
             store
-                .table::<Users>(OWNER)
-                .with_mut(&2, |r| r.name = "Alice".to_owned()),
+                .Users
+                .with_mut(OWNER, &2, |r| r.name = "Alice".to_owned()),
             Err(Error::NonUniqueIndexKey(_))
         ));
 
         // Rolled back: Bob is unchanged and the index is consistent.
-        assert_eq!(
-            store.table::<Users>(OWNER).get(&2),
-            Some(row("Bob", "bob@x.com"))
-        );
-        let index = store.table_by::<index::Users::name>(OWNER);
+        assert_eq!(store.Users.get(OWNER, &2), Some(row("Bob", "bob@x.com")));
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.check_consistent().is_ok());
         assert_eq!(index.get("Bob").unwrap(), (2, row("Bob", "bob@x.com")));
         assert_eq!(
@@ -1191,12 +1386,10 @@ mod test_poison {
     #[test]
     fn raw_with_mut_panic_rolls_back() {
         let store = KvStore::new();
-        store
-            .table::<Users>(OWNER)
-            .insert(1, row("Alice", "alice1@x.com"));
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = store.table::<Users>(OWNER).with_mut(&1, |r| {
+            let _ = store.Users.with_mut(OWNER, &1, |r| {
                 r.name = "Zelda".to_owned();
                 panic!("boom");
             });
@@ -1205,15 +1398,168 @@ mod test_poison {
 
         // The mutation (and its index update) rolled back; "Alice" is intact and queryable.
         assert_eq!(
-            store.table::<Users>(OWNER).get(&1),
+            store.Users.get(OWNER, &1),
             Some(row("Alice", "alice1@x.com"))
         );
-        let index = store.table_by::<index::Users::name>(OWNER);
+        let index = store.with_owner(OWNER).Users.indexes().name;
         assert!(index.check_consistent().is_ok());
         assert_eq!(
             index.get("Alice").unwrap(),
             (1, row("Alice", "alice1@x.com"))
         );
         assert!(index.get("Zelda").is_none());
+    }
+
+    #[test]
+    fn txn_with_mut_caught_panic_fails_commit() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            txn.Users.with_mut(&1, |_| panic!("boom"))
+        }))
+        .unwrap_err();
+        // The row's index entries were removed, but not re-added.
+        assert_eq!(txn.commit(), Err(Error::TransactionFailed));
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
+    }
+
+    #[test]
+    fn txn_with_iter_mut_caught_panic_fails_commit() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            txn.Users.with_iter_mut(|iter| {
+                for (_, r) in iter {
+                    r.name = "Zelda".to_owned();
+                }
+                panic!("boom");
+            })
+        }))
+        .unwrap_err();
+        // The rows' index entries were removed, but not rebuilt.
+        assert_eq!(txn.commit(), Err(Error::TransactionFailed));
+
+        assert_eq!(
+            store.Users.get(OWNER, &1),
+            Some(row("Alice", "alice1@x.com"))
+        );
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
+        assert!(index.get("Zelda").is_none());
+    }
+
+    #[test]
+    fn txn_assert_unique_caught_panic_fails_commit() {
+        let store = KvStore::new();
+        store
+            .AssertingUsers
+            .insert(OWNER, 1, row("Alice", "alice1@x.com"));
+        store
+            .AssertingUsers
+            .insert(OWNER, 2, row("Bob", "bob@x.com"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Removes the "Bob" index entry, then panics adding the (non-unique) "Alice" entry.
+            txn.AssertingUsers.insert(2, row("Alice", "alice2@x.com"))
+        }))
+        .unwrap_err();
+        assert_eq!(txn.commit(), Err(Error::TransactionFailed));
+
+        let index = store.with_owner(OWNER).AssertingUsers.indexes().name;
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob", "bob@x.com")));
+    }
+}
+
+#[cfg(test)]
+mod test_computed_index {
+    use crate::{Error, KvErrorExt, store};
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Post {
+        pub tags: Vec<String>,
+    }
+
+    fn post(tags: &[&str]) -> Post {
+        Post {
+            tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+        }
+    }
+
+    // Each post is indexed under each of its tags, i.e., zero or more keys per row.
+    store!(tables: { Posts(u32 => Post; OWNER; index(tag: String = |p: &Post| p.tags.clone())) });
+
+    const OWNER: &str = "owner";
+
+    #[test]
+    fn row_with_no_index_keys_is_not_indexed() {
+        let store = KvStore::new();
+        store.Posts.insert(OWNER, 1, post(&[]));
+
+        let index = store.with_owner(OWNER).Posts.indexes().tag;
+        assert!(index.check_consistent().is_ok());
+        assert_eq!(index.with_keys(|i| i.count()), 0);
+        assert_eq!(store.Posts.get(OWNER, &1), Some(post(&[])));
+    }
+
+    #[test]
+    fn row_is_indexed_under_each_key() {
+        let store = KvStore::new();
+        store.Posts.insert(OWNER, 1, post(&["a", "b"]));
+        store.Posts.insert(OWNER, 2, post(&["c"]));
+
+        let index = store.with_owner(OWNER).Posts.indexes().tag;
+        assert_eq!(index.get("a").unwrap(), (1, post(&["a", "b"])));
+        assert_eq!(index.get("b").unwrap(), (1, post(&["a", "b"])));
+        assert_eq!(index.get("c").unwrap(), (2, post(&["c"])));
+    }
+
+    #[test]
+    fn remove_removes_every_index_key() {
+        let store = KvStore::new();
+        store.Posts.insert(OWNER, 1, post(&["a", "b"]));
+        store.Posts.remove(OWNER, &1);
+
+        let index = store.with_owner(OWNER).Posts.indexes().tag;
+        assert_eq!(index.with_keys(|i| i.count()), 0);
+    }
+
+    #[test]
+    fn with_mut_updates_index_keys() {
+        let store = KvStore::new();
+        store.Posts.insert(OWNER, 1, post(&["a", "b"]));
+        store
+            .Posts
+            .with_mut(OWNER, &1, |p| p.tags = vec!["b".to_owned(), "c".to_owned()])
+            .unwrap();
+
+        let index = store.with_owner(OWNER).Posts.indexes().tag;
+        assert!(index.get("a").is_none());
+        assert_eq!(index.get("b").unwrap(), (1, post(&["b", "c"])));
+        assert_eq!(index.get("c").unwrap(), (1, post(&["b", "c"])));
+    }
+
+    #[test]
+    fn rows_sharing_an_index_key_poison_the_index() {
+        let store = KvStore::new();
+        store.Posts.insert(OWNER, 1, post(&["a"]));
+        assert_eq!(
+            store.Posts.try_insert(OWNER, 2, post(&["b", "a"])),
+            Err(Error::NonUniqueIndexKey("Posts by tag"))
+        );
+        assert_eq!(store.Posts.get(OWNER, &2), None);
     }
 }

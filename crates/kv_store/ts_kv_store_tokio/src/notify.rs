@@ -10,7 +10,7 @@ use tokio::{
     sync::{Notify, mpsc::error::TrySendError},
     time::{Instant, timeout},
 };
-use ts_kv_store::{GeneratedStorage, Subscriber};
+use ts_kv_store::{GeneratedStorage, GeneratedStore, Subscriber};
 
 use crate::{QueuedNotifications, SubscriberSender, TokioNotifier};
 
@@ -34,8 +34,8 @@ const MAX_RETRIES: u32 = 10;
 pub const MAX_RETRIES: u32 = 3;
 
 /// Wakes up when notified and sends any queued notifications.
-pub(super) async fn notify_loop<Storage: GeneratedStorage + 'static>(
-    notifier: Weak<TokioNotifier<Storage>>,
+pub(super) async fn notify_loop<Storage: GeneratedStorage, Store: GeneratedStore<Storage>>(
+    notifier: Weak<TokioNotifier<Storage, Store>>,
     notify: Arc<Notify>,
 ) {
     // Don't start looping until the first time we're notified. This means that we won't try
@@ -71,7 +71,7 @@ pub(super) struct Failing {
     last_failure: Instant,
 }
 
-impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> TokioNotifier<Storage, Store> {
     /// Send every queued notification to its subscriber's channel, returning whether this round of
     /// notifications should be retried.
     ///

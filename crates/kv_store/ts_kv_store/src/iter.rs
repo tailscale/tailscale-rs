@@ -1,329 +1,62 @@
-//! Iterate over a table
+//! Iterate over tables and indexes.
+//!
+//! These functions borrow the store's data via a guard, so the caller must hold a lock on the
+//! store for as long as the returned iterators (and their items) are used.
 
-use std::{collections::HashSet, hash::Hash, marker::PhantomData};
+use std::hash::Hash;
 
 use crate::{
     Owner,
-    operations::{StorageGuard, StorageGuardMut},
+    operations::{BaseKey, BaseValue, StorageGuard, StorageGuardMut, assert_owner},
     schema::{IndexDesc, TableDesc},
-    storage::{Table, TableIterator as InnerIterator, TableIteratorMut as InnerIteratorMut},
-    transactions::TxnId,
 };
 
-/// Phantom type to iterate over keys.
-#[doc(hidden)]
-pub struct Keys;
-/// Phantom type to iterate over Values.
-#[doc(hidden)]
-pub struct Values;
-/// Phantom type to iterate over key/value pairs.
-#[doc(hidden)]
-pub struct KeysAndValues;
+/// Iterate the key/value pairs of the table `D`.
+pub(crate) fn table_iter<D: TableDesc>(
+    guard: &impl StorageGuard<D::Storage>,
+) -> impl Iterator<Item = (&D::Key, &D::Value)> {
+    guard.table::<D>().iter(guard.txn_id())
+}
 
-type Indexes<D> =
-    Table<<D as IndexDesc>::BaseTable, <<D as IndexDesc>::BaseTable as TableDesc>::IndexStorage>;
+/// Iterate the index `D`, yielding each index key with the corrsponding base table key, and value.
+pub(crate) fn index_iter<D: IndexDesc>(
+    guard: &impl StorageGuard<D::Storage>,
+) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
+where
+    D::Value: Hash + Eq,
+{
+    let txn_id = guard.txn_id();
+    let base = guard.table::<D::BaseTable>();
+    guard
+        .table::<D>()
+        .iter(txn_id)
+        .filter_map(move |(k, bk)| Some((k, bk, base.get(bk, txn_id)?)))
+}
 
-/// An iterator for a single table (described by the generic parameter `D`) in the KV store.
+/// (Possibly) mutating iteration over a table `D`.
 ///
-/// This is basically just a wrapper for an iterator over the `HashMap` representing the table.
-/// However, we must hold a guard for the `KvStore`'s storage for the lifetime of the iterator.
-pub struct TableIterator<'guard, Guard, D: TableDesc, Kind> {
-    /// Guard on the KV store's storage (all of it).
-    guard: Guard,
-    /// An iterator over the `HashMap` representing the table.
-    ///
-    /// Invariants:
-    ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<InnerIterator<'guard, D>>,
-    _kind: PhantomData<(D, Kind)>,
-}
-
-impl<'guard, Guard, D: TableDesc, Kind> TableIterator<'guard, Guard, D, Kind> {
-    /// Create an iterator over the table described by `D`.
-    pub(crate) fn new(guard: Guard) -> Self
-    where
-        Guard: StorageGuard<D::Storage> + 'guard,
-        D: 'guard,
-    {
-        let mut result = TableIterator {
-            guard,
-            inner: None,
-            _kind: PhantomData,
-        };
-        result.inner = Some(inner_iter::<D, Guard>(
-            &result.guard,
-            result.guard.storage().txn_id(),
-        ));
-        result
-    }
-
-    fn inner_next(&mut self) -> Option<(&'guard D::Key, &'guard D::Value)> {
-        self.inner.as_mut().unwrap().next()
-    }
-}
-
-impl<'guard, Guard: StorageGuard<D::Storage>, D: TableDesc> Iterator
-    for TableIterator<'guard, Guard, D, KeysAndValues>
-{
-    type Item = (&'guard D::Key, &'guard D::Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Iterate by delegating to the `HashMap` iterator.
-        self.inner_next()
-    }
-}
-
-impl<'guard, Guard, D: TableDesc> Iterator for TableIterator<'guard, Guard, D, Keys> {
-    type Item = &'guard D::Key;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Iterate by delegating to the `HashMap` iterator.
-        self.inner_next().map(|(k, _)| k)
-    }
-}
-
-impl<'guard, Guard: StorageGuard<D::Storage>, D: TableDesc> Iterator
-    for TableIterator<'guard, Guard, D, Values>
-{
-    type Item = &'guard D::Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Iterate by delegating to the `HashMap` iterator.
-        self.inner_next().map(|(_, v)| v)
-    }
-}
-
-impl<'guard, Guard, D: TableDesc, Kind> Drop for TableIterator<'guard, Guard, D, Kind> {
-    fn drop(&mut self) {
-        // Ensure that `self.inner` is dropped before `self.guard`.
-        self.inner = None;
-    }
-}
-
-/// An iterator giving mutable access to values.
-pub struct TableIteratorMut<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: TableDesc, Kind>
-where
-    D::Value: PartialEq,
-{
-    /// Guard on the KV store's storage (all of it).
-    guard: Guard,
-    /// An iterator over the `HashMap` representing the table.
-    ///
-    /// Invariants:
-    ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<InnerIteratorMut<'guard, D, D::IndexStorage>>,
-    /// Tracks keys of yielded values for rebuilding indexes in `drop`.
-    modified: HashSet<D::Key>,
-    _kind: PhantomData<(D, Kind)>,
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage> + 'guard, D: TableDesc, Kind>
-    TableIteratorMut<'guard, Guard, D, Kind>
-where
-    D::Value: Clone + PartialEq,
-{
-    /// Create an iterator over the table described by `D`.
-    pub(crate) fn new(guard: Guard, owner: Owner) -> Self
-    where
-        D: 'guard,
-    {
-        let mut result = TableIteratorMut {
-            guard,
-            inner: None,
-            modified: HashSet::new(),
-            _kind: PhantomData,
-        };
-        let txn_id = result.guard.storage().txn_id();
-        let max_transaction_id = result.guard.storage().max_committed_id();
-        result.inner = Some(inner_iter_mut::<D, Guard>(
-            &mut result.guard,
-            txn_id,
-            max_transaction_id,
-            owner,
-        ));
-        result
-    }
-
-    fn inner_next(&mut self) -> Option<(&'guard D::Key, &'guard mut D::Value)> {
-        let (k, v) = self.inner.as_mut().unwrap().next()?;
-        // The inner iterator has de-indexed this row; record the key for later re-indexing.
-        self.modified.insert(k.clone());
-        Some((k, v))
-    }
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc, Kind> Drop
-    for TableIteratorMut<'guard, Guard, D, Kind>
-where
-    D::Value: PartialEq,
-{
-    fn drop(&mut self) {
-        self.inner = None;
-        let storage = self.guard.storage();
-        let txn_id = storage.txn_id();
-        let max_transaction_id = storage.max_committed_id();
-        let table = D::get_table_mut(&mut storage.tables);
-        for k in &self.modified {
-            table.rebuild_indexes_for_key(k, txn_id, max_transaction_id);
-            // The iterator handed out a `&mut` to this row, so treat it as mutated. Recording
-            // happens here rather than as rows are yielded because the iterator borrows the table.
-            table.record_mutated_key(k, txn_id, max_transaction_id);
-        }
-    }
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc> Iterator
-    for TableIteratorMut<'guard, Guard, D, KeysAndValues>
-where
-    D::Value: Clone + PartialEq,
-{
-    type Item = (&'guard D::Key, &'guard mut D::Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner_next()
-    }
-}
-
-impl<'guard, Guard: StorageGuardMut<D::Storage>, D: TableDesc> Iterator
-    for TableIteratorMut<'guard, Guard, D, Values>
-where
-    D::Value: Clone + PartialEq,
-{
-    type Item = &'guard mut D::Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner_next().map(|(_, v)| v)
-    }
-}
-
-/// An iterator for an indexed table (described by the generic parameter `D`) in the KV
-/// store.
-pub struct IndexIterator<'guard, Guard, D: IndexDesc, Kind> {
-    /// Guard on the KV store's storage (all of it).
-    guard: Guard,
-    /// An iterator over the `HashMap` representing the index.
-    ///
-    /// Invariants:
-    ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<(&'guard Indexes<D>, InnerIterator<'guard, D>)>,
-    _kind: PhantomData<Kind>,
-}
-
-impl<'guard, Guard, D: IndexDesc, Kind> IndexIterator<'guard, Guard, D, Kind> {
-    /// Create an iterator over the table described by `D` (the index).
-    pub(crate) fn new(guard: Guard) -> Self
-    where
-        Guard: StorageGuard<D::Storage> + 'guard,
-        D: 'guard,
-    {
-        let mut result = IndexIterator {
-            guard,
-            inner: None,
-            _kind: PhantomData,
-        };
-
-        let base_table = <D::BaseTable as TableDesc>::get_table(&result.guard.storage().tables);
-
-        result.inner = Some((
-            // SAFETY: for the same reasoning as `inner_iter`, we're extending the lifetime of this
-            // internal reference to 'guard. This is safe for the same reasons, i.e. we ensure that
-            // guard is dropped last.
-            unsafe { &*(base_table as *const _) },
-            inner_iter::<D, Guard>(&result.guard, result.guard.storage().txn_id()),
-        ));
-
-        result
-    }
-}
-
-impl<'guard, Guard: StorageGuard<D::Storage>, D: IndexDesc> Iterator
-    for IndexIterator<'guard, Guard, D, KeysAndValues>
-where
-    D::Value: Hash + Eq,
-{
-    type Item = (
-        &'guard D::Key,
-        &'guard <D::BaseTable as TableDesc>::Key,
-        &'guard <D::BaseTable as TableDesc>::Value,
-    );
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (base, iter) = self.inner.as_mut().unwrap();
-        let (k, bk) = iter.next()?;
-        let value = base.get(bk, self.guard.storage().txn_id())?;
-
-        Some((k, bk, value))
-    }
-}
-
-impl<'guard, Guard, D: IndexDesc> Iterator for IndexIterator<'guard, Guard, D, Keys> {
-    type Item = &'guard D::Key;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (_, iter) = self.inner.as_mut().unwrap();
-        iter.next().map(|(k, _)| k)
-    }
-}
-
-impl<'guard, Guard: StorageGuard<D::Storage>, D: IndexDesc> Iterator
-    for IndexIterator<'guard, Guard, D, Values>
-where
-    D::Value: Hash + Eq,
-{
-    type Item = (
-        &'guard <D::BaseTable as TableDesc>::Key,
-        &'guard <D::BaseTable as TableDesc>::Value,
-    );
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (base, iter) = self.inner.as_mut().unwrap();
-        let (_, bk) = iter.next()?;
-        let value = base.get(bk, self.guard.storage().txn_id())?;
-
-        Some((bk, value))
-    }
-}
-
-impl<'guard, Guard, D: IndexDesc, Kind> Drop for IndexIterator<'guard, Guard, D, Kind> {
-    fn drop(&mut self) {
-        // Ensure that `self.inner` is dropped before `self.guard`.
-        self.inner = None;
-    }
-}
-
-// Create an iterator over a table's data to use as a base for the above iterators.
-fn inner_iter<'guard, D, Guard>(guard: &Guard, txn_id: TxnId) -> InnerIterator<'guard, D>
-where
-    D: TableDesc + 'guard,
-    Guard: StorageGuard<D::Storage> + 'guard,
-{
-    let tables: *const _ = &guard.storage().tables;
-    // SAFETY: here we're extending the lifetime of the reference to the KV storage to `'guard`.
-    // We can't use a raw pointer because we won't be able to use that as input to create an
-    // iterator. To ensure safety we must ensure that `self.guard` outlives `self.inner`. We can
-    // outlive the temporary because guard holds a pointer to the storage and `tables` follows that
-    // pointer (via the `Deref` impl) to the tables field. So even if the temporary is dropped and
-    // `result` is moved, `&result.guard.tables` will point at the same address which is guaranteed
-    // to outlive `'guard`.
-    let tables = unsafe { &*tables };
-    D::get_table(tables).iter(txn_id)
-}
-
-// Create a mutable iterator from a mutable guard.
-fn inner_iter_mut<'guard, D, Guard>(
-    guard: &mut Guard,
-    txn_id: TxnId,
-    max_transaction_id: TxnId,
+/// If `f` panics, the panic is caught and the current transaction is rolled-back. Otherwise, indexes
+/// are rebuilt when `f` returns.
+pub(crate) fn with_table_iter_mut<D, T>(
+    guard: &mut impl StorageGuardMut<D::Storage>,
     owner: Owner,
-) -> InnerIteratorMut<'guard, D, D::IndexStorage>
+    f: impl for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
+) -> T
 where
-    D: TableDesc + 'guard,
-    Guard: StorageGuardMut<D::Storage> + 'guard,
+    D: TableDesc,
+    D::Value: Clone + PartialEq,
 {
-    let tables: *mut _ = &mut guard.storage().tables;
-    // SAFETY: see `inner_iter`.
-    let tables = unsafe { &mut *tables };
-    let table = D::get_table_mut(tables);
-    table.assert_owner(owner);
-    table.iter_mut(txn_id, max_transaction_id)
+    let txn_id = guard.txn_id();
+    let table = guard.table_mut::<D>();
+    assert_owner(D::OWNER, owner);
+
+    let mut yielded = Vec::new();
+    let result = f(&mut table
+        .iter_mut(txn_id)
+        .inspect(|(k, _)| yielded.push((*k).clone())));
+
+    for k in &yielded {
+        table.rebuild_indexes_for_key(k, txn_id);
+    }
+    result
 }

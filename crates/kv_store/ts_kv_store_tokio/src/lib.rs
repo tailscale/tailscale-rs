@@ -5,12 +5,20 @@
 //!
 //! A KV store is declared in the usual way using the `schema` macros. An instance of the store is
 //! created as part of creating a [`TokioNotifier`]. The notifier can be used to access the store
-//! (using the [`TokioNotifier::store`] method). Users should use the subscribe/unsubscribe methods
-//! of the notifier, rather than the underlying store.
+//! (using the [`TokioNotifier::store`] method).
 //!
 //! A [`TokioSubscriber`] is created from a [`TokioNotifier`] and combines a subscriber identity
 //! with the receiving end of a channel for receiving notifications (all subscriptions for a single
 //! subscriber are sent via the same channel).
+//!
+//! When subscribing to data in a store, a [`TokioSubscriber`] can be used directly as the subscriber,
+//! e.g.,
+//!
+//! ```ignore
+//! let notifier = TokioNotifier::new();
+//! let subscriber = notifier.create_subscriber(OWNER);
+//! notifier.store().foo.subscribe(&subscriber);
+//! ```
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -26,7 +34,7 @@ use tokio::{
     task::JoinHandle,
 };
 use ts_kv_store::{
-    GeneratedStorage, KvStore, Notifications, Notifier, Owner, Subscriber, Subscription,
+    GeneratedStorage, GeneratedStore, Notifications, Notifier, Owner, Subscriber, Subscription,
 };
 
 mod notify;
@@ -40,8 +48,8 @@ const CHANNEL_CAPACITY: usize = 2;
 /// A [`Notifier`] which forwards notifications to subscribers using Tokio channels.
 ///
 /// The generic parameter `Storage` links a notifier instance to a specific store.
-pub struct TokioNotifier<Storage: GeneratedStorage> {
-    store: Arc<KvStore<Storage>>,
+pub struct TokioNotifier<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> {
+    store: Arc<Store>,
     senders: Mutex<HashMap<Subscriber, SubscriberSender<Storage>>>,
     /// Notifications waiting to be sent, oldest first.
     queue: Mutex<VecDeque<QueuedNotifications<Storage>>>,
@@ -57,7 +65,7 @@ pub struct TokioNotifier<Storage: GeneratedStorage> {
 type QueuedNotifications<Storage> =
     HashMap<Subscription, Vec<<Storage as GeneratedStorage>::Notification>>;
 
-impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> TokioNotifier<Storage, Store> {
     /// Create a new `TokioNotifier` and [`KvStore`]. Spawns a task to send notifcations.
     ///
     /// The notifier owns the store and the store holds a weak reference back to the notifier.
@@ -65,14 +73,16 @@ impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
     /// Spawns the task which sends notifications to subscribers, so this must be called from within
     /// a Tokio runtime. The task runs until the notifier is dropped, waking whenever there are
     /// notifications to send and periodically while any are waiting to be retried.
-    pub fn new() -> Arc<TokioNotifier<Storage>> {
+    pub fn new() -> Arc<TokioNotifier<Storage, Store>> {
         let notify = Arc::new(Notify::new());
 
-        Arc::new_cyclic(|weak: &Weak<TokioNotifier<Storage>>| {
+        Arc::new_cyclic(|weak: &Weak<TokioNotifier<Storage, Store>>| {
             let task = tokio::spawn(notify::notify_loop(weak.clone(), notify.clone()));
 
             TokioNotifier {
-                store: Arc::new(KvStore::from_notifier(weak.clone())),
+                store: Arc::new(Store::from_notifier(
+                    weak.clone() as std::sync::Weak<dyn Notifier<Notification = _>>
+                )),
                 senders: Default::default(),
                 queue: Default::default(),
                 notify,
@@ -82,12 +92,12 @@ impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
     }
 
     /// The [`KvStore`] this notifier was created for.
-    pub fn store(&self) -> &Arc<KvStore<Storage>> {
+    pub fn store(&self) -> &Arc<Store> {
         &self.store
     }
 
     /// Create a new subscriber to this notifier.
-    pub fn create_subscriber(self: &Arc<Self>, owner: Owner) -> TokioSubscriber<Storage> {
+    pub fn create_subscriber(self: &Arc<Self>, owner: Owner) -> TokioSubscriber<Storage, Store> {
         let id = self.store.register_subscriber(owner);
         let (sender, receiver) = channel(CHANNEL_CAPACITY);
 
@@ -110,13 +120,17 @@ impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
     }
 }
 
-impl<Storage: GeneratedStorage> fmt::Debug for TokioNotifier<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> fmt::Debug
+    for TokioNotifier<Storage, Store>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("TokioNotifier").finish()
     }
 }
 
-impl<Storage: GeneratedStorage + 'static> Notifier for TokioNotifier<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> Notifier
+    for TokioNotifier<Storage, Store>
+{
     type Notification = Storage::Notification;
 
     fn notify(&self, notifications: Notifications<Self::Notification>) {
@@ -125,7 +139,9 @@ impl<Storage: GeneratedStorage + 'static> Notifier for TokioNotifier<Storage> {
     }
 }
 
-impl<Storage: GeneratedStorage> Drop for TokioNotifier<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> Drop
+    for TokioNotifier<Storage, Store>
+{
     fn drop(&mut self) {
         // Stop the sending task. Without this, the task would wait forever.
         self.task.abort();
@@ -136,17 +152,25 @@ impl<Storage: GeneratedStorage> Drop for TokioNotifier<Storage> {
 /// and receives notifications.
 ///
 /// Dropping a subscriber removes it and all its subscriptions from the store.
-pub struct TokioSubscriber<Storage: GeneratedStorage + 'static> {
+pub struct TokioSubscriber<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> {
     /// KvStore's id for this subscriber.
     id: Subscriber,
     /// Reference to our 'parent' notifier.
-    notifier: Arc<TokioNotifier<Storage>>,
+    notifier: Arc<TokioNotifier<Storage, Store>>,
     /// Receiver end of a Tokio channel for receiving notifications from the notifier.
     receiver: Receiver<Storage::Notification>,
     _owner: Owner,
 }
 
-impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>>
+    From<&'_ TokioSubscriber<Storage, Store>> for Subscriber
+{
+    fn from(s: &'_ TokioSubscriber<Storage, Store>) -> Self {
+        s.id
+    }
+}
+
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> TokioSubscriber<Storage, Store> {
     /// Wait for the next notification.
     ///
     /// Returns [`Error::ChannelDisconnected`] if the channel is closed. No further notifications will
@@ -167,7 +191,9 @@ impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
     }
 }
 
-impl<Storage: GeneratedStorage + 'static> Drop for TokioSubscriber<Storage> {
+impl<Storage: GeneratedStorage, Store: GeneratedStore<Storage>> Drop
+    for TokioSubscriber<Storage, Store>
+{
     /// Remove the subscriber (and thus all its subscriptions) from the store, drop the notifier's
     /// sender for it, and close its channel.
     fn drop(&mut self) {
@@ -225,3 +251,352 @@ impl From<ts_kv_store::Error> for Error {
 
 /// A `Result` whose error is this crate's [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::time::{sleep, timeout};
+    use ts_kv_store::{Event, SingletonEvent};
+
+    use super::*;
+
+    ts_kv_store::store!(
+        kvs: {
+            Count(u64; OWNER; notify(Clone)),
+        }
+        tables: {
+            Items(u32 => String; OWNER; notify(Clone)),
+        }
+    );
+
+    const OWNER: &str = "owner";
+
+    fn notifier() -> Arc<TokioNotifier<TableStorage, KvStore>> {
+        TokioNotifier::new()
+    }
+
+    fn insert_item(notifier: &TokioNotifier<TableStorage, KvStore>, key: u32, value: &str) {
+        notifier.store().Items.insert(OWNER, key, value.to_owned());
+    }
+
+    /// Extract the `(key, value)` of an `Items` per-key upsert, panicking on any other notification.
+    fn items_key_upsert(n: &Notification) -> (u32, String) {
+        match n {
+            Notification::Items(Event::KeyUpsert(k, v)) => (*k, v.clone()),
+            other => panic!("expected Items/KeyUpsert, got {other:?}"),
+        }
+    }
+
+    /// Extract the (sorted) keys of an `Items` table-level upsert.
+    fn items_table_upsert(n: &Notification) -> Vec<u32> {
+        match n {
+            Notification::Items(Event::TableUpsert(keys)) => {
+                let mut keys = keys.clone();
+                keys.sort();
+                keys
+            }
+            other => panic!("expected Items/TableUpsert, got {other:?}"),
+        }
+    }
+
+    /// Extract the value of a `Count` singleton upsert.
+    fn count_upsert(n: &Notification) -> u64 {
+        match n {
+            Notification::Count(SingletonEvent::Upsert(v)) => *v,
+            other => panic!("expected Count/Upsert, got {other:?}"),
+        }
+    }
+
+    /// Wait for the next notification, panicking if none arrives.
+    async fn recv_one(sub: &mut TokioSubscriber<TableStorage, KvStore>) -> Notification {
+        timeout(Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timed out waiting for a notification")
+            .expect("channel closed unexpectedly")
+    }
+
+    /// Assert that no notification is delivered. Gives the background task a chance to run first.
+    async fn assert_idle(sub: &mut TokioSubscriber<TableStorage, KvStore>) {
+        match timeout(Duration::from_millis(50), sub.recv()).await {
+            Err(_) => {} // nothing delivered, as expected
+            Ok(Ok(n)) => panic!("expected no notification, got {n:?}"),
+            Ok(Err(e)) => panic!("channel unexpectedly closed: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn table_subscription_receives_events() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Items.subscribe(&sub).unwrap();
+
+        // First insert into the empty table is a table-level upsert; the next is a per-key upsert.
+        insert_item(&notifier, 1, "a");
+        insert_item(&notifier, 2, "b");
+
+        assert_eq!(items_table_upsert(&recv_one(&mut sub).await), vec![1]);
+        assert_eq!(
+            items_key_upsert(&recv_one(&mut sub).await),
+            (2, "b".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn key_subscription_filters_other_keys() {
+        let notifier = notifier();
+        insert_item(&notifier, 99, "x"); // seed so later inserts are per-key
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Items.subscribe_key(&sub, 1).unwrap();
+
+        insert_item(&notifier, 2, "two"); // a different key: filtered out
+        insert_item(&notifier, 1, "one"); // the subscribed key: delivered
+
+        assert_eq!(
+            items_key_upsert(&recv_one(&mut sub).await),
+            (1, "one".to_owned())
+        );
+        assert_idle(&mut sub).await;
+    }
+
+    #[tokio::test]
+    async fn singleton_subscription_receives_updates() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Count.subscribe(&sub).unwrap();
+
+        notifier.store().Count.insert(OWNER, 7);
+
+        assert_eq!(count_upsert(&recv_one(&mut sub).await), 7);
+    }
+
+    #[tokio::test]
+    async fn global_subscription_sees_table_and_singleton() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().subscribe_global(&sub).unwrap();
+
+        insert_item(&notifier, 1, "a");
+        notifier.store().Count.insert(OWNER, 9);
+
+        assert_eq!(items_table_upsert(&recv_one(&mut sub).await), vec![1]);
+        assert_eq!(count_upsert(&recv_one(&mut sub).await), 9);
+    }
+
+    #[tokio::test]
+    async fn subscribe_singleton_and_notify_sends_current_value() {
+        let notifier = notifier();
+        notifier.store().Count.insert(OWNER, 5); // pre-existing value, no subscribers yet
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Count.subscribe_and_notify(&sub).unwrap();
+
+        assert_eq!(count_upsert(&recv_one(&mut sub).await), 5);
+    }
+
+    #[tokio::test]
+    async fn subscribe_singleton_and_notify_without_value_sends_nothing() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Count.subscribe_and_notify(&sub).unwrap();
+
+        assert_idle(&mut sub).await;
+    }
+
+    #[tokio::test]
+    async fn subscribe_key_and_notify_sends_current_value() {
+        let notifier = notifier();
+        insert_item(&notifier, 1, "one"); // pre-existing value, no subscribers yet
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier
+            .store()
+            .Items
+            .subscribe_key_and_notify(&sub, 1)
+            .unwrap();
+
+        assert_eq!(
+            items_key_upsert(&recv_one(&mut sub).await),
+            (1, "one".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_table_stops_notifications() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        let subscription = notifier.store().Items.subscribe(&sub).unwrap();
+
+        insert_item(&notifier, 1, "a");
+        recv_one(&mut sub).await; // the subscribed update, before we unsubscribe
+
+        notifier.store().Items.unsubscribe(subscription);
+        insert_item(&notifier, 2, "b");
+        assert_idle(&mut sub).await;
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_global_stops_notifications() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        let subscription = notifier.store().subscribe_global(&sub).unwrap();
+
+        notifier.store().Count.insert(OWNER, 1);
+        recv_one(&mut sub).await; // the subscribed update, before we unsubscribe
+
+        notifier.store().unsubscribe_global(subscription);
+        notifier.store().Count.insert(OWNER, 2);
+        assert_idle(&mut sub).await;
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_singleton_stops_notifications() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        let subscription = notifier.store().Count.subscribe(&sub).unwrap();
+
+        notifier.store().Count.insert(OWNER, 1);
+        recv_one(&mut sub).await; // the subscribed update, before we unsubscribe
+
+        notifier.store().Count.unsubscribe(subscription);
+        notifier.store().Count.insert(OWNER, 2);
+        assert_idle(&mut sub).await;
+    }
+
+    #[tokio::test]
+    async fn two_subscribers_each_receive() {
+        let notifier = notifier();
+        let mut a = notifier.create_subscriber(OWNER);
+        let mut b = notifier.create_subscriber(OWNER);
+
+        let count = &notifier.store().Count;
+        count.subscribe(&a).unwrap();
+        count.subscribe(&b).unwrap();
+        count.insert(OWNER, 7);
+
+        assert_eq!(count_upsert(&recv_one(&mut a).await), 7);
+        assert_eq!(count_upsert(&recv_one(&mut b).await), 7);
+    }
+
+    #[tokio::test]
+    async fn dropping_subscriber_removes_it_and_leaves_others_working() {
+        let notifier = notifier();
+        let mut kept = notifier.create_subscriber(OWNER);
+        notifier.store().Count.subscribe(&kept).unwrap();
+
+        let gone = notifier.create_subscriber(OWNER);
+        let gone_id = gone.id;
+        notifier.store().Count.subscribe(&gone).unwrap();
+        assert!(notifier.senders.lock().unwrap().contains_key(&gone_id));
+
+        drop(gone);
+        // Drop removes the subscriber's sender (and forgets it in the store).
+        assert!(!notifier.senders.lock().unwrap().contains_key(&gone_id));
+
+        notifier.store().Count.insert(OWNER, 7);
+        assert_eq!(count_upsert(&recv_one(&mut kept).await), 7);
+    }
+
+    #[tokio::test]
+    async fn try_recv_reports_empty_then_buffered() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Count.subscribe(&sub).unwrap();
+
+        // Nothing published yet.
+        assert_eq!(sub.try_recv().unwrap_err(), Error::ChannelEmpty);
+
+        // Two updates are queued before we await, so the background task delivers both in one round;
+        // `recv_one` proves delivery happened and takes the first, leaving the second buffered.
+        notifier.store().Count.insert(OWNER, 1);
+        notifier.store().Count.insert(OWNER, 2);
+        assert_eq!(count_upsert(&recv_one(&mut sub).await), 1);
+        assert_eq!(count_upsert(&sub.try_recv().unwrap()), 2);
+        assert_eq!(sub.try_recv().unwrap_err(), Error::ChannelEmpty);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn backpressure_delivers_everything_in_order() {
+        let notifier = notifier();
+        insert_item(&notifier, 0, "v0"); // seed so inserts are per-key with distinct values
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Items.subscribe(&sub).unwrap();
+
+        // Many more notifications than the (small, under-test) channel can hold at once, forcing the
+        // full/requeue/retry path. Draining continuously resets the retry counter, so none is dropped.
+        let n = CHANNEL_CAPACITY as u32 * 3;
+        for k in 1..=n {
+            insert_item(&notifier, k, &format!("v{k}"));
+        }
+
+        for k in 1..=n {
+            assert_eq!(
+                items_key_upsert(&recv_one(&mut sub).await),
+                (k, format!("v{k}"))
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn write_burst_does_not_drop_a_live_subscriber() {
+        let notifier = notifier();
+        insert_item(&notifier, 0, "v0"); // seed so inserts are per-key
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Items.subscribe(&sub).unwrap();
+
+        // Fill the channel and keep committing without ever draining it. Yielding (rather than
+        // sleeping) between commits lets the sending task run a round each time without advancing
+        // the clock, so every one of these rounds finds the channel full. There are more of
+        // them than MAX_RETRIES, but they all happen at the same instant, so they must count as a
+        // single failure and leave the subscriber alone.
+        let n = CHANNEL_CAPACITY as u32 + notify::MAX_RETRIES + 5;
+        for k in 1..=n {
+            insert_item(&notifier, k, &format!("v{k}"));
+            tokio::task::yield_now().await;
+        }
+
+        // Still known to the store, i.e. it was not removed.
+        assert!(notifier.store().subscribe_global(&sub).is_ok());
+
+        // And still receiving: the notifications buffered before the channel filled are intact.
+        assert_eq!(
+            items_key_upsert(&recv_one(&mut sub).await),
+            (1, "v1".into())
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_subscriber_is_dropped_and_cannot_resubscribe() {
+        let notifier = notifier();
+        insert_item(&notifier, 0, "v0"); // seed so inserts are per-key
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().Items.subscribe(&sub).unwrap();
+
+        // Never drained: fill the channel and keep it full across every retry round.
+        let n = CHANNEL_CAPACITY as u32 + 1;
+        for k in 1..=n {
+            insert_item(&notifier, k, &format!("v{k}"));
+        }
+
+        // Advance past all the retry rounds; the notifier gives up and removes the subscriber.
+        sleep(notify::RETRY_TIME * (notify::MAX_RETRIES + 2)).await;
+
+        // Regression for the previously-panicking case: subscribing on a given-up subscriber errors.
+        assert_eq!(
+            notifier.store().subscribe_global(&sub),
+            Err(ts_kv_store::Error::UnknownSubscriber)
+        );
+
+        // Its channel is closed: the already-buffered notifications drain, then it reports closure.
+        let mut drained = 0;
+        loop {
+            match sub.try_recv() {
+                Ok(_) => drained += 1,
+                Err(Error::ChannelDisconnected) => break,
+                Err(Error::ChannelEmpty) => {
+                    panic!("channel still open: subscriber was not dropped")
+                }
+                Err(e) => panic!("unexpected error: {e:?}"),
+            }
+        }
+        assert_eq!(drained, CHANNEL_CAPACITY);
+    }
+}
