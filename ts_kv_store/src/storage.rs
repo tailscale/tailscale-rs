@@ -8,7 +8,7 @@ use std::{
 use crate::{
     Error, Notifier, Owner, Result,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
-    schema::{self, IndexStorage, TableDesc},
+    schema::{self, IndexStorage, Notifiable, TableDesc},
     transactions::TxnId,
 };
 
@@ -657,11 +657,14 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     /// Precondition: `self.check_txn_consistency` returns `Ok`. (Otherwise, commit may not be atomic).
     ///
     /// Panics if `self.check_txn_consistency` would return an error.
-    pub fn commit_txn(
+    pub fn commit_primary_table(
         &mut self,
         txn_id: TxnId,
         collect_notifications: bool,
-    ) -> HashMap<D::Key, WatchedEvent<D::NotificationValue>> {
+    ) -> HashMap<D::Key, WatchedEvent<D::NotificationValue>>
+    where
+        D: Notifiable,
+    {
         let modified = self.modified.take().and_then(|mut m| {
             assert_eq!(m.txn_id, txn_id);
             // The modified set is only used for notifications, so don't pay for filtering the
@@ -765,6 +768,27 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         self.cleared = self.data.is_empty();
 
         result
+    }
+
+    /// Commit implementation for a table which is an index.
+    ///
+    /// Indexes can't have their own indexes or generate notifications, so this is a simpler version of
+    /// `commit_primary_table`.
+    pub fn commit_index(&mut self, txn_id: TxnId) {
+        match std::mem::take(&mut self.delete_mask) {
+            DeleteMask::All(dm_id, data) if dm_id == txn_id => {
+                self.data = data;
+            }
+            DeleteMask::Some(dm_id, removed) if dm_id == txn_id => {
+                removed.iter().for_each(|k| {
+                    self.data.remove(k);
+                });
+            }
+            DeleteMask::None => {}
+            _ => unreachable!(),
+        }
+        self.modified = None;
+        self.cleared = self.data.is_empty();
     }
 
     /// Takes a set of keys which may have been mutated and removes any keys where the values are unchanged

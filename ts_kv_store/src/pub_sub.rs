@@ -26,7 +26,7 @@ use std::{
 
 use crate::{
     Error, Owner, Result,
-    schema::{GeneratedStorage, SingletonDesc, TableDesc},
+    schema::{GeneratedStorage, Notifiable, SingletonDesc, TableDesc},
     storage::Storage,
 };
 
@@ -105,7 +105,7 @@ pub enum SingletonEvent<D, V: Clone> {
     __Nope(PhantomData<D>, Infallible),
 }
 
-impl<D: TableDesc, K: Clone + fmt::Debug, V: Clone> fmt::Debug for Event<D, K, V> {
+impl<D: Notifiable, K: Clone + fmt::Debug, V: Clone> fmt::Debug for Event<D, K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TableClear => write!(f, "TableClear({})", D::NAME),
@@ -274,7 +274,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     ///
     /// May be an over-approximation (i.e., there may be false positives but not false
     /// negatives, as long as the global lock on the store is held).
-    pub fn has_subscribers<D: TableDesc>(&self) -> bool {
+    pub fn has_subscribers<D: Notifiable>(&self) -> bool {
         if !self.all.lock().unwrap().is_empty() {
             return true;
         }
@@ -289,7 +289,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Process events for `D` and add to `notifications`.
-    pub fn collect_events<D: TableDesc>(
+    pub fn collect_events<D: Notifiable>(
         &self,
         notifications: &mut Notifications<NotificationType<D>>,
         events: HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
@@ -446,7 +446,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Associate a subscription ID with a table (watching all keys).
-    pub(crate) fn create_table_subscription<D: TableDesc>(
+    pub(crate) fn create_table_subscription<D: Notifiable>(
         &self,
         key: D::Key,
         subscriber: Subscriber,
@@ -469,7 +469,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Associate a subscription ID with a table (watching a single keys).
-    pub(crate) fn create_table_subscription_all<D: TableDesc>(
+    pub(crate) fn create_table_subscription_all<D: Notifiable>(
         &self,
         subscriber: Subscriber,
     ) -> Result<Subscription>
@@ -489,7 +489,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Remove all subscriptions from a specific table (single-key and whole-table subscriptions).
-    pub(crate) fn remove_table_subscription<D: TableDesc>(&self, subscription: Subscription) {
+    pub(crate) fn remove_table_subscription<D: Notifiable>(&self, subscription: Subscription) {
         let mut tables = self.tables.lock().unwrap();
         let Some(subs) = tables.get_mut(&TypeId::of::<D>()) else {
             return;
@@ -527,7 +527,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
 }
 
 /// Send a notification for the current value of `key` to `subscription`.
-pub(crate) fn send_current<D: TableDesc>(
+pub(crate) fn send_current<D: Notifiable>(
     subs: &Subscriptions<<D::Storage as GeneratedStorage>::Notification>,
     storage: &Storage<D::Storage>,
     key: D::Key,
@@ -650,7 +650,7 @@ impl<N: Clone> Notifications<N> {
 /// into the public event type and wrapping it in the table's notification type.
 ///
 /// `filter` is used when a subscriber is just watching a single key in the table, not all of them.
-fn process_events<D: TableDesc>(
+fn process_events<D: Notifiable>(
     events: &HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
     filter: Option<D::Key>,
 ) -> Vec<NotificationType<D>> {

@@ -3,11 +3,7 @@
 use std::{borrow::Borrow, hash::Hash};
 
 use crate::{
-    Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner,
-    index::KvTableIndex,
-    operations::{Ops, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut},
-    schema,
-    storage::Storage,
+    Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner, index::KvTableIndex, operations::{Ops, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut}, schema::{self, Notifiable}, storage::Storage,
 };
 
 impl<'store, TableStorage: schema::GeneratedStorage> Ops<TableStorage>
@@ -279,6 +275,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     pub fn subscribe(&self, subscriber: crate::Subscriber) -> Result<crate::Subscription>
     where
         D::Key: Send,
+        D: Notifiable,
     {
         let subs = &self.store.get_read_lock().subscriptions;
         let id = subs.create_table_subscription_all::<D>(subscriber)?;
@@ -286,7 +283,10 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     }
 
     /// Unsubscribe from the table (whole table or single key).
-    pub fn unsubscribe(&self, subscription: crate::Subscription) {
+    pub fn unsubscribe(&self, subscription: crate::Subscription)
+    where
+        D: Notifiable,
+    {
         self.store
             .get_read_lock()
             .subscriptions
@@ -301,6 +301,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     ) -> Result<crate::Subscription>
     where
         D::Key: Send,
+        D: Notifiable,
     {
         let subs = &self.store.get_read_lock().subscriptions;
         let id = subs.create_table_subscription::<D>(key, subscriber)?;
@@ -315,6 +316,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     ) -> Result<crate::Subscription>
     where
         D::Key: Send,
+        D: Notifiable,
     {
         let storage = self.store.get_read_lock();
         let subs = &storage.subscriptions;

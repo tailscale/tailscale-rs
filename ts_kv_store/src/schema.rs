@@ -54,8 +54,6 @@ pub trait TableDesc: Sized + 'static {
     type Key: Hash + Eq + Clone;
     /// The type of the value.
     type Value: Any + Send + Sync;
-    /// The type of the notification for this table (either `Self::Value` or `()`).
-    type NotificationValue: Clone;
     /// The storage for the table.
     type Storage: GeneratedStorage;
     /// The storage type for keeping this table's indexes.
@@ -63,15 +61,9 @@ pub trait TableDesc: Sized + 'static {
 
     /// Get a reference to the table in storage.
     fn get_table(storage: &Self::Storage) -> &Table<Self, Self::IndexStorage>;
+
     /// Get a mutable reference to the table in storage.
     fn get_table_mut(storage: &mut Self::Storage) -> &mut Table<Self, Self::IndexStorage>;
-
-    /// Create a notification from an event.
-    fn make_notification(
-        event: crate::Event<Self, Self::Key, Self::NotificationValue>,
-    ) -> <Self::Storage as GeneratedStorage>::Notification;
-    /// Create a value for a notification, possibly by cloning `value`.
-    fn clone_value_for_notification(value: &Self::Value) -> Self::NotificationValue;
 
     /// Compare two references to this table's value type, returns `true` if the value type impls
     /// `PartialEq` and the values are equal. **Panics** if `Self::Value` does not impl `PartialEq`.
@@ -102,10 +94,24 @@ pub(crate) fn get_two_tables_mut<
     (a, b)
 }
 
+/// A table where changes can generate notifications to subscribers.
+pub trait Notifiable: TableDesc {
+    /// The type of the notification for this table (either `Self::Value` or `()`).
+    type NotificationValue: Clone;
+
+    /// Create a notification from an event.
+    fn make_notification(
+        event: crate::Event<Self, Self::Key, Self::NotificationValue>,
+    ) -> <Self::Storage as GeneratedStorage>::Notification;
+
+    /// Create a value for a notification, possibly by cloning `value`.
+    fn clone_value_for_notification(value: &Self::Value) -> Self::NotificationValue;
+}
+
 /// Describes a table used as an index.
 pub trait IndexDesc: TableDesc {
     /// The table which is indexed.
-    type BaseTable: TableDesc<Storage = Self::Storage, Key = Self::Value>;
+    type BaseTable: Notifiable + TableDesc<Storage = Self::Storage, Key = Self::Value>;
 }
 
 /// Operations on an index.
@@ -325,7 +331,6 @@ macro_rules! store {
                 const OWNER: $crate::Owner = $owner;
                 type Key = $key_ty;
                 type Value = $value_ty;
-                type NotificationValue = $crate::notification_value_type!($value_ty $(; notify($notif))?);
                 type Storage = TableStorage;
                 type IndexStorage = index::$name::Storage;
 
@@ -336,14 +341,18 @@ macro_rules! store {
                     &mut storage.$name
                 }
 
+                $crate::value_eq!(Self::Value);
+            }
+
+            impl $crate::schema::Notifiable for $name {
+                type NotificationValue = $crate::notification_value_type!($value_ty $(; notify($notif))?);
+
                 fn make_notification(event: $crate::Event<Self, Self::Key, Self::NotificationValue>) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
                     Notification::$name(event)
                 }
                 fn clone_value_for_notification(_value: &Self::Value) -> Self::NotificationValue {
                     $crate::notification_clone_value!(_value $(; notify($notif))?)
                 }
-
-                $crate::value_eq!(Self::Value);
             }
 
             $(
@@ -352,7 +361,6 @@ macro_rules! store {
                     const OWNER: $crate::Owner = $owner;
                     type Key = $field_ty;
                     type Value = $key_ty;
-                    type NotificationValue = ();
                     type Storage = TableStorage;
                     type IndexStorage = ();
 
@@ -362,11 +370,6 @@ macro_rules! store {
                     fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::IndexStorage> {
                         &mut storage.$name.indexes.$field
                     }
-
-                    fn make_notification(_: $crate::Event<Self, Self::Key, Self::NotificationValue>) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
-                        unreachable!();
-                    }
-                    fn clone_value_for_notification(_value: &Self::Value) -> Self::NotificationValue {}
 
                     $crate::value_eq!(Self::Value);
                 }
@@ -392,7 +395,7 @@ macro_rules! store {
         #[derive(Clone)]
         #[allow(unused)]
         pub enum Notification {
-            $($($name($crate::Event<$name, <$name as $crate::schema::TableDesc>::Key, <$name as $crate::schema::TableDesc>::NotificationValue>),)*)?
+            $($($name($crate::Event<$name, <$name as $crate::schema::TableDesc>::Key, <$name as $crate::schema::Notifiable>::NotificationValue>),)*)?
             $($($sname($crate::SingletonEvent<$sname, <$sname as $crate::schema::SingletonDesc>::NotificationValue>),)*)?
         }
 
@@ -426,11 +429,11 @@ macro_rules! store {
                 )?
                 $(
                     $(
-                        let events = self.$name.commit_txn(_txn_id, _subscriptions.has_subscribers::<$name>());
+                        let events = self.$name.commit_primary_table(_txn_id, _subscriptions.has_subscribers::<$name>());
                         if !events.is_empty() {
                             _subscriptions.collect_events::<$name>(_notifications, events);
                         }
-                        $(self.$name.indexes.$field.commit_txn(_txn_id, false);)*
+                        $(self.$name.indexes.$field.commit_index(_txn_id);)*
                     )*
                 )?
 
