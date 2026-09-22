@@ -27,7 +27,7 @@ use tokio::{
 };
 use ts_kv_store::{
     GeneratedStorage, KvStore, Notifications, Notifier, Owner, Subscriber, Subscription,
-    schema::{Singleton, TableDesc},
+    schema::{SingletonDesc, TableDesc},
 };
 
 mod notify;
@@ -179,7 +179,7 @@ impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
     ///
     /// Returns [`Error::UnknownSubscriber`] if this subscriber is no longer known to the store. That
     /// will happen if the notifier cannot send notifications to this subscriber.
-    pub fn subscribe_singleton<S: Singleton<Storage = Storage>>(&self) -> Result<Subscription> {
+    pub fn subscribe_singleton<S: SingletonDesc<Storage = Storage>>(&self) -> Result<Subscription> {
         Ok(self.notifier.store.subscribe::<S>(self.id)?)
     }
 
@@ -187,7 +187,7 @@ impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
     ///
     /// Returns [`Error::UnknownSubscriber`] if this subscriber is no longer known to the store. That
     /// will happen if the notifier cannot send notifications to this subscriber.
-    pub fn subscribe_singleton_and_notify<S: Singleton<Storage = Storage>>(
+    pub fn subscribe_singleton_and_notify<S: SingletonDesc<Storage = Storage>>(
         &self,
     ) -> Result<Subscription> {
         Ok(self.notifier.store.subscribe_and_notify::<S>(self.id)?)
@@ -250,7 +250,7 @@ impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
     }
 
     /// Remove a subscription to the singleton key/value pair `S`.
-    pub fn unsubscribe_singleton<S: Singleton<Storage = Storage>>(
+    pub fn unsubscribe_singleton<S: SingletonDesc<Storage = Storage>>(
         &self,
         subscription: Subscription,
     ) {

@@ -69,7 +69,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton<Storage = TableStorage>>(
+    pub fn get<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         owner: Owner,
     ) -> Option<D::Value>
@@ -82,7 +82,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &self,
         owner: Owner,
         f: impl FnOnce(&D::Value) -> T,
@@ -93,7 +93,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Get mutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with_mut<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &self,
         owner: Owner,
         f: impl FnOnce(&mut D::Value) -> T,
@@ -109,7 +109,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(
+    pub fn insert<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         owner: Owner,
         value: D::Value,
@@ -121,7 +121,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Remove a single value from the store.
-    pub fn remove<D: schema::Singleton<Storage = TableStorage>>(&self, owner: Owner) {
+    pub fn remove<D: schema::SingletonDesc<Storage = TableStorage>>(&self, owner: Owner) {
         let mut txn = self.begin_transaction(owner);
         SingletonOpsMut::remove::<D>(&mut txn, owner);
         // Should never panic since transaction should only fail on index inserts.
@@ -129,7 +129,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Subscribe to a singleton key-value pair.
-    pub fn subscribe<D: schema::Singleton<Storage = TableStorage>>(
+    pub fn subscribe<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         subscriber: crate::Subscriber,
     ) -> Result<crate::Subscription> {
@@ -140,7 +140,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Subscribe to a singleton key-value pair and send the current value (if any) to the subscriber.
-    pub fn subscribe_and_notify<D: schema::Singleton<Storage = TableStorage>>(
+    pub fn subscribe_and_notify<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         subscriber: crate::Subscriber,
     ) -> Result<crate::Subscription> {
@@ -162,7 +162,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Unsubscribe to a singleton key-value pair.
-    pub fn unsubscribe<S: schema::Singleton<Storage = TableStorage>>(
+    pub fn unsubscribe<S: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         subscription: crate::Subscription,
     ) {
@@ -214,7 +214,7 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton<Storage = TableStorage>>(&self) -> Option<D::Value>
+    pub fn get<D: schema::SingletonDesc<Storage = TableStorage>>(&self) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -224,7 +224,7 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &self,
         f: impl FnOnce(&D::Value) -> T,
     ) -> Option<T> {
@@ -234,7 +234,7 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
     /// Get mutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with_mut<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &self,
         f: impl FnOnce(&mut D::Value) -> T,
     ) -> Option<T>
@@ -245,12 +245,12 @@ impl<'a, TableStorage: schema::GeneratedStorage> StoreWithOwner<'a, TableStorage
     }
 
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&self, value: D::Value) {
+    pub fn insert<D: schema::SingletonDesc<Storage = TableStorage>>(&self, value: D::Value) {
         self.store.insert::<D>(self.owner, value)
     }
 
     /// Remove a single value from the store.
-    pub fn remove<D: schema::Singleton<Storage = TableStorage>>(&self) {
+    pub fn remove<D: schema::SingletonDesc<Storage = TableStorage>>(&self) {
         self.store.remove::<D>(self.owner)
     }
 }

@@ -78,7 +78,10 @@ impl<'a, 'inner, TableStorage: schema::GeneratedStorage> StorageGuardMut<TableSt
 pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
     Ops<TableStorage>
 {
-    fn get<D: schema::Singleton<Storage = TableStorage>>(self, _owner: Owner) -> Option<D::Value>
+    fn get<D: schema::SingletonDesc<Storage = TableStorage>>(
+        self,
+        _owner: Owner,
+    ) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -88,7 +91,7 @@ pub(crate) trait SingletonOps<TableStorage: schema::GeneratedStorage>:
         storage.get_singleton_value::<D>(txn_id).cloned()
     }
 
-    fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+    fn with<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         self,
         f: impl FnOnce(&D::Value) -> T,
         _owner: Owner,
@@ -349,7 +352,11 @@ pub(crate) trait OpsMut<TableStorage: schema::GeneratedStorage>: Sized {
 pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
     OpsMut<TableStorage>
 {
-    fn insert<D: schema::Singleton<Storage = TableStorage>>(self, value: D::Value, owner: Owner) {
+    fn insert<D: schema::SingletonDesc<Storage = TableStorage>>(
+        self,
+        value: D::Value,
+        owner: Owner,
+    ) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
         assert_owner::<D>(owner);
@@ -358,7 +365,7 @@ pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
         storage.insert_singleton::<D>(value, txn_id);
     }
 
-    fn remove<D: schema::Singleton<Storage = TableStorage>>(self, owner: Owner) {
+    fn remove<D: schema::SingletonDesc<Storage = TableStorage>>(self, owner: Owner) {
         let mut storage = self.write_lock();
         let storage = storage.storage();
         assert_owner::<D>(owner);
@@ -367,7 +374,7 @@ pub(crate) trait SingletonOpsMut<TableStorage: schema::GeneratedStorage>:
         storage.remove_singleton::<D>(txn_id);
     }
 
-    fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+    fn with_mut<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         self,
         f: impl FnOnce(&mut D::Value) -> T,
         owner: Owner,
@@ -624,7 +631,7 @@ pub(crate) trait IndexedOpsMut<TableStorage: schema::GeneratedStorage>:
 
 #[allow(unused_variables)]
 #[track_caller]
-fn assert_owner<D: schema::Singleton>(owner: Owner) {
+fn assert_owner<D: schema::SingletonDesc>(owner: Owner) {
     #[cfg(debug_assertions)]
     assert_eq!(
         D::OWNER,

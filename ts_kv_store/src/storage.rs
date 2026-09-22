@@ -63,7 +63,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         self.committed
     }
 
-    pub(crate) fn insert_singleton<D: schema::Singleton<Storage = TableStorage>>(
+    pub(crate) fn insert_singleton<D: schema::SingletonDesc<Storage = TableStorage>>(
         &mut self,
         value: D::Value,
         txn_id: TxnId,
@@ -71,7 +71,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         D::get_mut(&mut self.tables).set(Some(value), txn_id);
     }
 
-    pub(crate) fn remove_singleton<D: schema::Singleton<Storage = TableStorage>>(
+    pub(crate) fn remove_singleton<D: schema::SingletonDesc<Storage = TableStorage>>(
         &mut self,
         txn_id: TxnId,
     ) {
@@ -79,7 +79,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     }
 
     /// Retrieve a singleton value from the store using the given type-key.
-    pub(crate) fn get_singleton_value<D: schema::Singleton<Storage = TableStorage>>(
+    pub(crate) fn get_singleton_value<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         txn_id: TxnId,
     ) -> Option<&D::Value> {
@@ -89,7 +89,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// Pass a mutable reference to a singleton value to `f`.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the singleton.
-    pub(crate) fn with_mut_singleton<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub(crate) fn with_mut_singleton<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &mut self,
         txn_id: TxnId,
         f: impl FnOnce(&mut D::Value) -> T,
@@ -120,7 +120,9 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         Some(result)
     }
 
-    pub(crate) fn get_singleton_notification_value<D: schema::Singleton<Storage = TableStorage>>(
+    pub(crate) fn get_singleton_notification_value<
+        D: schema::SingletonDesc<Storage = TableStorage>,
+    >(
         &self,
         txn_id: TxnId,
     ) -> Option<D::NotificationValue> {
@@ -1446,7 +1448,7 @@ mod txn_test {
 
     #[test]
     fn with_mut_singleton_on_a_removed_value_records_no_mutation() {
-        use crate::schema::Singleton;
+        use crate::schema::SingletonDesc;
 
         let mut storage =
             Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
@@ -1475,7 +1477,7 @@ mod txn_test {
 
     #[test]
     fn with_mut_singleton_without_a_change_records_no_mutation() {
-        use crate::schema::Singleton;
+        use crate::schema::SingletonDesc;
 
         let mut storage =
             Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
@@ -1500,7 +1502,7 @@ mod txn_test {
 
     #[test]
     fn with_mut_singleton_keeps_a_mutation_from_earlier_in_the_txn() {
-        use crate::schema::Singleton;
+        use crate::schema::SingletonDesc;
 
         let mut storage =
             Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));

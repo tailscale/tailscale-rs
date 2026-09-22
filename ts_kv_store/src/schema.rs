@@ -15,7 +15,7 @@ use crate::{
 /// A singleton key/value.
 ///
 /// Prefer to use the macros in this module rather than this trait directly.
-pub trait Singleton: Sized + 'static {
+pub trait SingletonDesc: Sized + 'static {
     /// The datum's owner.
     const OWNER: Owner;
 
@@ -59,12 +59,12 @@ pub trait TableDesc: Sized + 'static {
     /// The storage for the table.
     type Storage: GeneratedStorage;
     /// The storage type for keeping this table's indexes.
-    type Indexes: IndexStorage<Self::Key, Self::Value>;
+    type IndexStorage: IndexStorage<Self::Key, Self::Value>;
 
     /// Get a reference to the table in storage.
-    fn get_table(storage: &Self::Storage) -> &Table<Self, Self::Indexes>;
+    fn get_table(storage: &Self::Storage) -> &Table<Self, Self::IndexStorage>;
     /// Get a mutable reference to the table in storage.
-    fn get_table_mut(storage: &mut Self::Storage) -> &mut Table<Self, Self::Indexes>;
+    fn get_table_mut(storage: &mut Self::Storage) -> &mut Table<Self, Self::IndexStorage>;
 
     /// Create a notification from an event.
     fn make_notification(
@@ -88,7 +88,10 @@ pub(crate) fn get_two_tables_mut<
     B: TableDesc<Storage = Storage> + Any,
 >(
     storage: &mut Storage,
-) -> (&mut Table<A, A::Indexes>, &mut Table<B, B::Indexes>) {
+) -> (
+    &mut Table<A, A::IndexStorage>,
+    &mut Table<B, B::IndexStorage>,
+) {
     debug_assert_ne!(TypeId::of::<A>(), TypeId::of::<B>());
 
     // SAFETY: `A` and `B` are different tables, so `get_table_mut` will return pointers to
@@ -283,7 +286,7 @@ macro_rules! store {
             #[allow(non_camel_case_types)]
             pub struct $sname;
 
-            impl $crate::schema::Singleton for $sname {
+            impl $crate::schema::SingletonDesc for $sname {
                 const OWNER: $crate::Owner = $sowner;
                 type Value = $svalue_ty;
                 type NotificationValue = $crate::notification_value_type!($svalue_ty $(; notify($snotif))?);
@@ -324,12 +327,12 @@ macro_rules! store {
                 type Value = $value_ty;
                 type NotificationValue = $crate::notification_value_type!($value_ty $(; notify($notif))?);
                 type Storage = TableStorage;
-                type Indexes = index::$name::Indexes;
+                type IndexStorage = index::$name::Storage;
 
-                fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::Indexes> {
+                fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::IndexStorage> {
                     &storage.$name
                 }
-                fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::Indexes> {
+                fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::IndexStorage> {
                     &mut storage.$name
                 }
 
@@ -351,12 +354,12 @@ macro_rules! store {
                     type Value = $key_ty;
                     type NotificationValue = ();
                     type Storage = TableStorage;
-                    type Indexes = ();
+                    type IndexStorage = ();
 
-                    fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::Indexes> {
+                    fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::IndexStorage> {
                         &storage.$name.indexes.$field
                     }
-                    fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::Indexes> {
+                    fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::IndexStorage> {
                         &mut storage.$name.indexes.$field
                     }
 
@@ -378,7 +381,7 @@ macro_rules! store {
         #[derive(Default)]
         #[allow(non_snake_case)]
         pub struct TableStorage {
-            $($($name: $crate::storage::Table<$name, index::$name::Indexes>,)*)?
+            $($($name: $crate::storage::Table<$name, index::$name::Storage>,)*)?
             $($($sname: $crate::storage::VersionedValue<Option<$svalue_ty>>,)*)?
         }
 
@@ -390,7 +393,7 @@ macro_rules! store {
         #[allow(unused)]
         pub enum Notification {
             $($($name($crate::Event<$name, <$name as $crate::schema::TableDesc>::Key, <$name as $crate::schema::TableDesc>::NotificationValue>),)*)?
-            $($($sname($crate::SingletonEvent<$sname, <$sname as $crate::schema::Singleton>::NotificationValue>),)*)?
+            $($($sname($crate::SingletonEvent<$sname, <$sname as $crate::schema::SingletonDesc>::NotificationValue>),)*)?
         }
 
         impl std::fmt::Debug for Notification {
@@ -417,7 +420,7 @@ macro_rules! store {
                         if _subscriptions.has_singleton_subscribers::<$sname>()
                             && let Some(event) = self.$sname.modified_in_txn(_txn_id)
                         {
-                            _subscriptions.collect_singleton_events::<$sname>(_notifications, <$sname as $crate::schema::Singleton>::notif_value(event));
+                            _subscriptions.collect_singleton_events::<$sname>(_notifications, <$sname as $crate::schema::SingletonDesc>::notif_value(event));
                         }
                     )*
                 )?
@@ -459,7 +462,7 @@ macro_rules! store {
                     )*
 
                     #[derive(Default)]
-                    pub struct Indexes {
+                    pub struct Storage {
                         $(
                             pub $field: $crate::storage::Table<$field, ()>,
                         )*
@@ -469,7 +472,7 @@ macro_rules! store {
         }
 
         $($(
-            impl index::$name::Indexes {
+            impl index::$name::Storage {
                 $(
                     fn $field(val: &$value_ty) -> impl IntoIterator<Item = $field_ty> {
                         ($crate::get_index_fn!($value_ty, $field $(, $get_idx)?))(val)
@@ -477,7 +480,7 @@ macro_rules! store {
                 )*
             }
 
-            impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Indexes {
+            impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Storage {
                 fn clear(&mut self, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
                     $(
                         self.$field.clear(_txn_id, _max_committed_id);
@@ -488,7 +491,7 @@ macro_rules! store {
 
                 fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
                     $({
-                        for value in index::$name::Indexes::$field(_value) {
+                        for value in index::$name::Storage::$field(_value) {
                             self.$field.remove(&value, _txn_id, _max_committed_id);
                         }
                     })*
@@ -510,7 +513,7 @@ macro_rules! store {
                 // The store only holds a weak reference to its notifier, so downgrading a
                 // throwaway no-op notifier leaves the store with a dead weak reference. Upgrading it
                 // always fails, which means no notifications are ever sent.
-                Self::with_notifier(std::sync::Arc::downgrade(&$crate::NoOpNotifier::new()))
+                Self::from_notifier(std::sync::Arc::downgrade(&$crate::NoOpNotifier::new()))
             }
 
             /// Create a new, empty KV store as described by the schema macros, which sends
@@ -519,7 +522,7 @@ macro_rules! store {
             /// The store keeps only a weak reference to `notifier`, so the caller is responsible for
             /// keeping the notifier alive (e.g. via the subscribers it hands out). Once the last
             /// strong reference is dropped the store stops sending notifications.
-            pub fn with_notifier(notifier: std::sync::Weak<dyn $crate::Notifier<Notification = <TableStorage as $crate::schema::GeneratedStorage>::Notification>>) -> Self {
+            pub fn from_notifier(notifier: std::sync::Weak<dyn $crate::Notifier<Notification = <TableStorage as $crate::schema::GeneratedStorage>::Notification>>) -> Self {
                 KvStore($crate::KvStore::new_with_storage(std::sync::RwLock::new($crate::storage::Storage::new(notifier))))
             }
         }
@@ -570,7 +573,7 @@ macro_rules! on_insert_each {
         $field_ty:ty;
         ($self:ident, $key:ident, $value:ident, $txn_id:ident, $max_committed_id:ident); assert_unique
     ) => {
-        for index_key in index::$name::Indexes::$field($value) {
+        for index_key in index::$name::Storage::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
             assert!(
                 unique,
@@ -589,7 +592,7 @@ macro_rules! on_insert_each {
         $field_ty:ty;
         ($self:ident, $key:ident, $value:ident, $txn_id:ident, $max_committed_id:ident)
     ) => {
-        for index_key in index::$name::Indexes::$field($value) {
+        for index_key in index::$name::Storage::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
             if unique {
                 $self

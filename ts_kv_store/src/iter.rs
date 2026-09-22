@@ -21,7 +21,7 @@ pub struct Values;
 pub struct KeysAndValues;
 
 type Indexes<D> =
-    Table<<D as IndexDesc>::BaseTable, <<D as IndexDesc>::BaseTable as TableDesc>::Indexes>;
+    Table<<D as IndexDesc>::BaseTable, <<D as IndexDesc>::BaseTable as TableDesc>::IndexStorage>;
 
 /// An iterator for a single table (described by the generic parameter `D`) in the KV store.
 ///
@@ -111,7 +111,7 @@ where
     ///
     /// Invariants:
     ///   - `inner.is_some()` once `new` has completed.
-    inner: Option<InnerIteratorMut<'guard, D, D::Indexes>>,
+    inner: Option<InnerIteratorMut<'guard, D, D::IndexStorage>>,
     /// Tracks keys of yielded values for rebuilding indexes in `drop`.
     modified: HashSet<D::Key>,
     _kind: PhantomData<(D, Kind)>,
@@ -420,7 +420,7 @@ fn inner_iter_mut<'guard, D, Guard>(
     txn_id: TxnId,
     max_transaction_id: TxnId,
     owner: Owner,
-) -> InnerIteratorMut<'guard, D, D::Indexes>
+) -> InnerIteratorMut<'guard, D, D::IndexStorage>
 where
     D: TableDesc + 'guard,
     Guard: StorageGuardMut<D::Storage> + 'guard,

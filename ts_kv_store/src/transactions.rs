@@ -256,7 +256,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton<Storage = TableStorage>>(&self) -> Option<D::Value>
+    pub fn get<D: schema::SingletonDesc<Storage = TableStorage>>(&self) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -266,7 +266,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &self,
         f: impl FnOnce(&D::Value) -> T,
     ) -> Option<T> {
@@ -276,7 +276,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     /// Get mutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with_mut<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &mut self,
         f: impl FnOnce(&mut D::Value) -> T,
     ) -> Option<T>
@@ -287,12 +287,12 @@ impl<'guard, TableStorage: schema::GeneratedStorage> Transaction<'guard, TableSt
     }
 
     /// Insert a single value into the store.
-    pub fn insert<D: schema::Singleton<Storage = TableStorage>>(&mut self, value: D::Value) {
+    pub fn insert<D: schema::SingletonDesc<Storage = TableStorage>>(&mut self, value: D::Value) {
         <&mut Self as SingletonOpsMut<_>>::insert::<D>(self, value, self.owner)
     }
 
     /// Remove a single value from the store.
-    pub fn remove<D: schema::Singleton<Storage = TableStorage>>(&mut self) {
+    pub fn remove<D: schema::SingletonDesc<Storage = TableStorage>>(&mut self) {
         <&mut Self as SingletonOpsMut<_>>::remove::<D>(self, self.owner)
     }
 }
@@ -520,7 +520,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> RoTransaction<'guard, Table
     /// Get a single value from the store by cloning the value.
     ///
     /// Returns `None` if there is no value for the specified key.
-    pub fn get<D: schema::Singleton<Storage = TableStorage>>(&self) -> Option<D::Value>
+    pub fn get<D: schema::SingletonDesc<Storage = TableStorage>>(&self) -> Option<D::Value>
     where
         D::Value: Clone,
     {
@@ -530,7 +530,7 @@ impl<'guard, TableStorage: schema::GeneratedStorage> RoTransaction<'guard, Table
     /// Get immutable access to a value in the store by reference.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    pub fn with<D: schema::Singleton<Storage = TableStorage>, T>(
+    pub fn with<D: schema::SingletonDesc<Storage = TableStorage>, T>(
         &self,
         f: impl FnOnce(&D::Value) -> T,
     ) -> Option<T> {
