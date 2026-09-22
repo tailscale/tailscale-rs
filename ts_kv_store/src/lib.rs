@@ -81,7 +81,7 @@
 //!
 //! Index fields must uniquely identify a row in the base table. If multiple rows in the base table
 //! have the same key in the index, then either a panic is triggered, or accessing or committing a
-//! non-unique index in a transactino will cause an error. See the schema macro docs for more.
+//! non-unique index in a transaction will cause an error. See the schema macro docs for more.
 //!
 //! # Async access
 //!
