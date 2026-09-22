@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    Error, Notifier, Owner, Result,
+    Error, Notifier, Result,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
     schema::{self, IndexStorage, PrimaryDesc, TableDesc},
     transactions::TxnId,
@@ -57,63 +57,6 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
 
     pub(crate) fn current_txn(&self) -> Option<TxnId> {
         self.pending_txn
-    }
-
-    pub(crate) fn insert_singleton<D: schema::SingletonDesc<Storage = TableStorage>>(
-        &mut self,
-        value: D::Value,
-        txn_id: TxnId,
-    ) {
-        D::get_mut(&mut self.tables).set(Some(value), txn_id);
-    }
-
-    pub(crate) fn remove_singleton<D: schema::SingletonDesc<Storage = TableStorage>>(
-        &mut self,
-        txn_id: TxnId,
-    ) {
-        D::get_mut(&mut self.tables).set(None, txn_id);
-    }
-
-    /// Retrieve a singleton value from the store using the given type-key.
-    pub(crate) fn get_singleton_value<D: schema::SingletonDesc<Storage = TableStorage>>(
-        &self,
-        txn_id: TxnId,
-    ) -> Option<&D::Value> {
-        D::get_ref(&self.tables).get(txn_id)?.as_ref()
-    }
-
-    /// Pass a mutable reference to a singleton value to `f`.
-    ///
-    /// Returns `None` (and does not call `f`) if there is no value for the singleton.
-    pub(crate) fn with_mut_singleton<D: schema::SingletonDesc<Storage = TableStorage>, T>(
-        &mut self,
-        txn_id: TxnId,
-        f: impl FnOnce(&mut D::Value) -> T,
-    ) -> Option<T>
-    where
-        D::Value: Clone + PartialEq,
-    {
-        let singleton = D::get_mut(&mut self.tables);
-
-        // Check for a value before cloning: a removed singleton is stored as a `None` in an occupied
-        // slot, and cloning that into the free slot would look like a mutation and cause a spurious
-        // `Remove` notification.
-        singleton.get(txn_id)?.as_ref()?;
-
-        // If this transaction has already written to the singleton, then it counts as mutated however
-        // `f` behaves, and the clone we'd roll back isn't ours to roll back.
-        let previously_written = singleton.modified_in_txn(txn_id).is_some();
-
-        let value = singleton.internal_clone(txn_id)?.as_mut()?;
-        let old_value = (!previously_written).then(|| value.clone());
-        let result = f(value);
-
-        if old_value.is_some_and(|old_value| *value == old_value) {
-            // `f` left the value alone, so discard the clone.
-            singleton.gc_txn(txn_id);
-        }
-
-        Some(result)
     }
 
     /// Begin a new transaction. Returns the transaction's unique id.
@@ -175,6 +118,36 @@ impl<T> Default for VersionedValue<T> {
             slot_a: None,
             slot_b: None,
         }
+    }
+}
+
+impl<T: Clone + PartialEq> VersionedValue<Option<T>> {
+    /// Pass a mutable reference to the value visible to `txn_id` (if there is one) to `f`.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value.
+    pub(crate) fn with_mut_value<R>(
+        &mut self,
+        txn_id: TxnId,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Option<R> {
+        // Check for a value before cloning: a removed singleton is stored as a `None` in an occupied
+        // slot, and cloning that into the free slot would look like a mutation and cause a spurious
+        // `Remove` notification.
+        self.get(txn_id)?.as_ref()?;
+
+        // If this transaction has already written to the singleton, then it counts as mutated.
+        let previously_written = self.modified_in_txn(txn_id).is_some();
+
+        let value = self.internal_clone(txn_id)?.as_mut()?;
+        let old_value = (!previously_written).then(|| value.clone());
+        let result = f(value);
+
+        if old_value.is_some_and(|old_value| *value == old_value) {
+            // `f` left the value alone, so discard the clone.
+            self.gc_txn(txn_id);
+        }
+
+        Some(result)
     }
 }
 
@@ -761,37 +734,32 @@ impl<D: schema::TableDesc> Table<D> {
         self.iter(txn_id).next().is_none()
     }
 
-    pub(crate) fn iter<'a>(&'a self, txn_id: TxnId) -> TableIterator<'a, D> {
-        let data = match &self.delete_mask {
-            DeleteMask::None | DeleteMask::Some(..) => &self.data,
-            DeleteMask::All(_, pending) => pending,
+    /// Iterate the key-value pairs in the table, as visible to the transaction with id `txn_id`.
+    pub(crate) fn iter(&self, txn_id: TxnId) -> impl Iterator<Item = (&D::Key, &D::Value)> {
+        let (data, removed) = match &self.delete_mask {
+            DeleteMask::None => (&self.data, None),
+            DeleteMask::Some(_, removed) => (&self.data, Some(removed)),
+            DeleteMask::All(_, pending) => (pending, None),
         };
 
-        TableIterator::<D> {
-            data: data.iter(),
-            delete_mask: &self.delete_mask,
-            txn_id,
-        }
+        data.iter()
+            .filter(move |(k, _)| removed.is_none_or(|removed| !removed.contains(*k)))
+            .filter_map(move |(k, v)| Some((k, v.get(txn_id)?)))
     }
 
-    /// Record that `key`'s value was mutated by `txn_id`.
+    /// Get a mutable iterator over the table.
     ///
-    /// Only needed by callers which mutate values without going via a method which records the
-    /// mutation itself (i.e., `iter_mut`, which cannot record keys while iterating because the
-    /// iterator borrows the table).
-    pub(crate) fn record_mutated_key(&mut self, key: &D::Key, txn_id: TxnId)
+    /// Each yielded row is recorded as mutated (as it is yielded, so that if the caller panics
+    /// while using the iterator, the row is still rolled back). The index entries of each yielded
+    /// row are removed (since the row may be mutated), but not rebuilt: the caller must call
+    /// `rebuild_indexes_for_key` for every key the iterator yields once it is done with the values.
+    pub(crate) fn iter_mut(
+        &mut self,
+        txn_id: TxnId,
+    ) -> impl Iterator<Item = (&D::Key, &mut D::Value)>
     where
-        // Required because committing a recorded key compares values using `D::value_eq`, which
-        // panics for value types without `PartialEq`.
-        D::Value: PartialEq,
+        D::Value: Clone + PartialEq,
     {
-        record_mut_ref(&mut self.modified, key, txn_id);
-    }
-
-    /// Get a mutable iterator over the table. Does not keep indexes up to date, nor record mutations.
-    /// The caller must call `rebuild_indexes_for_key` and `record_mutated_key` for any key the
-    /// iterator yields.
-    pub(crate) fn iter_mut<'a>(&'a mut self, txn_id: TxnId) -> TableIteratorMut<'a, D> {
         debug_assert!(self.delete_mask.check_txn_id(txn_id));
 
         let (data, removed) = match &mut self.delete_mask {
@@ -799,12 +767,18 @@ impl<D: schema::TableDesc> Table<D> {
             DeleteMask::Some(_, removed) => (self.data.iter_mut(), Some(&*removed)),
             DeleteMask::All(_, pending) => (pending.iter_mut(), None),
         };
-        TableIteratorMut {
-            data,
-            removed,
-            indexes: &mut self.indexes,
-            txn_id,
-        }
+        let indexes = &mut self.indexes;
+        let modified = &mut self.modified;
+
+        data.filter(move |(k, _)| removed.is_none_or(|removed| !removed.contains(*k)))
+            .filter_map(move |(k, v)| {
+                let v = v.internal_clone(txn_id)?;
+                // Recorded before handing out the value so that it is rolled back by `gc_txn` even
+                // if the caller panics while using it.
+                record_mut_ref(modified, k, txn_id);
+                indexes.on_remove(v, txn_id);
+                Some((k, v))
+            })
     }
 
     pub fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
@@ -871,15 +845,6 @@ impl<D: schema::TableDesc> Table<D> {
         self.delete_mask.clear(txn_id);
         self.poisoned.set(false, txn_id);
         self.indexes.clear(txn_id);
-    }
-
-    pub(crate) fn assert_owner(&mut self, owner: Owner) {
-        debug_assert_eq!(
-            D::OWNER,
-            owner,
-            "Ownership violation: expected {}, found {owner}",
-            D::OWNER,
-        );
     }
 }
 
@@ -966,83 +931,6 @@ where
     with_mutations(modified, txn_id, |m| {
         m.ref_keys.insert(key.to_owned());
     });
-}
-
-/// Iterate the key-value pairs in a table.
-///
-/// Takes into account the state of the table as visible to the transaction with id `self.txn_id`.
-pub(crate) struct TableIterator<'a, D: schema::TableDesc> {
-    data: std::collections::hash_map::Iter<'a, D::Key, VersionedValue<D::Value>>,
-    delete_mask: &'a DeleteMask<D::Key, D::Value>,
-    txn_id: TxnId,
-}
-
-impl<'a, D: schema::TableDesc> Iterator for TableIterator<'a, D> {
-    type Item = (&'a D::Key, &'a D::Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match &self.delete_mask {
-            DeleteMask::None | DeleteMask::All(..) => {
-                for (k, v) in &mut self.data {
-                    if let Some(v) = v.get(self.txn_id) {
-                        return Some((k, v));
-                    }
-                }
-                None
-            }
-            DeleteMask::Some(_, removed) => {
-                for (k, v) in &mut self.data {
-                    if !removed.contains(k)
-                        && let Some(v) = v.get(self.txn_id)
-                    {
-                        return Some((k, v));
-                    }
-                }
-                None
-            }
-        }
-    }
-}
-
-/// Iterate the key-value pairs in a table with mutable access.
-///
-/// Doesn't include the delete mask because of lifetime issues, so some pre-processing into `data`
-/// and `removed` is required, see `Table::iter_mut`.
-///
-/// Indexes for yielded key/value pairs are cleared, the caller is responsible for rebuilding the
-/// indexes.
-pub(crate) struct TableIteratorMut<'a, D: schema::TableDesc> {
-    data: std::collections::hash_map::IterMut<'a, D::Key, VersionedValue<D::Value>>,
-    removed: Option<&'a HashSet<D::Key>>,
-    indexes: &'a mut D::IndexStorage,
-    txn_id: TxnId,
-}
-
-impl<'a, D: schema::TableDesc> Iterator for TableIteratorMut<'a, D>
-where
-    D::Value: Clone + PartialEq,
-{
-    type Item = (&'a D::Key, &'a mut D::Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        for (k, v) in &mut self.data {
-            if let Some(removed) = &self.removed
-                && removed.contains(k)
-            {
-                continue;
-            }
-            match v.internal_clone(self.txn_id) {
-                Some(v) => {
-                    // Remove this row's current index entries; they must be rebuilt from the (possibly
-                    // mutated) value after iteration finishes.
-                    self.indexes.on_remove(v, self.txn_id);
-                    return Some((k, v));
-                }
-                None => continue,
-            }
-        }
-        None
-    }
 }
 
 #[cfg(test)]
@@ -1253,94 +1141,15 @@ mod txn_test {
         let mut storage =
             Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
-        storage.insert_singleton::<Count>(42, id);
+        storage.tables.Count.set(Some(42), id);
         // Visible to the in-progress transaction.
-        assert_eq!(storage.get_singleton_value::<Count>(id), Some(&42));
+        assert_eq!(storage.tables.Count.get(id), Some(&Some(42)));
 
         // Simulate cleanup of an abandoned transaction.
         storage.clear_transaction();
 
         assert!(storage.current_txn().is_none());
         let now = storage.txn_id();
-        assert!(storage.get_singleton_value::<Count>(now).is_none());
-    }
-
-    #[test]
-    fn with_mut_singleton_on_a_removed_value_records_no_mutation() {
-        use crate::schema::SingletonDesc;
-
-        let mut storage =
-            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
-        let id = storage.begin_transaction();
-        storage.insert_singleton::<Count>(42, id);
-        storage.commit_transaction(id).unwrap();
-        let id = storage.begin_transaction();
-        storage.remove_singleton::<Count>(id);
-        storage.commit_transaction(id).unwrap();
-
-        let id = storage.begin_transaction();
-        assert!(
-            storage
-                .with_mut_singleton::<Count, _>(id, |v| *v = 7)
-                .is_none()
-        );
-
-        // A removed singleton is a `None` in an occupied slot. Cloning it into the free slot would
-        // be indistinguishable from a real mutation at commit time.
-        assert!(
-            Count::get_ref(&storage.tables)
-                .modified_in_txn(id)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn with_mut_singleton_without_a_change_records_no_mutation() {
-        use crate::schema::SingletonDesc;
-
-        let mut storage =
-            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
-        let id = storage.begin_transaction();
-        storage.insert_singleton::<Count>(42, id);
-        storage.commit_transaction(id).unwrap();
-
-        let id = storage.begin_transaction();
-        assert_eq!(
-            storage.with_mut_singleton::<Count, _>(id, |v| *v = 42),
-            Some(())
-        );
-
-        assert!(
-            Count::get_ref(&storage.tables)
-                .modified_in_txn(id)
-                .is_none()
-        );
-        // Rolling back the clone must not lose the value.
-        assert_eq!(storage.get_singleton_value::<Count>(id), Some(&42));
-    }
-
-    #[test]
-    fn with_mut_singleton_keeps_a_mutation_from_earlier_in_the_txn() {
-        use crate::schema::SingletonDesc;
-
-        let mut storage =
-            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
-        let id = storage.begin_transaction();
-        storage.insert_singleton::<Count>(42, id);
-        storage.commit_transaction(id).unwrap();
-
-        let id = storage.begin_transaction();
-        storage.insert_singleton::<Count>(7, id);
-        assert_eq!(
-            storage.with_mut_singleton::<Count, _>(id, |v| *v = 7),
-            Some(())
-        );
-
-        // The insert is this transaction's own write, so a `with_mut` which changes nothing must
-        // not roll it back.
-        assert_eq!(
-            Count::get_ref(&storage.tables).modified_in_txn(id),
-            Some(&Some(7))
-        );
+        assert!(storage.tables.Count.get(now).is_none());
     }
 }

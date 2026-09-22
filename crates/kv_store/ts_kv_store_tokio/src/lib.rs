@@ -17,7 +17,7 @@
 //! ```ignore
 //! let notifier = TokioNotifier::new();
 //! let subscriber = notifier.create_subscriber(OWNER);
-//! notifier.store().subscribe::<foo>(&subscriber);
+//! notifier.store().foo.subscribe(&subscriber);
 //! ```
 
 use std::{
@@ -34,7 +34,7 @@ use tokio::{
     task::JoinHandle,
 };
 use ts_kv_store::{
-    GeneratedStorage, KvStore, Notifications, Notifier, Owner, Subscriber, Subscription,
+    GeneratedStorage, GeneratedStore, Notifications, Notifier, Owner, Subscriber, Subscription,
 };
 
 mod notify;
@@ -47,12 +47,12 @@ const CHANNEL_CAPACITY: usize = 2;
 
 /// A [`Notifier`] which forwards notifications to subscribers using Tokio channels.
 ///
-/// The generic parameter `Storage` links a notifier instance to a specific store.
-pub struct TokioNotifier<Storage: GeneratedStorage> {
-    store: Arc<KvStore<Storage>>,
-    senders: Mutex<HashMap<Subscriber, SubscriberSender<Storage::Notification>>>,
+/// The generic parameter `Store` links a notifier instance to a specific store.
+pub struct TokioNotifier<Store: GeneratedStore> {
+    store: Arc<Store>,
+    senders: Mutex<HashMap<Subscriber, SubscriberSender<StoreNotification<Store>>>>,
     /// Notifications waiting to be sent, oldest first.
-    queue: Mutex<VecDeque<QueuedNotifications<Storage::Notification>>>,
+    queue: Mutex<VecDeque<QueuedNotifications<StoreNotification<Store>>>>,
     /// Signalled whenever `queue` is added to, to wake `task`.
     notify: Arc<Notify>,
     /// Async task which sends queued notifications to subscribers.
@@ -64,22 +64,28 @@ pub struct TokioNotifier<Storage: GeneratedStorage> {
 /// This is a [`Notifications`] in its map form.
 type QueuedNotifications<N> = HashMap<Subscription, Vec<N>>;
 
-impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
-    /// Create a new `TokioNotifier` and [`KvStore`]. Spawns a task to send notifications.
+/// The type of notification sent by `Store`.
+type StoreNotification<Store> =
+    <<Store as GeneratedStore>::Storage as GeneratedStorage>::Notification;
+
+impl<Store: GeneratedStore> TokioNotifier<Store> {
+    /// Create a new `TokioNotifier` and [`KvStore`](ts_kv_store::KvStore).
     ///
     /// The notifier owns the store and the store holds a weak reference back to the notifier.
     ///
     /// Spawns the task which sends notifications to subscribers, so this must be called from within
     /// a Tokio runtime. The task runs until the notifier is dropped, waking whenever there are
     /// notifications to send and periodically while any are waiting to be retried.
-    pub fn new() -> Arc<TokioNotifier<Storage>> {
+    pub fn new() -> Arc<TokioNotifier<Store>> {
         let notify = Arc::new(Notify::new());
 
-        Arc::new_cyclic(|weak: &Weak<TokioNotifier<Storage>>| {
+        Arc::new_cyclic(|weak: &Weak<TokioNotifier<Store>>| {
             let task = tokio::spawn(notify::notify_loop(weak.clone(), notify.clone()));
 
             TokioNotifier {
-                store: Arc::new(KvStore::from_notifier(weak.clone())),
+                store: Arc::new(Store::from_notifier(
+                    weak.clone() as std::sync::Weak<dyn Notifier<Notification = _>>
+                )),
                 senders: Default::default(),
                 queue: Default::default(),
                 notify,
@@ -88,13 +94,13 @@ impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
         })
     }
 
-    /// The [`KvStore`] this notifier was created for.
-    pub fn store(&self) -> &Arc<KvStore<Storage>> {
+    /// The [`KvStore`](ts_kv_store::KvStore) this notifier was created for.
+    pub fn store(&self) -> &Arc<Store> {
         &self.store
     }
 
     /// Create a new subscriber to this notifier.
-    pub fn create_subscriber(self: &Arc<Self>, owner: Owner) -> TokioSubscriber<Storage> {
+    pub fn create_subscriber(self: &Arc<Self>, owner: Owner) -> TokioSubscriber<Store> {
         let id = self.store.register_subscriber(owner);
         let (sender, receiver) = channel(CHANNEL_CAPACITY);
 
@@ -117,14 +123,14 @@ impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
     }
 }
 
-impl<Storage: GeneratedStorage> fmt::Debug for TokioNotifier<Storage> {
+impl<Store: GeneratedStore> fmt::Debug for TokioNotifier<Store> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("TokioNotifier").finish()
     }
 }
 
-impl<Storage: GeneratedStorage + 'static> Notifier for TokioNotifier<Storage> {
-    type Notification = Storage::Notification;
+impl<Store: GeneratedStore> Notifier for TokioNotifier<Store> {
+    type Notification = StoreNotification<Store>;
 
     fn notify(&self, notifications: Notifications<Self::Notification>) {
         self.queue.lock().unwrap().push_back(notifications.into());
@@ -132,39 +138,39 @@ impl<Storage: GeneratedStorage + 'static> Notifier for TokioNotifier<Storage> {
     }
 }
 
-impl<Storage: GeneratedStorage> Drop for TokioNotifier<Storage> {
+impl<Store: GeneratedStore> Drop for TokioNotifier<Store> {
     fn drop(&mut self) {
         // Stop the sending task. Without this, the task would wait forever.
         self.task.abort();
     }
 }
 
-/// A subscriber to a [`KvStore`]'s notifications, via [`TokioNotifier`]. Identifies a subscriber
-/// and receives notifications.
+/// A subscriber to a [`KvStore`](ts_kv_store::KvStore)'s notifications, via [`TokioNotifier`].
+/// Identifies a subscriber and receives notifications.
 ///
 /// Dropping a subscriber removes it and all its subscriptions from the store.
-pub struct TokioSubscriber<Storage: GeneratedStorage + 'static> {
+pub struct TokioSubscriber<Store: GeneratedStore> {
     /// KvStore's id for this subscriber.
     id: Subscriber,
     /// Reference to our 'parent' notifier.
-    notifier: Arc<TokioNotifier<Storage>>,
+    notifier: Arc<TokioNotifier<Store>>,
     /// Receiver end of a Tokio channel for receiving notifications from the notifier.
-    receiver: Receiver<Storage::Notification>,
+    receiver: Receiver<StoreNotification<Store>>,
     _owner: Owner,
 }
 
-impl<Storage: GeneratedStorage> From<&'_ TokioSubscriber<Storage>> for Subscriber {
-    fn from(s: &'_ TokioSubscriber<Storage>) -> Self {
+impl<Store: GeneratedStore> From<&'_ TokioSubscriber<Store>> for Subscriber {
+    fn from(s: &'_ TokioSubscriber<Store>) -> Self {
         s.id
     }
 }
 
-impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
+impl<Store: GeneratedStore> TokioSubscriber<Store> {
     /// Wait for the next notification.
     ///
     /// Returns [`Error::ChannelDisconnected`] if the channel is closed. No further notifications will
     /// arrive after that.
-    pub async fn recv(&mut self) -> Result<Storage::Notification> {
+    pub async fn recv(&mut self) -> Result<StoreNotification<Store>> {
         self.receiver.recv().await.ok_or(Error::ChannelDisconnected)
     }
 
@@ -172,7 +178,7 @@ impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
     ///
     /// Returns [`Error::ChannelEmpty`] if there is no notification to receive, or [`Error::ChannelDisconnected`] if the
     /// channel is closed (see [`recv`](Self::recv)).
-    pub fn try_recv(&mut self) -> Result<Storage::Notification> {
+    pub fn try_recv(&mut self) -> Result<StoreNotification<Store>> {
         self.receiver.try_recv().map_err(|e| match e {
             TryRecvError::Empty => Error::ChannelEmpty,
             TryRecvError::Disconnected => Error::ChannelDisconnected,
@@ -180,7 +186,7 @@ impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {
     }
 }
 
-impl<Storage: GeneratedStorage + 'static> Drop for TokioSubscriber<Storage> {
+impl<Store: GeneratedStore> Drop for TokioSubscriber<Store> {
     /// Remove the subscriber (and thus all its subscriptions) from the store, drop the notifier's
     /// sender for it, and close its channel.
     fn drop(&mut self) {
@@ -206,8 +212,6 @@ impl<N> SubscriberSender<N> {
 }
 
 /// Errors due to the notifier or the store.
-///
-/// Subsumes [`ts_kv_store::Error`].
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The subscriber is not (or no longer) known to the store.
@@ -259,15 +263,12 @@ mod tests {
 
     const OWNER: &str = "owner";
 
-    fn notifier() -> Arc<TokioNotifier<TableStorage>> {
+    fn notifier() -> Arc<TokioNotifier<KvStore>> {
         TokioNotifier::new()
     }
 
-    fn insert_item(notifier: &TokioNotifier<TableStorage>, key: u32, value: &str) {
-        notifier
-            .store()
-            .table::<Items>(OWNER)
-            .insert(key, value.to_owned());
+    fn insert_item(notifier: &TokioNotifier<KvStore>, key: u32, value: &str) {
+        notifier.store().Items.insert(OWNER, key, value.to_owned());
     }
 
     /// Extract the `(key, value)` of an `Items` per-key upsert, panicking on any other notification.
@@ -299,7 +300,7 @@ mod tests {
     }
 
     /// Wait for the next notification, panicking if none arrives.
-    async fn recv_one(sub: &mut TokioSubscriber<TableStorage>) -> Notification {
+    async fn recv_one(sub: &mut TokioSubscriber<KvStore>) -> Notification {
         timeout(Duration::from_secs(1), sub.recv())
             .await
             .expect("timed out waiting for a notification")
@@ -307,7 +308,7 @@ mod tests {
     }
 
     /// Assert that no notification is delivered. Gives the background task a chance to run first.
-    async fn assert_idle(sub: &mut TokioSubscriber<TableStorage>) {
+    async fn assert_idle(sub: &mut TokioSubscriber<KvStore>) {
         match timeout(Duration::from_millis(50), sub.recv()).await {
             Err(_) => {} // nothing delivered, as expected
             Ok(Ok(n)) => panic!("expected no notification, got {n:?}"),
@@ -319,11 +320,7 @@ mod tests {
     async fn table_subscription_receives_events() {
         let notifier = notifier();
         let mut sub = notifier.create_subscriber(OWNER);
-        notifier
-            .store()
-            .table::<Items>(OWNER)
-            .subscribe(&sub)
-            .unwrap();
+        notifier.store().Items.subscribe(&sub).unwrap();
 
         // First insert into the empty table is a table-level upsert; the next is a per-key upsert.
         insert_item(&notifier, 1, "a");
@@ -340,9 +337,9 @@ mod tests {
     async fn singleton_subscription_receives_updates() {
         let notifier = notifier();
         let mut sub = notifier.create_subscriber(OWNER);
-        notifier.store().subscribe::<Count>(&sub).unwrap();
+        notifier.store().Count.subscribe(&sub).unwrap();
 
-        notifier.store().insert::<Count>(OWNER, 7);
+        notifier.store().Count.insert(OWNER, 7);
 
         assert_eq!(count_upsert(&recv_one(&mut sub).await), 7);
     }
@@ -354,7 +351,7 @@ mod tests {
         notifier.store().subscribe_global(&sub).unwrap();
 
         insert_item(&notifier, 1, "a");
-        notifier.store().insert::<Count>(OWNER, 9);
+        notifier.store().Count.insert(OWNER, 9);
 
         assert_eq!(items_table_upsert(&recv_one(&mut sub).await), vec![1]);
         assert_eq!(count_upsert(&recv_one(&mut sub).await), 9);
@@ -363,12 +360,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn subscribe_singleton_and_notify_sends_current_value() {
         let notifier = notifier();
-        notifier.store().insert::<Count>(OWNER, 5); // pre-existing value, no subscribers yet
+        notifier.store().Count.insert(OWNER, 5); // pre-existing value, no subscribers yet
         let mut sub = notifier.create_subscriber(OWNER);
-        notifier
-            .store()
-            .subscribe_and_notify::<Count>(&sub)
-            .unwrap();
+        notifier.store().Count.subscribe_and_notify(&sub).unwrap();
 
         assert_eq!(count_upsert(&recv_one(&mut sub).await), 5);
     }
@@ -377,19 +371,12 @@ mod tests {
     async fn unsubscribe_table_stops_notifications() {
         let notifier = notifier();
         let mut sub = notifier.create_subscriber(OWNER);
-        let subscription = notifier
-            .store()
-            .table::<Items>(OWNER)
-            .subscribe(&sub)
-            .unwrap();
+        let subscription = notifier.store().Items.subscribe(&sub).unwrap();
 
         insert_item(&notifier, 1, "a");
         recv_one(&mut sub).await; // the subscribed update, before we unsubscribe
 
-        notifier
-            .store()
-            .table::<Items>(OWNER)
-            .unsubscribe(subscription);
+        notifier.store().Items.unsubscribe(subscription);
         insert_item(&notifier, 2, "b");
         assert_idle(&mut sub).await;
     }
@@ -400,11 +387,11 @@ mod tests {
         let mut sub = notifier.create_subscriber(OWNER);
         let subscription = notifier.store().subscribe_global(&sub).unwrap();
 
-        notifier.store().insert::<Count>(OWNER, 1);
+        notifier.store().Count.insert(OWNER, 1);
         recv_one(&mut sub).await; // the subscribed update, before we unsubscribe
 
         notifier.store().unsubscribe_global(subscription);
-        notifier.store().insert::<Count>(OWNER, 2);
+        notifier.store().Count.insert(OWNER, 2);
         assert_idle(&mut sub).await;
     }
 
@@ -412,13 +399,13 @@ mod tests {
     async fn unsubscribe_singleton_stops_notifications() {
         let notifier = notifier();
         let mut sub = notifier.create_subscriber(OWNER);
-        let subscription = notifier.store().subscribe::<Count>(&sub).unwrap();
+        let subscription = notifier.store().Count.subscribe(&sub).unwrap();
 
-        notifier.store().insert::<Count>(OWNER, 1);
+        notifier.store().Count.insert(OWNER, 1);
         recv_one(&mut sub).await; // the subscribed update, before we unsubscribe
 
-        notifier.store().unsubscribe::<Count>(subscription);
-        notifier.store().insert::<Count>(OWNER, 2);
+        notifier.store().Count.unsubscribe(subscription);
+        notifier.store().Count.insert(OWNER, 2);
         assert_idle(&mut sub).await;
     }
 
@@ -428,10 +415,10 @@ mod tests {
         let mut a = notifier.create_subscriber(OWNER);
         let mut b = notifier.create_subscriber(OWNER);
 
-        let store = notifier.store();
-        store.subscribe::<Count>(&a).unwrap();
-        store.subscribe::<Count>(&b).unwrap();
-        store.insert::<Count>(OWNER, 7);
+        let count = &notifier.store().Count;
+        count.subscribe(&a).unwrap();
+        count.subscribe(&b).unwrap();
+        count.insert(OWNER, 7);
 
         assert_eq!(count_upsert(&recv_one(&mut a).await), 7);
         assert_eq!(count_upsert(&recv_one(&mut b).await), 7);
@@ -441,18 +428,18 @@ mod tests {
     async fn dropping_subscriber_removes_it_and_leaves_others_working() {
         let notifier = notifier();
         let mut kept = notifier.create_subscriber(OWNER);
-        notifier.store().subscribe::<Count>(&kept).unwrap();
+        notifier.store().Count.subscribe(&kept).unwrap();
 
         let gone = notifier.create_subscriber(OWNER);
         let gone_id = gone.id;
-        notifier.store().subscribe::<Count>(&gone).unwrap();
+        notifier.store().Count.subscribe(&gone).unwrap();
         assert!(notifier.senders.lock().unwrap().contains_key(&gone_id));
 
         drop(gone);
         // Drop removes the subscriber's sender (and forgets it in the store).
         assert!(!notifier.senders.lock().unwrap().contains_key(&gone_id));
 
-        notifier.store().insert::<Count>(OWNER, 7);
+        notifier.store().Count.insert(OWNER, 7);
         assert_eq!(count_upsert(&recv_one(&mut kept).await), 7);
     }
 
@@ -461,11 +448,7 @@ mod tests {
         let notifier = notifier();
         insert_item(&notifier, 0, "v0"); // seed so inserts are per-key with distinct values
         let mut sub = notifier.create_subscriber(OWNER);
-        notifier
-            .store()
-            .table::<Items>(OWNER)
-            .subscribe(&sub)
-            .unwrap();
+        notifier.store().Items.subscribe(&sub).unwrap();
 
         // Many more notifications than the (small, under-test) channel can hold at once, forcing the
         // full/requeue/retry path. Draining continuously resets the retry counter, so none is dropped.
@@ -487,11 +470,7 @@ mod tests {
         let notifier = notifier();
         insert_item(&notifier, 0, "v0"); // seed so inserts are per-key
         let mut sub = notifier.create_subscriber(OWNER);
-        notifier
-            .store()
-            .table::<Items>(OWNER)
-            .subscribe(&sub)
-            .unwrap();
+        notifier.store().Items.subscribe(&sub).unwrap();
 
         // Fill the channel and keep committing without ever draining it. Yielding (rather than
         // sleeping) between commits lets the sending task run a round each time without advancing
@@ -519,11 +498,7 @@ mod tests {
         let notifier = notifier();
         insert_item(&notifier, 0, "v0"); // seed so inserts are per-key
         let mut sub = notifier.create_subscriber(OWNER);
-        notifier
-            .store()
-            .table::<Items>(OWNER)
-            .subscribe(&sub)
-            .unwrap();
+        notifier.store().Items.subscribe(&sub).unwrap();
 
         // Never drained: fill the channel and keep it full across every retry round.
         let n = CHANNEL_CAPACITY as u32 + 1;
