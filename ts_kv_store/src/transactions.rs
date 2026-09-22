@@ -4,8 +4,8 @@
 
 use std::{
     borrow::Borrow,
-    cell::UnsafeCell,
     hash::Hash,
+    marker::PhantomData,
     num::NonZeroU64,
     sync::{RwLockReadGuard, RwLockWriteGuard},
 };
@@ -49,7 +49,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             guard: Some(guard),
             owner,
             id,
-            _not_send_or_sync: UnsafeCell::new(()),
+            _not_send_or_sync: PhantomData,
         }
     }
 
@@ -73,7 +73,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             guard: Some(guard),
             owner,
             id,
-            _not_send_or_sync: UnsafeCell::new(()),
+            _not_send_or_sync: PhantomData,
         })
     }
 
@@ -84,7 +84,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     pub fn begin_ro_transaction(&self, owner: Owner) -> RoTransaction<'_, TableStorage> {
         let guard = self.get_read_lock();
 
-        RoTransaction { guard, owner }
+        RoTransaction {
+            guard,
+            owner,
+            _not_send_or_sync: PhantomData,
+        }
     }
 
     /// Start a read-only transaction (i.e., only supports non-mutating access to the store, but
@@ -98,7 +102,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         self.clear_lock_poison();
 
         if let Ok(guard) = self.storage.try_read() {
-            return Some(RoTransaction { guard, owner });
+            return Some(RoTransaction {
+                guard,
+                owner,
+                _not_send_or_sync: PhantomData,
+            });
         }
 
         // Garbage-collect the abandoned transaction before reading.
@@ -109,7 +117,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         guard.clear_transaction();
         let guard = RwLockWriteGuard::downgrade(guard);
 
-        Some(RoTransaction { guard, owner })
+        Some(RoTransaction {
+            guard,
+            owner,
+            _not_send_or_sync: PhantomData,
+        })
         // We only try once, rather than loop because if the user is calling `try_begin_...`, they
         // presumably don't want to wait and we'd only need to retry if someone else grabbed the
         // the lock before we could.
@@ -163,7 +175,7 @@ pub struct Transaction<'guard, TableStorage: schema::GeneratedStorage> {
     id: TxnId,
     // Enforce the transaction is not `Send` or `Sync` so that it isn't accidentally held over an
     // await point (at least with a parallel async runtime), etc.
-    _not_send_or_sync: UnsafeCell<()>,
+    _not_send_or_sync: PhantomData<*const ()>,
 }
 
 impl<'guard, TableStorage: schema::GeneratedStorage> Drop for Transaction<'guard, TableStorage> {
@@ -440,6 +452,9 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
 pub struct RoTransaction<'guard, TableStorage: schema::GeneratedStorage> {
     pub(crate) guard: RwLockReadGuard<'guard, Storage<TableStorage>>,
     pub(crate) owner: Owner,
+    // Enforce the transaction is not `Send` or `Sync` so that it isn't accidentally held over an
+    // await point (at least with a parallel async runtime), etc.
+    _not_send_or_sync: PhantomData<*const ()>,
 }
 
 impl<'guard, 'txn, TableStorage: schema::GeneratedStorage> Ops<TableStorage>
