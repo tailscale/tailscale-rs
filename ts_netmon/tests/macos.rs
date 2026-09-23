@@ -1,8 +1,8 @@
-#![cfg(target_os = "macos")]
-
 //! macOS-specific tests.
 //!
 //! Might expand to BSD later once the code is made more generic.
+
+#![cfg(target_os = "macos")]
 
 use nom::{Parser, combinator::complete};
 use ts_netmon::{
