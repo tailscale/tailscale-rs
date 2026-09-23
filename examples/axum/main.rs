@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let mut config = Config::default_with_key_file(&args.key_file).await?;
+    config.client_name = Some("example-axum".to_owned());
     config.requested_hostname = args.hostname;
 
     if let Some(url) = args.control_url {
