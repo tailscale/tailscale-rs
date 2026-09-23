@@ -141,11 +141,14 @@ pub fn host_header(u: &url::Url) -> Option<(HeaderName, HeaderValue)> {
 }
 
 /// Return the `User-Agent` header to use for all HTTP requests sent by `ts_http_util` in this
-/// process. Must be called after setting the header with `set_user_agent()`.
+/// process. Should be called after setting the header with `set_user_agent()`.
 ///
-/// Returns `Error::InvalidInput` if called before `set_user_agent()`.
-pub fn user_agent_header() -> Result<impl IntoIterator<Item = (HeaderName, HeaderValue)>, Error> {
-    Ok(USER_AGENT_HEADER.get().ok_or(Error::InvalidInput)?.clone())
+/// Returns a default user agent if `set_user_agent()` has not been called.
+pub fn user_agent_header() -> impl IntoIterator<Item = (HeaderName, HeaderValue)> {
+    USER_AGENT_HEADER
+        .get()
+        .cloned()
+        .unwrap_or(Some((USER_AGENT, DEFAULT_USER_AGENT)))
 }
 
 /// Set the `User-Agent` header to use for all HTTP requests sent by `ts_http_util` in this process.
@@ -156,7 +159,7 @@ pub fn set_user_agent(value: &str) -> Result<(), Error> {
     let value = if value.is_empty() {
         DEFAULT_USER_AGENT
     } else {
-        HeaderValue::from_str(&value).unwrap_or(DEFAULT_USER_AGENT)
+        HeaderValue::from_str(value).unwrap_or(DEFAULT_USER_AGENT)
     };
 
     match USER_AGENT_HEADER.set(Some((USER_AGENT, value))) {
