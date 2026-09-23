@@ -66,6 +66,7 @@ cfg-if = "1.0"
 chacha20poly1305 = "0.10"
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4", features = ["derive"] }
+const_format.version = "0.2"
 crypto_box = "0.9"
 divan = "0.1"
 flume = "0.12"
