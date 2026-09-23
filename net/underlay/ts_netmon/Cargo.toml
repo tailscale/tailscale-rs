@@ -51,7 +51,7 @@ nom = "8.0"
 socket2 = "0.6"
 tokio = { workspace = true, features = ["net"] }
 zerocopy.workspace = true
-ts_util = { workspace = true, features = ["futures", "tokio"] }
+ts_util = { workspace = true, features = ["tokio"] }
 
 [lints]
 workspace = true

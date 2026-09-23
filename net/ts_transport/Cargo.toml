@@ -12,8 +12,8 @@ rust-version.workspace = true
 
 [dependencies]
 # Our crates.
-ts_keys.workspace = true
 ts_packet.workspace = true
+ts_keys.workspace = true
 ts_util.workspace = true
 
 smallbox = { version = "0.8", default-features = false }
