@@ -150,6 +150,22 @@ impl kameo::Actor for DirectActor {
     }
 }
 
+#[kameo::messages]
+impl DirectActor {
+    #[message]
+    pub async fn send_stun(&self, buf: BytesMut, ep: SocketAddr) -> io::Result<()> {
+        let sock = match (ep.is_ipv4(), self.sock6.as_deref()) {
+            (true, _) => self.sock4.as_ref(),
+            (false, Some(x)) => x,
+            (false, None) => {
+                return Err(io::ErrorKind::AddrNotAvailable.into());
+            }
+        };
+
+        sock.send_to(&buf, ep).await.map(|_| ())
+    }
+}
+
 fn udp_rx(sock: impl Borrow<UdpSocket>) -> impl Stream<Item = UdpRx> {
     // Required capacity to receive a UDP datagram. Any smaller and data may technically be dropped
     // with a large MTU or a large fragmented packet. We keep the buffer capacity topped off to this
@@ -319,13 +335,9 @@ impl Message<Arc<netmon::State>> for DirectActor {
 impl Message<StunAddress> for DirectActor {
     type Reply = ();
 
-    async fn handle(&mut self, _msg: StunAddress, _ctx: &mut Context<Self, Self::Reply>) {
-        // TODO(npry): currently we're STUNning with the wrong socket (the global one in the
-        //  stunner), so the local addr + NAT mapping is going to be wrong. don't add the STUNned
-        //  address to our endpoints until it can actually reach this socket.
-
-        // self.stun_addr = Some(msg.addr);
-        // self.publish_endpoints().await.unwrap()
+    async fn handle(&mut self, msg: StunAddress, _ctx: &mut Context<Self, Self::Reply>) {
+        self.stun_addr = Some(msg.addr);
+        self.publish_endpoints().await.unwrap()
     }
 }
 
