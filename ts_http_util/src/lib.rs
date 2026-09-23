@@ -48,7 +48,7 @@ pub type EmptyBody = Empty<Bytes>;
 pub type BytesBody = Full<Bytes>;
 
 /// A connection that has been upgraded from HTTP/1.1 to a different protocol, such as HTTP/2 or
-/// DERP, via HTTP/1.1's upgrade mechanism.protocol upgrade
+/// DERP, via HTTP/1.1's upgrade mechanism.
 pub type Upgraded = hyper_util::rt::TokioIo<hyper::upgrade::Upgraded>;
 
 /// Upgrade a [`Response`] from HTTP/1.1 to the requested protocol.
