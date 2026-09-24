@@ -11,5 +11,6 @@ extern crate alloc;
 extern crate std;
 
 pub mod fmt;
+pub mod fn_;
 #[cfg(feature = "futures")]
 pub mod futures;

@@ -1,7 +1,5 @@
 use std::sync::LazyLock;
 
-use netcore::smoltcp;
-
 /// Global lazily-initialized instance of [`StdClock`].
 pub static CLOCK: LazyLock<StdClock> = LazyLock::new(Default::default);
 

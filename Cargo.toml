@@ -25,8 +25,6 @@ members = [
     "ts_netcheck",
     "ts_netmon",
     "ts_netstack_smoltcp",
-    "ts_netstack_smoltcp_core",
-    "ts_netstack_smoltcp_socket",
     "ts_nodecapability",
     "ts_noise",
     "ts_packet",
@@ -128,8 +126,6 @@ ts_kv_store_tokio = { path = "ts_kv_store_tokio", version = "0.6.1" }
 ts_netcheck = { path = "ts_netcheck", version = "0.6.1" }
 ts_netmon = { path = "ts_netmon", version = "0.6.1" }
 ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.6.1" }
-ts_netstack_smoltcp_core = { path = "ts_netstack_smoltcp_core", version = "0.6.1" }
-ts_netstack_smoltcp_socket = { path = "ts_netstack_smoltcp_socket", version = "0.6.1" }
 ts_nodecapability = { path = "ts_nodecapability", version = "0.6.1" }
 ts_noise = { path = "ts_noise", version = "0.6.1" }
 ts_packet = { path = "ts_packet", version = "0.6.1" }

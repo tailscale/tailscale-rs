@@ -1,7 +1,8 @@
 use core::time::Duration;
 
-use netcore::smoltcp;
 use tracing::Instrument;
+
+use crate::netcore;
 
 /// Run the netstack in the current thread.
 ///
@@ -34,10 +35,10 @@ pub fn run_blocking(
                 // process any more commands pending in the channel before polling device i/o
                 netstack.process_cmds();
             }
-            Err(netcore::flume::RecvTimeoutError::Timeout) => {
+            Err(flume::RecvTimeoutError::Timeout) => {
                 // no commands received, fall through to poll for i/o
             }
-            Err(netcore::flume::RecvTimeoutError::Disconnected) => {
+            Err(flume::RecvTimeoutError::Disconnected) => {
                 // this can't occur: netstack holds a sender, so the channel can't close until it
                 // drops
                 unreachable!("internal command channel closed")

@@ -6,13 +6,12 @@ use core::{
 
 use bytes::{Bytes, BytesMut};
 use futures_util::task::AtomicWaker;
-use netcore::{
-    Pipe, flume, smoltcp,
-    smoltcp::{
-        phy::{ChecksumCapabilities, DeviceCapabilities, Medium},
-        time::Instant,
-    },
+use smoltcp::{
+    phy::{ChecksumCapabilities, DeviceCapabilities, Medium},
+    time::Instant,
 };
+
+use crate::{netcore, netcore::Pipe};
 
 /// Bidirectional pipe carrying byte buffer payloads.
 ///

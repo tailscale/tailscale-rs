@@ -2,9 +2,7 @@
 
 use core::net::SocketAddr;
 
-use ts_netstack_smoltcp_socket::CreateSocket;
-
-extern crate ts_netstack_smoltcp_core as netcore;
+use ts_netstack_smoltcp::{CreateSocket, netcore};
 
 #[path = "../examples/common/mod.rs"]
 pub mod common;

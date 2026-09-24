@@ -4,7 +4,7 @@ Userspace netstack built as an opinionated wrapper around [`smoltcp`].
 
 # Example
 
-Compare the examples from [`ts_netstack_smoltcp_core`] and [`ts_netstack_smoltcp_socket`]:
+NB: compare the examples from [`netcore`] and [`netsock`]:
 
 ```rust
 #![cfg(feature = "std")]
@@ -12,7 +12,7 @@ Compare the examples from [`ts_netstack_smoltcp_core`] and [`ts_netstack_smoltcp
 extern crate ts_netstack_smoltcp as netstack;
 
 use core::time::Duration;
-use netstack::{netcore::smoltcp, HasChannel, CreateSocket};
+use netstack::{smoltcp, HasChannel, CreateSocket};
 
 fn main() {
     let (mut stack, mut pipe) = netstack::piped(Default::default());
@@ -35,3 +35,19 @@ fn main() {
     assert!(packet.ends_with(b"hello"));
 }
 ```
+
+# Crate layout
+
+The core netstack is implemented in [`netcore`]. This is a minimal channel-based command API. It
+doesn't provide ergonomic socket types, just the commands to manipulate them.
+
+[`netsock`] provides a sockets implementation around [`netcore`], i.e. it has `UdpSocket`, 
+`TcpStream`, etc. types.
+
+The top-level crate namespace provides [`Netstack`], which is essentially a runner that adapts a
+[`smoltcp::phy::Device`] onto the core logic and exposes the methods required to construct the
+sockets from [`netsock`].
+
+The crate is laid out this way to allow users to replace components if desired. [`netcore`] has no
+knowledge of and does not depend on any of the internals of [`netsock`]; ditto from [`netsock`] to
+the root crate.

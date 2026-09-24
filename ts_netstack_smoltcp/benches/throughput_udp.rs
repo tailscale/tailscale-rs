@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use bytes::BytesMut;
 use clap::Parser;
-use ts_netstack_smoltcp_socket::CreateSocket;
+use ts_netstack_smoltcp::{CreateSocket, netcore};
 
 #[path = "../examples/common/mod.rs"]
 mod common;
@@ -25,7 +25,7 @@ async fn main() -> common::Result<()> {
     let args = Args::parse();
 
     let (ch1, ch2) = common::spawn_piped_netstacks(
-        ts_netstack_smoltcp_core::Config {
+        netcore::Config {
             udp_buffer_size: BUF_SIZE,
             udp_message_count: 1024,
             command_channel_capacity: Some(128),

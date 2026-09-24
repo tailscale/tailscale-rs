@@ -6,12 +6,15 @@ extern crate alloc;
 #[cfg(any(test, feature = "std"))]
 extern crate std;
 
+pub extern crate flume;
+pub extern crate smoltcp;
+
 use core::{borrow::Borrow, time::Duration};
 
-pub extern crate ts_netstack_smoltcp_core as netcore;
-pub extern crate ts_netstack_smoltcp_socket as netsock;
+pub mod netcore;
+pub mod netsock;
 
-use netcore::{Channel, smoltcp};
+use netcore::Channel;
 pub use netcore::{HasChannel, Netstack as CoreStack};
 pub use netsock::CreateSocket;
 

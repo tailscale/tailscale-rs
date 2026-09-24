@@ -14,20 +14,36 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# Our crates.
-ts_netstack_smoltcp_core.workspace = true
-ts_netstack_smoltcp_socket.workspace = true
-
 # Unconditionally required dependencies.
 bytes.workspace = true
 futures-util = { workspace = true, features = ["async-await", "async-await-macro"] }
 tracing.workspace = true
+flume.workspace = true
+heapless.workspace = true
+thiserror.workspace = true
 
 # Required dependencies for the "tokio" feature.
 tokio = { workspace = true, optional = true, features = ["time"] }
 
 # Required dependencies for the "tun" feature.
 tun-rs = { version = "2.8", optional = true, features = ["interruptible", "async"] }
+
+futures-io = { version = "0.3", optional = true }
+
+[dependencies.smoltcp]
+workspace = true
+features = [
+    "alloc",
+    "proto-ipv6",
+    "proto-ipv6-fragmentation",
+    "proto-ipv4",
+    "proto-ipv4-fragmentation",
+    "medium-ip",
+    "socket-tcp",
+    "socket-udp",
+    "socket-icmp",
+    "socket-raw",
+]
 
 [dev-dependencies]
 # Required dependencies for benchmarks and examples.
@@ -43,12 +59,32 @@ tracing-panic = "0.1"
 ts_cli_util.workspace = true
 tun-rs = { version = "2.8", features = ["async", "async_framed"] }
 
+[dev-dependencies.smoltcp]
+workspace = true
+features = [
+    "alloc",
+    "proto-ipv6",
+    "proto-ipv6-fragmentation",
+    "proto-ipv4",
+    "proto-ipv4-fragmentation",
+    "medium-ip",
+    "socket-tcp",
+    "socket-udp",
+    "socket-icmp",
+    "socket-raw",
+    "iface-max-addr-count-4",
+    "log",
+    "verbose",
+]
+
 [features]
-std = ["ts_netstack_smoltcp_socket/std"]
-tokio = ["dep:tokio", "ts_netstack_smoltcp_socket/tokio", "std"]
-futures-io = ["ts_netstack_smoltcp_socket/futures-io", "std"]
+std = []
+
+tokio = ["dep:tokio", "std"]
+futures-io = ["dep:futures-io", "std"]
+
 # provide a device driver using tun-rs
-tun = ["dep:tun-rs"]
+tun = ["dep:tun-rs", "std"]
 
 [[example]]
 name = "udp_tun"

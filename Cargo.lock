@@ -6185,42 +6185,20 @@ dependencies = [
  "bytes",
  "clap",
  "console-subscriber",
+ "flume",
+ "futures-io",
  "futures-util",
+ "heapless",
  "include_dir",
  "mime_guess",
  "rand 0.10.2",
- "tokio",
- "tracing",
- "tracing-panic",
- "ts_cli_util",
- "ts_netstack_smoltcp_core",
- "ts_netstack_smoltcp_socket",
- "tun-rs",
-]
-
-[[package]]
-name = "ts_netstack_smoltcp_core"
-version = "0.6.1"
-dependencies = [
- "bytes",
- "flume",
- "heapless",
  "smoltcp",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "tracing-panic",
  "ts_cli_util",
-]
-
-[[package]]
-name = "ts_netstack_smoltcp_socket"
-version = "0.6.1"
-dependencies = [
- "bytes",
- "futures-io",
- "tokio",
- "tracing",
- "ts_netstack_smoltcp_core",
+ "tun-rs",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use std::time::Instant;
 use bytes::BytesMut;
 use clap::Parser;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use ts_netstack_smoltcp_socket::CreateSocket;
+use ts_netstack_smoltcp::{netcore, netsock::CreateSocket};
 
 #[path = "../examples/common/mod.rs"]
 mod common;
@@ -31,7 +31,7 @@ async fn main() -> common::Result<()> {
     let args = Args::parse();
 
     let (ch1, ch2) = common::spawn_piped_netstacks(
-        ts_netstack_smoltcp_core::Config {
+        netcore::Config {
             tcp_buffer_size: TCP_SOCKET_BUF_SIZE,
             command_channel_capacity: Some(128),
             mtu: usize::MAX,

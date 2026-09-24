@@ -5,10 +5,9 @@ use core::{
 };
 
 use bytes::BytesMut;
-use netcore::{
-    smoltcp,
-    smoltcp::{phy::DeviceCapabilities, time::Instant},
-};
+use smoltcp::{phy::DeviceCapabilities, time::Instant};
+
+use crate::netcore;
 
 /// TUN device implementing [`smoltcp::phy::Device`], wrapping [`tun_rs`].
 pub struct TunRsDevice {

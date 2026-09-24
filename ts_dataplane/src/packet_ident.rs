@@ -66,6 +66,8 @@ impl PacketIdent {
 
         let ty = if disco::is_disco_message(payload) {
             PacketType::Disco
+        } else if Self::looks_like_stun(payload) {
+            PacketType::StunBinding
         } else if Self::could_be_wireguard(payload) {
             // Assume that all remaining traffic that could be a Wireguard packet is one.
             PacketType::Wireguard
@@ -114,6 +116,31 @@ impl PacketIdent {
         }
 
         [0u8; 3] == pkt[1..=3]
+    }
+
+    /// Report whether the packet looks like a STUN packet as defined in [RFC 8489].
+    ///
+    /// Checks certain invariants that must be true if this is RFC 8489 STUN; does not
+    /// establish conclusive proof.
+    ///
+    /// [RFC 8489]: https://www.rfc-editor.org/info/rfc8489/#section-5
+    pub fn looks_like_stun(pkt: &[u8]) -> bool {
+        const MAGIC: &[u8] = &[0x21, 0x12, 0xa4, 0x42];
+
+        if pkt.len() < 20 {
+            return false;
+        }
+
+        if &pkt[4..8] != MAGIC {
+            return false;
+        }
+
+        // High two bits are always zero.
+        if pkt[0] >> 6 != 0 {
+            return false;
+        }
+
+        true
     }
 }
 

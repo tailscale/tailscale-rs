@@ -4,13 +4,12 @@ use core::net::{Ipv4Addr, SocketAddr};
 use std::sync::Once;
 
 pub extern crate ts_netstack_smoltcp as netstack;
-pub extern crate ts_netstack_smoltcp_core as netcore;
-pub extern crate ts_netstack_smoltcp_socket as netsock;
 
 #[cfg(feature = "std")]
-use netcore::{HasChannel, NetstackControl, smoltcp};
+use netcore::{HasChannel, NetstackControl};
 #[cfg(feature = "std")]
-use netstack::{Netstack, WakingPipe, WakingPipeDev};
+use netstack::{Netstack, WakingPipe, WakingPipeDev, smoltcp};
+pub use netstack::{netcore, netsock};
 
 pub type Result<T> = core::result::Result<T, Box<dyn core::error::Error + Send + Sync + 'static>>;
 
