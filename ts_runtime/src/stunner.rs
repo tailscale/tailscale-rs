@@ -1,22 +1,23 @@
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use kameo::{
-    actor::ActorRef,
+    actor::{ActorRef, Spawn},
     message::{Context, Message},
 };
-use tokio::time::MissedTickBehavior;
+use tokio::{sync::oneshot, time::MissedTickBehavior};
 use ts_derp::IpUsage;
+use ts_netcheck::stun::TransactionId;
+use zerocopy::IntoBytes;
 
-use crate::env::Env;
+use crate::{dataplane::IncomingStunMsg, direct::DirectActor, env::Env};
 
 /// Actor that sends STUN requests to DERP servers to get this node's public IPv4.
 pub struct Stunner {
     env: Env,
-    stun: Arc<ts_netcheck::StunProber>,
     servers: Vec<SocketAddr>,
 }
 
@@ -29,14 +30,14 @@ impl Stunner {
         }
 
         for &server in &self.servers {
-            if let Ok(Ok((_dur, x))) =
-                tokio::time::timeout(Duration::from_secs(3), self.stun.measure(server)).await
+            if let Ok(Some(x)) =
+                tokio::time::timeout(Duration::from_secs(3), self.stun_once(server)).await
             {
                 tracing::debug!(stun_addr = %x);
 
                 self.env
                     .publish(StunAddress {
-                        addr: x.ip(),
+                        addr: x,
                         measured: Instant::now(),
                     })
                     .await
@@ -48,11 +49,24 @@ impl Stunner {
 
         tracing::warn!("failed to stun");
     }
+
+    async fn stun_once(&self, ep: SocketAddr) -> Option<SocketAddr> {
+        let (tx, rx) = oneshot::channel();
+        let env = self.env.clone();
+
+        // Intentionally don't supervise this actor: we're using it as a task that can listen to the
+        // bus. We want it to be destroyed when the aref drops (if this function times out in
+        // `try_stun`).
+        let _aref = StunRoundtripper::spawn((ep, tx, env));
+
+        let (ep, _rxed_inst) = rx.await.ok()?;
+        Some(ep)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct StunAddress {
-    pub addr: IpAddr,
+    pub addr: SocketAddr,
     pub measured: Instant,
 }
 
@@ -64,8 +78,6 @@ impl kameo::Actor for Stunner {
     type Error = crate::Error;
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        // panicking in on_start is fine
-        let stun = ts_netcheck::StunProber::try_new().await.unwrap();
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
 
         env.scheduler
@@ -84,7 +96,6 @@ impl kameo::Actor for Stunner {
         Ok(Self {
             env,
             servers: vec![],
-            stun: Arc::new(stun),
         })
     }
 }
@@ -146,5 +157,51 @@ impl Message<Arc<ts_control::StateUpdate>> for Stunner {
             tracing::trace!("stun server set became populated, trying stun now");
             self.try_stun().await;
         }
+    }
+}
+
+/// Glorified task that just runs a STUN binding request to a specified server endpoint,
+/// then reports the result on a response channel.
+///
+/// Needed (as opposed to spawning a tokio task or [`Task`][crate::Task]) because we need
+/// to listen on the bus for the response to our binding request.
+struct StunRoundtripper {
+    txn: TransactionId,
+    resp: Option<oneshot::Sender<(SocketAddr, Instant)>>,
+}
+
+impl kameo::Actor for StunRoundtripper {
+    type Args = (SocketAddr, oneshot::Sender<(SocketAddr, Instant)>, Env);
+    type Error = crate::Error;
+
+    async fn on_start((ep, tx, env): Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
+        env.subscribe::<IncomingStunMsg>(&slf).await?;
+
+        let (tid, buf) = ts_netcheck::stun::new_txn();
+
+        env.ask::<DirectActor, _>(None, crate::direct::SendStun { buf, ep }, true)
+            .await?;
+
+        Ok(Self {
+            txn: tid,
+            resp: Some(tx),
+        })
+    }
+}
+
+impl Message<IncomingStunMsg> for StunRoundtripper {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: IncomingStunMsg, ctx: &mut Context<Self, Self::Reply>) {
+        let Some((txid, addr)) = ts_netcheck::stun::try_decode(msg.pkt.as_bytes()) else {
+            return;
+        };
+
+        if txid != self.txn {
+            return;
+        }
+
+        let _ = self.resp.take().unwrap().send((addr, Instant::now()));
+        ctx.stop();
     }
 }
