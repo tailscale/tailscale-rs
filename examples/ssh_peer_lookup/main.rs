@@ -208,6 +208,9 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     let args = Args::parse();
 
+    let mut config = tailscale::Config::default_with_key_file(&args.key_file).await?;
+    config.client_name = Some("example-ssh-peer-lookup".to_owned());
+
     let dev = tailscale::Device::new(
         &tailscale::Config::default_with_key_file(&args.key_file).await?,
         args.auth_key,

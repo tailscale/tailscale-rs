@@ -66,6 +66,9 @@ impl kameo::Actor for Runtime {
         env.scheduler.link(&slf).await;
         env.registry.link(&slf).await;
 
+        ts_http_util::set_user_agent(&config.control_config.format_user_agent())
+            .expect("cannot set user agent header");
+
         #[cfg(feature = "console")]
         {
             // Runs detached.

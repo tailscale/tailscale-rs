@@ -1,7 +1,10 @@
 #![doc = include_str!("../README.md")]
 
+use std::{env::consts::OS, sync::OnceLock};
+
 use bytes::Bytes;
-use http::header::{CONNECTION, UPGRADE};
+use const_format::formatcp;
+use http::header::{CONNECTION, UPGRADE, USER_AGENT};
 pub use http::{
     HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode, header::HOST,
 };
@@ -21,6 +24,21 @@ pub use http2::Http2;
 pub use hyper::upgrade::on as upgrade;
 pub use sealed::ResponseExt;
 
+/// Version of this crate, or `unknown` if it can't be determined at compile-time.
+const PKG_VERSION: &str = if let Some(version) = option_env!("CARGO_PKG_VERSION") {
+    version
+} else {
+    "unknown"
+};
+
+/// Default `User-Agent` header value to send with every HTTP request. Should only be used if the
+/// application-provided client name results in an invalid `User-Agent` value.
+const DEFAULT_USER_AGENT: HeaderValue =
+    HeaderValue::from_static(formatcp!("tailscale-rs/{PKG_VERSION} ({OS}) unknown"));
+
+/// HTTP `User-Agent` header to be sent with every request from this process.
+pub static USER_AGENT_HEADER: OnceLock<Option<(HeaderName, HeaderValue)>> = OnceLock::new();
+
 /// The body of an HTTP [`Request`] or [`Response`] that's always empty; i.e., the body will always
 /// be zero bytes in length.
 pub type EmptyBody = Empty<Bytes>;
@@ -30,7 +48,7 @@ pub type EmptyBody = Empty<Bytes>;
 pub type BytesBody = Full<Bytes>;
 
 /// A connection that has been upgraded from HTTP/1.1 to a different protocol, such as HTTP/2 or
-/// DERP, via HTTP/1.1's upgrade mechanism.protocol upgrade
+/// DERP, via HTTP/1.1's upgrade mechanism.
 pub type Upgraded = hyper_util::rt::TokioIo<hyper::upgrade::Upgraded>;
 
 /// Upgrade a [`Response`] from HTTP/1.1 to the requested protocol.
@@ -120,6 +138,37 @@ pub fn make_upgrade_req(
 /// Returns `None` if `u.host_str()` is `None` or includes non-ascii-printable characters.
 pub fn host_header(u: &url::Url) -> Option<(HeaderName, HeaderValue)> {
     Some((HOST, HeaderValue::from_str(u.host_str()?).ok()?))
+}
+
+/// Return the `User-Agent` header to use for all HTTP requests sent by `ts_http_util` in this
+/// process. Should be called after setting the header with `set_user_agent()`.
+///
+/// Returns a default user agent if `set_user_agent()` has not been called.
+pub fn user_agent_header() -> impl IntoIterator<Item = (HeaderName, HeaderValue)> {
+    USER_AGENT_HEADER
+        .get()
+        .cloned()
+        .unwrap_or(Some((USER_AGENT, DEFAULT_USER_AGENT)))
+}
+
+/// Set the `User-Agent` header to use for all HTTP requests sent by `ts_http_util` in this process.
+/// Can only be called once.
+///
+/// Returns `Error::InvalidInput` on subsequent calls.
+pub fn set_user_agent(value: &str) -> Result<(), Error> {
+    let value = if value.is_empty() {
+        DEFAULT_USER_AGENT
+    } else {
+        HeaderValue::from_str(value).unwrap_or(DEFAULT_USER_AGENT)
+    };
+
+    match USER_AGENT_HEADER.set(Some((USER_AGENT, value))) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            tracing::error!("cannot re-initialise user agent header");
+            Err(Error::InvalidInput)
+        }
+    }
 }
 
 async fn dial_tcp(url: &url::Url) -> Result<TcpStream, Error> {

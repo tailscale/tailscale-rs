@@ -53,6 +53,7 @@ where
 
         if let Some(hdrs) = req.headers_mut() {
             hdrs.extend(crate::host_header(url));
+            hdrs.extend(crate::user_agent_header());
             hdrs.extend(headers);
         }
 
@@ -81,6 +82,7 @@ where
 
         if let Some(hdrs) = req.headers_mut() {
             hdrs.extend(crate::host_header(url));
+            hdrs.extend(crate::user_agent_header());
             hdrs.extend(headers);
         }
 

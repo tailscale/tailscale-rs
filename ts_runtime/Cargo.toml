@@ -17,6 +17,7 @@ ts_bart_packetfilter.workspace = true
 ts_control.workspace = true
 ts_dataplane.workspace = true
 ts_disco_protocol.workspace = true
+ts_http_util.workspace = true
 ts_keys.workspace = true
 ts_netcheck.workspace = true
 ts_netmon.workspace = true

@@ -43,6 +43,21 @@ impl Config {
 
         full_name
     }
+
+    /// Get the client name and `tailscale-rs` version as a string, formatted for use as an HTTP
+    /// `User-Agent` header.
+    ///
+    /// This takes the form `tailscale-rs/{version} ({OS}) {client_name}`, where client_name is
+    /// `unknown` if `self.client_name` is not set. Note that the version used is the `ts_control`
+    /// crate version, not the version of the client application.
+    pub fn format_user_agent(&self) -> String {
+        format!(
+            "tailscale-rs/{} ({}) {}",
+            crate::PKG_VERSION,
+            std::env::consts::OS,
+            self.client_name.as_deref().unwrap_or("unknown"),
+        )
+    }
 }
 
 impl Debug for Config {
