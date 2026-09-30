@@ -1,45 +1,45 @@
 [workspace]
 resolver = "3"
 members = [
-    "checks",
-    "ts_array256",
-    "ts_bart",
-    "ts_bart_packetfilter",
-    "ts_bitset",
-    "ts_capabilityversion",
-    "ts_cli_util",
-    "ts_control",
-    "ts_control_noise",
-    "ts_control_serde",
-    "ts_dataplane",
-    "ts_derp",
-    "ts_devtools",
-    "ts_disco_protocol",
-    "ts_dynbitset",
-    "ts_elixir/native/ts_elixir",
-    "ts_ffi",
-    "ts_http_util",
-    "ts_keys",
-    "ts_kv_store",
-    "ts_kv_store_tokio",
-    "ts_netcheck",
-    "ts_netmon",
-    "ts_netstack_smoltcp",
-    "ts_nodecapability",
-    "ts_noise",
-    "ts_packet",
-    "ts_packetfilter",
-    "ts_packetfilter_serde",
-    "ts_packetfilter_state",
-    "ts_peercapability",
-    "ts_python",
-    "ts_runtime",
-    "ts_test_util",
-    "ts_time",
-    "ts_tunnel",
-    "ts_tls_util",
-    "ts_transport",
-    "ts_util",
+    "crates/bindings/ts_elixir/native/ts_elixir",
+    "crates/bindings/ts_ffi",
+    "crates/bindings/ts_python",
+    "crates/control_plane/ts_control",
+    "crates/control_plane/ts_control_noise",
+    "crates/control_plane/ts_control_serde",
+    "crates/data_structures/ts_array256",
+    "crates/data_structures/ts_bart",
+    "crates/data_structures/ts_bitset",
+    "crates/data_structures/ts_dynbitset",
+    "crates/kv_store/ts_kv_store",
+    "crates/kv_store/ts_kv_store_tokio",
+    "crates/net/overlay/ts_bart_packetfilter",
+    "crates/net/overlay/ts_netstack_smoltcp",
+    "crates/net/overlay/ts_packetfilter",
+    "crates/net/overlay/ts_packetfilter_serde",
+    "crates/net/overlay/ts_packetfilter_state",
+    "crates/net/ts_dataplane",
+    "crates/net/ts_transport",
+    "crates/net/underlay/ts_derp",
+    "crates/net/underlay/ts_netcheck",
+    "crates/net/underlay/ts_netmon",
+    "crates/net/protocol/ts_disco_protocol",
+    "crates/net/protocol/ts_noise",
+    "crates/net/protocol/ts_tunnel",
+    "crates/capabilities/ts_capabilityversion",
+    "crates/capabilities/ts_nodecapability",
+    "crates/capabilities/ts_peercapability",
+    "tools/checks",
+    "tools/ts_devtools",
+    "crates/ts_runtime",
+    "crates/utils/ts_cli_util",
+    "crates/utils/ts_http_util",
+    "crates/utils/ts_keys",
+    "crates/utils/ts_packet",
+    "crates/utils/ts_test_util",
+    "crates/utils/ts_time",
+    "crates/utils/ts_tls_util",
+    "crates/utils/ts_util",
 ]
 
 [workspace.package]
@@ -107,40 +107,46 @@ zeroize = { version = "1.8.2", features = ["zeroize_derive"] }
 
 # local workspace deps
 tailscale = { path = ".", version = "0.6.1" }
-ts_array256 = { path = "ts_array256", version = "0.6.1" }
-ts_bart = { path = "ts_bart", version = "0.6.1" }
-ts_bart_packetfilter = { path = "ts_bart_packetfilter", version = "0.6.1" }
-ts_bitset = { path = "ts_bitset", default-features = false, version = "0.6.1" }
-ts_capabilityversion = { path = "ts_capabilityversion", version = "0.6.1" }
-ts_cli_util = { path = "ts_cli_util" }
-ts_control = { path = "ts_control", version = "0.6.1" }
-ts_control_noise = { path = "ts_control_noise", version = "0.6.1" }
-ts_control_serde = { path = "ts_control_serde", version = "0.6.1" }
-ts_dataplane = { path = "ts_dataplane", version = "0.6.1" }
-ts_derp = { path = "ts_derp", version = "0.6.1" }
-ts_disco_protocol = { path = "ts_disco_protocol", version = "0.6.1" }
-ts_dynbitset = { path = "ts_dynbitset", version = "0.6.1" }
-ts_keys = { path = "ts_keys", version = "0.6.1" }
-ts_kv_store = { path = "ts_kv_store", version = "0.6.1" }
-ts_kv_store_tokio = { path = "ts_kv_store_tokio", version = "0.6.1" }
-ts_netcheck = { path = "ts_netcheck", version = "0.6.1" }
-ts_netmon = { path = "ts_netmon", version = "0.6.1" }
-ts_netstack_smoltcp = { path = "ts_netstack_smoltcp", version = "0.6.1" }
-ts_nodecapability = { path = "ts_nodecapability", version = "0.6.1" }
-ts_noise = { path = "ts_noise", version = "0.6.1" }
-ts_packet = { path = "ts_packet", version = "0.6.1" }
-ts_packetfilter = { path = "ts_packetfilter", version = "0.6.1" }
-ts_packetfilter_serde = { path = "ts_packetfilter_serde", version = "0.6.1" }
-ts_packetfilter_state = { path = "ts_packetfilter_state", version = "0.6.1" }
-ts_peercapability = { path = "ts_peercapability", version = "0.6.1" }
-ts_http_util = { path = "ts_http_util", version = "0.6.1" }
-ts_tls_util = { path = "ts_tls_util", version = "0.6.1" }
-ts_util = { path = "ts_util", version = "0.6.1", default-features = false }
-ts_runtime = { path = "ts_runtime", version = "0.6.1" }
-ts_test_util = { path = "ts_test_util" }
-ts_time = { path = "ts_time", version = "0.6.1" }
-ts_transport = { path = "ts_transport", version = "0.6.1" }
-ts_tunnel = { path = "ts_tunnel", version = "0.6.1" }
+ts_runtime = { path = "crates/ts_runtime", version = "0.6.1" }
+
+ts_array256 = { path = "crates/data_structures/ts_array256", version = "0.6.1" }
+ts_bart = { path = "crates/data_structures/ts_bart", version = "0.6.1" }
+ts_bart_packetfilter = { path = "crates/net/overlay/ts_bart_packetfilter", version = "0.6.1" }
+ts_bitset = { path = "crates/data_structures/ts_bitset", default-features = false, version = "0.6.1" }
+
+ts_capabilityversion = { path = "crates/capabilities/ts_capabilityversion", version = "0.6.1" }
+ts_nodecapability = { path = "crates/capabilities/ts_nodecapability", version = "0.6.1" }
+ts_peercapability = { path = "crates/capabilities/ts_peercapability", version = "0.6.1" }
+
+ts_control = { path = "crates/control_plane/ts_control", version = "0.6.1" }
+ts_control_noise = { path = "crates/control_plane/ts_control_noise", version = "0.6.1" }
+ts_control_serde = { path = "crates/control_plane/ts_control_serde", version = "0.6.1" }
+
+ts_kv_store = { path = "crates/kv_store/ts_kv_store", version = "0.6.1" }
+ts_kv_store_tokio = { path = "crates/kv_store/ts_kv_store_tokio", version = "0.6.1" }
+
+ts_dataplane = { path = "crates/net/ts_dataplane", version = "0.6.1" }
+ts_derp = { path = "crates/net/underlay/ts_derp", version = "0.6.1" }
+ts_disco_protocol = { path = "crates/net/protocol/ts_disco_protocol", version = "0.6.1" }
+ts_dynbitset = { path = "crates/data_structures/ts_dynbitset", version = "0.6.1" }
+ts_netcheck = { path = "crates/net/underlay/ts_netcheck", version = "0.6.1" }
+ts_netmon = { path = "crates/net/underlay/ts_netmon", version = "0.6.1" }
+ts_netstack_smoltcp = { path = "crates/net/overlay/ts_netstack_smoltcp", version = "0.6.1" }
+ts_noise = { path = "crates/net/protocol/ts_noise", version = "0.6.1" }
+ts_packetfilter = { path = "crates/net/overlay/ts_packetfilter", version = "0.6.1" }
+ts_packetfilter_serde = { path = "crates/net/overlay/ts_packetfilter_serde", version = "0.6.1" }
+ts_packetfilter_state = { path = "crates/net/overlay/ts_packetfilter_state", version = "0.6.1" }
+ts_transport = { path = "crates/net/ts_transport", version = "0.6.1" }
+ts_tunnel = { path = "crates/net/protocol/ts_tunnel", version = "0.6.1" }
+
+ts_cli_util = { path = "crates/utils/ts_cli_util" }
+ts_http_util = { path = "crates/utils/ts_http_util", version = "0.6.1" }
+ts_keys = { path = "crates/utils/ts_keys", version = "0.6.1" }
+ts_packet = { path = "crates/utils/ts_packet", version = "0.6.1" }
+ts_tls_util = { path = "crates/utils/ts_tls_util", version = "0.6.1" }
+ts_util = { path = "crates/utils/ts_util", version = "0.6.1", default-features = false }
+ts_test_util = { path = "crates/utils/ts_test_util" }
+ts_time = { path = "crates/utils/ts_time", version = "0.6.1" }
 
 [workspace.lints.rust]
 closure_returning_async_block = "warn"

@@ -50,7 +50,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ts_ffi
+        working-directory: crates/bindings/ts_ffi
 
     steps:
       - name: Checkout

@@ -41,7 +41,7 @@ env:
 
 defaults:
   run:
-    working-directory: ts_elixir
+    working-directory: crates/bindings/ts_elixir
     shell: bash
 
 jobs:
@@ -84,8 +84,8 @@ jobs:
         with:
           path: |
             ~/.mix
-            ts_elixir/_build/
-            ts_elixir/deps/
+            crates/bindings/ts_elixir/_build/
+            crates/bindings/ts_elixir/deps/
           key: ${{ matrix.platform.triple }}-mix-${{ env.cache_key }}-elixir-${{ matrix.elixir.version }}-otp-${{ matrix.otp.version }}-${{ hashFiles('**/mix.lock') }}
 
       # The setup-beam action uses the `ImageOS` env var to select the dependency bundle to
@@ -140,12 +140,12 @@ jobs:
 
       - &detach_cargo_toml
         name: Detach Cargo.toml from workspace
-        working-directory: ts_elixir/native/ts_elixir
+        working-directory: crates/bindings/ts_elixir/native/ts_elixir
         run: |
           pip install tomli-w
           
           python deworkspace_cargo_toml.py \
-            --root ../../../Cargo.toml \
+            --root ../../../../../Cargo.toml \
             --repo_sha ${{ github.sha }} \
             < Cargo.toml > Cargo.toml.new
           
@@ -162,7 +162,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.package_artifact_base }}-${{ matrix.platform.triple }}
-          path: ts_elixir/tailscale
+          path: crates/bindings/ts_elixir/tailscale
 
   arch_independent:
     name: arch-independent checks
@@ -181,8 +181,8 @@ jobs:
         with:
           path: |
             ~/.mix
-            ts_elixir/_build/
-            ts_elixir/deps/
+            crates/bindings/ts_elixir/_build/
+            crates/bindings/ts_elixir/deps/
           key: ${{ env.target_triple }}-mix-${{ env.cache_key }}-elixir-${{ env.latest_elixir }}-otp-${{ env.latest_otp }}-${{ hashFiles('**/mix.lock') }}
 
       - name: Install elixir
@@ -221,7 +221,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: exdoc-${{ github.sha }}
-          path: ts_elixir/doc
+          path: crates/bindings/ts_elixir/doc
           retention-days: 7
 
   publish:
@@ -253,8 +253,8 @@ jobs:
         with:
           path: |
             ~/.mix
-            ts_elixir/_build/
-            ts_elixir/deps/
+            crates/bindings/ts_elixir/_build/
+            crates/bindings/ts_elixir/deps/
           key: ${{ runner.os }}-mix-${{ env.cache_key }}-elixir-${{ env.latest_elixir }}-otp-${{ env.latest_otp }}-${{ hashFiles('**/mix.lock') }}
 
       - name: Install elixir
@@ -281,12 +281,12 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.package_artifact_base }}-${{ env.target_triple }}
-          path: ts_elixir/tailscale
+          path: crates/bindings/ts_elixir/tailscale
 
       - name: Generate attestation
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ts_elixir/tailscale
+          subject-path: crates/bindings/ts_elixir/tailscale
 
       - *detach_cargo_toml
 

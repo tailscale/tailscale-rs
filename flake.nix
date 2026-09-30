@@ -64,13 +64,13 @@
       filter = lib.fileset.unions [
         ./deny.toml
         ./.rustfmt.toml
-        ./ts_ffi/cbindgen.toml
-        ./ts_netstack_smoltcp/examples/axum_tun
+        ./crates/bindings/ts_ffi/cbindgen.toml
+        ./crates/net/overlay/ts_netstack_smoltcp/examples/axum_tun
         ./examples/axum
         (lib.fileset.fileFilter (file: file.hasExt "rs") ./.)
         (lib.fileset.fileFilter (file: file.hasExt "json") ./.)
         (lib.fileset.fileFilter (file: file.name == "README.md") ./.)
-        (lib.fileset.fileFilter (file: file.name == "prefixes.txt.gz") ./ts_bart)
+        (lib.fileset.fileFilter (file: file.name == "prefixes.txt.gz") ./crates/data_structures/ts_bart)
         (lib.fileset.fileFilter (file: file.name == "Cargo.toml") ./.)
         (lib.fileset.fileFilter (file: file.name == "Cargo.lock") ./.)
         (lib.fileset.fileFilter (file: file.name == ".clippy.toml") ./.)
@@ -123,13 +123,13 @@
 
             postInstall = ''
               mkdir -p $out/include
-              cp -v ts_ffi/tailscale.h $out/include
+              cp -v crates/bindings/ts_ffi/tailscale.h $out/include
             '';
           });
 
         in with_header.overrideAttrs (prevAttrs: {
           passthru = (prevAttrs.passthru or {} // {
-            examples = pkgs.callPackage ./ts_ffi/examples {
+            examples = pkgs.callPackage ./crates/bindings/ts_ffi/examples {
               libtailscalers = with_header;
             };
           });

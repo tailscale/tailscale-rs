@@ -32,7 +32,7 @@ ifneq ($(RUST_TARGET),)
 	RUST_TARGET_FLAG := --target $(RUST_TARGET)
 endif
 
-CFLAGS += -L../../target/$(RUST_TARGET_PATH)$(RUST_PROFILE_DIR)/
+CFLAGS += -L../../../../target/$(RUST_TARGET_PATH)$(RUST_PROFILE_DIR)/
 TARGET_NAMES := udp_ping tcp_echo lookup_peer
 TARGETS := $(patsubst %,%$(TARGET_SUFFIX),$(TARGET_NAMES))
 
