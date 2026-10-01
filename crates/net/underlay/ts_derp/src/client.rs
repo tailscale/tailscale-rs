@@ -34,7 +34,16 @@ pub struct Client<Io> {
 pub async fn connect<'c>(
     region: impl IntoIterator<Item = &'c ServerConnInfo>,
 ) -> Result<Option<DefaultIo>, Error> {
-    let Some((conn, _, addr)) = crate::dial::dial_region_tls(region).await.unwrap() else {
+    let Some((conn, _, addr)) =
+        crate::dial::dial_region_tls(region)
+            .await
+            .map_err(|e| match e {
+                crate::dial::Error::Io => Error::IoFailure(std::io::ErrorKind::Other.into()),
+                crate::dial::Error::InvalidParam => {
+                    Error::IoFailure(std::io::ErrorKind::InvalidInput.into())
+                }
+            })?
+    else {
         return Ok(None);
     };
 
@@ -214,7 +223,7 @@ impl Client<DefaultIo> {
         region: impl IntoIterator<Item = &'c ServerConnInfo>,
         node_keypair: &NodeKeyPair,
     ) -> Result<Self, Error> {
-        let conn = connect(region).await?.unwrap();
+        let conn = connect(region).await?.ok_or(Error::NoServers)?;
 
         Client::handshake(conn, node_keypair).await
     }
