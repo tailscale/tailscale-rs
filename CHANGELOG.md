@@ -6,6 +6,8 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- Fixed (ts_derp): derp would panic if network went offline, now propagates up an error.
+
 ## [0.7.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.7.1) - 2026-11-06
 
 - Changed (ts_netstack_smoltcp): reverts change to cubic congestion control in smoltcp, which requires `std` for a few
