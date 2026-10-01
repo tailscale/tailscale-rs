@@ -6,6 +6,9 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- Fixed (Rust API): return an error from `is_authorized` when the user's auth key is rejected by
+  the control server. Resolves crashes and panics that would otherwise occur in this case.
+
 ## [0.6.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.6.1) - 2026-09-17
 
 - Fixed: a Trusted Publisher issue with the `ts_future_util` crate that prevented publishing `0.6.0` to crates.io.

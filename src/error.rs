@@ -25,6 +25,18 @@ pub enum Error {
     #[error("an error writing out the key file")]
     KeyFileWrite,
 
+    /// The node has contacted the control server with an auth key and it was rejected.
+    ///
+    /// This state is not recoverable: an interactive-auth URL is not provided by the
+    /// control server when the user sends an auth key. You must reconnect and either:
+    ///
+    /// - provide a valid auth key
+    /// - not provide an auth key at all, prompting the user via the interactive flow (look
+    ///   for [`AuthState::NotAuthorized`][crate::AuthState::NotAuthorized] to extract the
+    ///   URL).
+    #[error("auth key rejected")]
+    AuthKeyRejected,
+
     /// An error occurred which can not be anticipated or handled by a library user.
     ///
     /// This is likely due to a bug in our code or a rare and unexpected error.
