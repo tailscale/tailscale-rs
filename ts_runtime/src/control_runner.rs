@@ -36,12 +36,43 @@ pub struct ControlRunner {
     pending_node_requests: Vec<PendingNodeRequest>,
 }
 
+/// The response to [`AuthUrl`]: what the state of control server auth is.
+#[derive(Debug, Clone, PartialEq, Eq, kameo::Reply)]
+pub enum AuthResponse {
+    /// The device is authorized.
+    Authorized,
+    /// The device is not authorized and an interactive auth URL is provided.
+    InteractiveAuthRequired(url::Url),
+    /// The device is not authorized because the key was rejected.
+    ///
+    /// Interactive auth is impossible (control server doesn't supply a URL in this case).
+    KeyRejected,
+}
+
 enum RegState {
     NotRegistered {
-        pending_auth_requests: Vec<ReplySender<Option<url::Url>>>,
+        pending_auth_requests: Vec<ReplySender<AuthResponse>>,
     },
     AuthRequired(url::Url),
     Registered(HttpConn),
+    AuthKeyRejected,
+}
+
+impl RegState {
+    /// Update this to `new_state`, sending `value_for_pending` to any pending auth
+    /// requests.
+    fn update(&mut self, new_state: Self, value_for_pending: AuthResponse) {
+        let old_state = core::mem::replace(self, new_state);
+
+        if let RegState::NotRegistered {
+            pending_auth_requests,
+        } = old_state
+        {
+            for req in pending_auth_requests {
+                req.send(value_for_pending.clone());
+            }
+        }
+    }
 }
 
 /// Control runner args.
@@ -228,11 +259,13 @@ impl ControlRunner {
     #[message(ctx)]
     pub fn auth_url(
         &mut self,
-        ctx: &mut Context<Self, DelegatedReply<Option<url::Url>>>,
-    ) -> DelegatedReply<Option<url::Url>> {
+        ctx: &mut Context<Self, DelegatedReply<AuthResponse>>,
+    ) -> DelegatedReply<AuthResponse> {
         match &mut self.state {
-            RegState::Registered(..) => ctx.reply(None),
-            RegState::AuthRequired(u) => ctx.reply(Some(u.clone())),
+            RegState::Registered(..) => ctx.reply(AuthResponse::Authorized),
+            RegState::AuthRequired(u) => {
+                ctx.reply(AuthResponse::InteractiveAuthRequired(u.clone()))
+            }
             RegState::NotRegistered {
                 pending_auth_requests,
             } => {
@@ -243,6 +276,7 @@ impl ControlRunner {
 
                 deleg
             }
+            RegState::AuthKeyRejected => ctx.reply(AuthResponse::KeyRejected),
         }
     }
 }
@@ -334,7 +368,7 @@ impl Message<AuthRequired> for ControlRunner {
         };
 
         for req in pending_auth_requests.into_iter() {
-            req.send(Some(auth_url.clone()));
+            req.send(AuthResponse::InteractiveAuthRequired(auth_url.clone()));
         }
     }
 }
@@ -351,6 +385,13 @@ impl Message<RegisterResult> for ControlRunner {
 
         let conn = match msg.0 {
             Ok(conn) => conn,
+            Err(RegistrationError::MachineNotAuthorized(None)) => {
+                tracing::error!("auth key rejected");
+                self.state
+                    .update(RegState::AuthKeyRejected, AuthResponse::KeyRejected);
+
+                return;
+            }
             Err(e) => {
                 tracing::error!(error = %e, "unable to register with control server");
                 ctx.stop();
@@ -358,16 +399,8 @@ impl Message<RegisterResult> for ControlRunner {
             }
         };
 
-        let old_state = core::mem::replace(&mut self.state, RegState::Registered(conn.clone()));
-
-        if let RegState::NotRegistered {
-            pending_auth_requests,
-        } = old_state
-        {
-            for req in pending_auth_requests {
-                req.send(None);
-            }
-        }
+        self.state
+            .update(RegState::Registered(conn.clone()), AuthResponse::Authorized);
 
         let reader = self
             .with_map_request(true, async |req| {
