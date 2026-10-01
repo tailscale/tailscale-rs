@@ -8,6 +8,7 @@ Put changes for the upcoming release here!
 
 - Fixed (Rust API): return an error from `is_authorized` when the user's auth key is rejected by
   the control server. Resolves crashes and panics that would otherwise occur in this case.
+- Fixed (ts_derp): derp would panic if network went offline, now propagates up an error.
 
 ## [0.6.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.6.1) - 2026-09-17
 

@@ -1,6 +1,10 @@
 /// Errors encountered during derp client operation.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// No derp servers available for connection.
+    #[error("no derp servers were available for connection")]
+    NoServers,
+
     /// Error failed to parse.
     #[error(transparent)]
     BadUrl(#[from] url::ParseError),
