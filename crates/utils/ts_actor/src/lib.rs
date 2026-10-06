@@ -25,6 +25,7 @@ mod proc_name;
 pub mod protocol;
 pub mod runtime;
 mod staticstorage;
+pub mod supervisor;
 mod system_message;
 pub(crate) mod util;
 
