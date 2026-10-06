@@ -5865,6 +5865,7 @@ name = "ts_actor"
 version = "0.6.1"
 dependencies = [
  "atomic-waker",
+ "lock_api",
  "smallbox",
  "tokio",
 ]

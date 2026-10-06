@@ -9,6 +9,7 @@
 extern crate alloc;
 pub extern crate smallbox;
 
+pub mod mailbox;
 mod message;
 pub mod oneshot;
 mod staticstorage;
