@@ -5867,6 +5867,7 @@ dependencies = [
  "atomic-waker",
  "lock_api",
  "smallbox",
+ "smol_str",
  "tokio",
 ]
 
