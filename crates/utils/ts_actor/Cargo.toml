@@ -11,16 +11,46 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+tap = "1.0"
+lock_api = { version = "0.4", features = ["arc_lock", "atomic_usize"] }
+pin-project-lite = "0.2"
+tracing = { workspace = true, features = ["async-await"] }
+thiserror.workspace = true
 smallbox = { version = "0.8", default-features = false }
 smol_str = { version = "0.3", default-features = false }
 atomic-waker = { version = "1.1" }
-lock_api = { version = "0.4", features = ["arc_lock", "atomic_usize"] }
+cfg-if.workspace = true
+futures-util = { workspace = true, features = ["alloc", "async-await", "async-await-macro"] }
+
+tokio = { workspace = true, optional = true, features = ["time"] }
+smol = { version = "2.0", optional = true }
+async-executor = { version = "1.14", optional = true }
+async-io = { version = "2.6", optional = true }
+parking_lot = { version = "0.12", optional = true }
+
+ts_util = { workspace = true, features = ["futures"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
+# self-dep: enable all features
+ts_actor = { path = ".", features = ["tokio", "smol", "async-executor"] }
+
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+tracing-subscriber = { version = "0.3" }
 
 [features]
 default = []
+
+# enable std-dependent features
+std = ["tracing/std", "dep:parking_lot", "thiserror/std"]
+
+# enable the tokio executor
+tokio = ["std", "dep:tokio"]
+# enable the smol executor. this is just the static async-executor built into `smol::spawn` in case
+# you don't want to run one yourself.
+smol = ["async-executor", "dep:smol"]
+# enable the async-executor executor, using async-io for timers (this is underlying set of crates
+# `smol` uses, just used directly)
+async-executor = ["std", "dep:async-executor", "dep:async-io"]
 
 [lints]
 workspace = true
