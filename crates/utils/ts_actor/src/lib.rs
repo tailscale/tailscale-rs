@@ -7,3 +7,8 @@
 //! typing.
 
 extern crate alloc;
+pub extern crate smallbox;
+
+mod message;
+
+pub use message::Message;
