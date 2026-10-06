@@ -11,5 +11,7 @@ pub extern crate smallbox;
 
 mod message;
 pub mod oneshot;
+mod staticstorage;
 
 pub use message::Message;
+pub use staticstorage::StaticStorage;
