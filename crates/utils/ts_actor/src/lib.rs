@@ -10,5 +10,6 @@ extern crate alloc;
 pub extern crate smallbox;
 
 mod message;
+pub mod oneshot;
 
 pub use message::Message;
