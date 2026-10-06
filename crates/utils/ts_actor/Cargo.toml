@@ -1,0 +1,21 @@
+[package]
+name = "ts_actor"
+version.workspace = true
+description = "tailscale actor system"
+categories = ["no-std"]
+keywords = ["tailscale", "actor"]
+
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+
+[features]
+default = []
+
+[lints]
+workspace = true
