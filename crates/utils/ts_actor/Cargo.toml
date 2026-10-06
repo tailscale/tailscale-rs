@@ -52,5 +52,13 @@ smol = ["async-executor", "dep:smol"]
 # `smol` uses, just used directly)
 async-executor = ["std", "dep:async-executor", "dep:async-io"]
 
+[[test]]
+name = "count"
+required-features = ["tokio"]
+
+[[test]]
+name = "reg_count"
+required-features = ["tokio"]
+
 [lints]
 workspace = true
