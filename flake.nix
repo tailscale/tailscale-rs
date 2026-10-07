@@ -213,6 +213,15 @@
             system = system;
           };
         in makePackages crossPkgs);
+      } // lib.optionalAttrs (pkgs.stdenv.hostPlatform.isLinux && inputs.headscale.packages ? ${system}) {
+        # tailscale-rs against a real headscale in NixOS VMs. Needs KVM, so it's kept out of
+        # `checks`: `nix build .#e2e -L`.
+        e2e = import ./nix/e2e.nix {
+          pkgs = pkgs;
+          deps = packages.deps;
+          rustsrc = rustsrc;
+          headscale = inputs.headscale;
+        };
       };
 
       # Run these (as well as checking the flake for valid structure) with `nix flake check`.
