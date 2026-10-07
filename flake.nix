@@ -12,6 +12,10 @@
       url = "github:rustsec/advisory-db";
       flake = false;
     };
+
+    # Control server for the e2e VM test (nix/e2e.nix). Doesn't follow our nixpkgs: headscale
+    # builds with the Go its go.mod requires, which a stable nixpkgs may not have yet.
+    headscale.url = "github:juanfont/headscale";
   };
 
   description = "tailscale-rs: tailscale client in rust";
