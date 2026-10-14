@@ -5,12 +5,20 @@
 //!
 //! A KV store is declared in the usual way using the `schema` macros. An instance of the store is
 //! created as part of creating a [`TokioNotifier`]. The notifier can be used to access the store
-//! (using the [`TokioNotifier::store`] method). Users should use the subscribe/unsubscribe methods
-//! of the notifier, rather than the underlying store.
+//! (using the [`TokioNotifier::store`] method).
 //!
 //! A [`TokioSubscriber`] is created from a [`TokioNotifier`] and combines a subscriber identity
 //! with the receiving end of a channel for receiving notifications (all subscriptions for a single
 //! subscriber are sent via the same channel).
+//!
+//! When subscribing to data in a store, a [`TokioSubscriber`] can be used directly as the subscriber,
+//! e.g.,
+//!
+//! ```ignore
+//! let notifier = TokioNotifier::new();
+//! let subscriber = notifier.create_subscriber(OWNER);
+//! notifier.store().subscribe::<foo>(&subscriber);
+//! ```
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -144,6 +152,12 @@ pub struct TokioSubscriber<Storage: GeneratedStorage + 'static> {
     /// Receiver end of a Tokio channel for receiving notifications from the notifier.
     receiver: Receiver<Storage::Notification>,
     _owner: Owner,
+}
+
+impl<Storage: GeneratedStorage> From<&'_ TokioSubscriber<Storage>> for Subscriber {
+    fn from(s: &'_ TokioSubscriber<Storage>) -> Self {
+        s.id
+    }
 }
 
 impl<Storage: GeneratedStorage + 'static> TokioSubscriber<Storage> {

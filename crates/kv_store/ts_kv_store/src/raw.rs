@@ -6,7 +6,7 @@ use crate::{
     Error, KvStore, KvTableTransactional, Owner, Result, StoreWithOwner,
     index::KvTableIndex,
     operations::{Ops, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut},
-    schema::{self, Notifiable},
+    schema::{self, PrimaryDesc},
     storage::Storage,
 };
 
@@ -131,10 +131,10 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Subscribe to a singleton key-value pair.
     pub fn subscribe<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
-        subscriber: crate::Subscriber,
+        subscriber: impl Into<crate::Subscriber>,
     ) -> Result<crate::Subscription> {
         let subs = &self.get_read_lock().subscriptions;
-        let id = subs.create_singleton_subscription::<D>(subscriber)?;
+        let id = subs.create_singleton_subscription::<D>(subscriber.into())?;
 
         Ok(id)
     }
@@ -142,11 +142,11 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Subscribe to a singleton key-value pair and send the current value (if any) to the subscriber.
     pub fn subscribe_and_notify<D: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
-        subscriber: crate::Subscriber,
+        subscriber: impl Into<crate::Subscriber>,
     ) -> Result<crate::Subscription> {
         let storage = self.get_read_lock();
         let subs = &storage.subscriptions;
-        let id = subs.create_singleton_subscription::<D>(subscriber)?;
+        let id = subs.create_singleton_subscription::<D>(subscriber.into())?;
 
         crate::pub_sub::send_current_singleton::<D>(subs, storage.storage(), id);
 
@@ -154,9 +154,12 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Subscribe to the whole store.
-    pub fn subscribe_global(&self, subscriber: crate::Subscriber) -> Result<crate::Subscription> {
+    pub fn subscribe_global(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> Result<crate::Subscription> {
         let subs = &self.get_read_lock().subscriptions;
-        let id = subs.create_global_subscription(subscriber)?;
+        let id = subs.create_global_subscription(subscriber.into())?;
 
         Ok(id)
     }
@@ -276,20 +279,20 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     }
 
     /// Subscribe to the whole table.
-    pub fn subscribe(&self, subscriber: crate::Subscriber) -> Result<crate::Subscription>
+    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> Result<crate::Subscription>
     where
         D::Key: Send,
-        D: Notifiable,
+        D: PrimaryDesc,
     {
         let subs = &self.store.get_read_lock().subscriptions;
-        let id = subs.create_table_subscription_all::<D>(subscriber)?;
+        let id = subs.create_table_subscription_all::<D>(subscriber.into())?;
         Ok(id)
     }
 
     /// Unsubscribe from the table (whole table or single key).
     pub fn unsubscribe(&self, subscription: crate::Subscription)
     where
-        D: Notifiable,
+        D: PrimaryDesc,
     {
         self.store
             .get_read_lock()
@@ -300,31 +303,31 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
     /// Subscribe to a specific key in the table.
     pub fn subscribe_key(
         &self,
-        subscriber: crate::Subscriber,
+        subscriber: impl Into<crate::Subscriber>,
         key: D::Key,
     ) -> Result<crate::Subscription>
     where
         D::Key: Send,
-        D: Notifiable,
+        D: PrimaryDesc,
     {
         let subs = &self.store.get_read_lock().subscriptions;
-        let id = subs.create_table_subscription::<D>(key, subscriber)?;
+        let id = subs.create_table_subscription::<D>(key, subscriber.into())?;
         Ok(id)
     }
 
     /// Subscribe to a specific key in the table and send the current value (if any) to the subscriber.
     pub fn subscribe_key_and_notify(
         &self,
-        subscriber: crate::Subscriber,
+        subscriber: impl Into<crate::Subscriber>,
         key: D::Key,
     ) -> Result<crate::Subscription>
     where
         D::Key: Send,
-        D: Notifiable,
+        D: PrimaryDesc,
     {
         let storage = self.store.get_read_lock();
         let subs = &storage.subscriptions;
-        let id = subs.create_table_subscription::<D>(key.clone(), subscriber)?;
+        let id = subs.create_table_subscription::<D>(key.clone(), subscriber.into())?;
 
         crate::pub_sub::send_current::<D>(subs, storage.storage(), key, id);
 

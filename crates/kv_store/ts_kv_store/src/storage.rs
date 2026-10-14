@@ -8,7 +8,7 @@ use std::{
 use crate::{
     Error, Notifier, Owner, Result,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
-    schema::{self, IndexStorage, Notifiable, TableDesc},
+    schema::{self, IndexStorage, PrimaryDesc, TableDesc},
     transactions::TxnId,
 };
 
@@ -20,7 +20,7 @@ pub struct Storage<TableStorage: schema::GeneratedStorage> {
     pub(crate) tables: TableStorage,
 
     /// The id of the most-recently committed transaction.
-    pub(crate) committed: TxnId,
+    committed: TxnId,
     /// `None` if there is no transaction in progress. `Some` if there is a transaction in progress
     /// or a transaction has been aborted without proper rollback. `pending_txn` must not be cleared
     /// until a transaction has been fully committed or fully rolled-back.
@@ -52,7 +52,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// Note that calling this without first ensuring that any aborted transaction has been cleaned
     /// may cause this method to be inaccurate.
     pub(crate) fn txn_id(&self) -> TxnId {
-        self.current_txn().unwrap_or(self.committed)
+        self.pending_txn.unwrap_or(self.committed)
     }
 
     pub(crate) fn current_txn(&self) -> Option<TxnId> {
@@ -116,15 +116,6 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         Some(result)
     }
 
-    pub(crate) fn get_singleton_notification_value<
-        D: schema::SingletonDesc<Storage = TableStorage>,
-    >(
-        &self,
-        txn_id: TxnId,
-    ) -> Option<D::NotificationValue> {
-        D::get_cloned(&self.tables, txn_id)
-    }
-
     /// Begin a new transaction. Returns the transaction's unique id.
     pub(crate) fn begin_transaction(&mut self) -> TxnId {
         let new_txn_id = self.next_txn;
@@ -133,24 +124,21 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         new_txn_id
     }
 
-    /// Commit a transaction. Returns an error if committing fails, usually because the store's
-    /// current transaction does not match the `txn_id` (which should be impossible with only safe
-    /// code).
+    /// Commit a transaction. Returns an error if committing fails, either because an index was made
+    /// non-unique, or because the store's current transaction does not match the `txn_id` (which
+    /// should be impossible with only safe code).
     pub(crate) fn commit_transaction(
         &mut self,
         txn_id: TxnId,
     ) -> Result<Notifications<TableStorage::Notification>> {
-        let Some(pending_txn) = self.pending_txn else {
-            return Err(Error::TransactionFailed);
-        };
-        if pending_txn != txn_id {
+        if self.pending_txn != Some(txn_id) {
             return Err(Error::TransactionFailed);
         }
 
         let mut notifications = Notifications::default();
         self.tables
             .commit_txn(txn_id, &mut notifications, &self.subscriptions)?;
-        self.committed = pending_txn;
+        self.committed = txn_id;
         self.pending_txn = None;
         Ok(notifications)
     }
@@ -159,22 +147,15 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
     /// transaction, then nothing happens (the `txn_id` transaction must already have been committed
     /// or rolled back).
     pub(crate) fn rollback_transaction(&mut self, txn_id: TxnId) {
-        let Some(pending_txn) = self.pending_txn else {
-            return;
-        };
-        if pending_txn != txn_id {
-            return;
+        if self.pending_txn == Some(txn_id) {
+            self.clear_transaction();
         }
-
-        self.clear_transaction();
     }
 
-    /// Garbage-collects the remnants of any in-progress transaction, leaving the store ready to begin
-    /// another transaction or perform raw operations.
+    /// Clear any in-progress transaction.
     pub(crate) fn clear_transaction(&mut self) {
-        if let Some(id) = &self.pending_txn {
-            self.tables.gc_txn(*id);
-            // Must do this last so it is only cleared if we've successfully GCed the store.
+        if let Some(id) = self.pending_txn {
+            self.tables.gc_txn(id);
             self.pending_txn = None;
         }
     }
@@ -344,22 +325,6 @@ impl<T> VersionedValue<T> {
         }
     }
 
-    pub(crate) fn take(&mut self, id: TxnId) -> Option<T> {
-        match (&mut self.slot_a, &mut self.slot_b) {
-            (Some((aid, a)), Some((bid, b))) if id >= *aid && id >= *bid => {
-                debug_assert_ne!(aid, bid);
-                if aid > bid {
-                    self.slot_a.take().map(|(_, v)| v)
-                } else {
-                    self.slot_b.take().map(|(_, v)| v)
-                }
-            }
-            (Some((vid, v)), _) if id >= *vid => self.slot_a.take().map(|(_, v)| v),
-            (_, Some((vid, v))) if id >= *vid => self.slot_b.take().map(|(_, v)| v),
-            _ => None,
-        }
-    }
-
     pub(crate) fn set(&mut self, value: T, id: TxnId) {
         match (&mut self.slot_a, &mut self.slot_b) {
             (Some((vid, v)), _) | (_, Some((vid, v))) if id == *vid => {
@@ -499,18 +464,20 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
         }
     }
 
-    fn insert(&mut self, k: K, v: V, txn_id: TxnId) -> MaskInsertResult<K, V> {
+    /// Write `k` and `v` into the delete mask if the table has been cleared in this transaction.
+    ///
+    /// Otherwise, returns `k` and `v`, which should be written to the table's main storage.
+    fn insert(&mut self, k: K, v: V, txn_id: TxnId) -> Option<(K, V)> {
         debug_assert!(self.check_txn_id(txn_id));
         match self {
-            DeleteMask::None => MaskInsertResult::NotWritten(k, v),
-            DeleteMask::All(_, present) => MaskInsertResult::Written(
-                present
-                    .insert(k, VersionedValue::new(v, txn_id))
-                    .and_then(|mut v| v.take(txn_id)),
-            ),
+            DeleteMask::None => Some((k, v)),
+            DeleteMask::All(_, present) => {
+                present.insert(k, VersionedValue::new(v, txn_id));
+                None
+            }
             DeleteMask::Some(_, removed) => {
                 removed.remove(&k);
-                MaskInsertResult::NotWritten(k, v)
+                Some((k, v))
             }
         }
     }
@@ -526,18 +493,10 @@ enum MaskStatus<T> {
     Overwritten(T),
 }
 
-/// The result of attempting to write into a delete mask.
-enum MaskInsertResult<K, V> {
-    /// The field is the key and value which was intended to be written.
-    NotWritten(K, V),
-    /// The field is the previous value in the delete mask, if there is one.
-    Written(Option<V>),
-}
-
-/// Tabular data in the KV store, there will be one of these for each logical table in the storage
-/// implementing `TableStorage` in [`Storage`].
+/// Tabular data in the KV store. There will be one of these for each logical table in the concrete
+/// impl of `TableStorage`.
 #[doc(hidden)]
-pub struct Table<D: schema::TableDesc, I> {
+pub struct Table<D: schema::TableDesc> {
     /// KV data.
     data: HashMap<D::Key, VersionedValue<D::Value>>,
     /// A mask of deleted rows in the table. Should be checked before reading from `data`.
@@ -554,10 +513,10 @@ pub struct Table<D: schema::TableDesc, I> {
     /// Currently this is used for indexes if multiple primary keys are stored for a single index key.
     poisoned: VersionedValue<bool>,
     /// All indexes of this table (empty if there are no indexes or this table is itself an index).
-    pub indexes: I,
+    pub indexes: D::IndexStorage,
 }
 
-impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
+impl<D: schema::TableDesc> Default for Table<D> {
     fn default() -> Self {
         Self {
             data: HashMap::new(),
@@ -565,12 +524,12 @@ impl<D: schema::TableDesc, I: Default> Default for Table<D, I> {
             modified: None,
             cleared: true,
             poisoned: VersionedValue::new(false, TxnId::FIRST),
-            indexes: I::default(),
+            indexes: D::IndexStorage::default(),
         }
     }
 }
 
-impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
+impl<D: schema::TableDesc> Table<D> {
     pub fn set_poisoned(&mut self, txn_id: TxnId) {
         self.poisoned.set(true, txn_id);
     }
@@ -616,11 +575,11 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
     /// Check if this table's transaction state is consistent for commit.
     ///
-    /// Must be called before calling `commit_txn`. In theory, because of the global lock, the transaction
+    /// Must be called (and succeed) before calling `commit_primary_table` or
+    /// `commit_without_notifications`. Will error if an index has been
+    /// poisoned during the transaction. Because of the global lock, the transaction
     /// should not conflict. But if we were to allow transactions to be timed-out (or multiple
     /// mutating transaction), or in the presence of unsafe code, then inconsistency could happen.
-    ///
-    /// This will error too if an index has been poisoned during the transaction.
     pub fn check_txn_consistency(&self, txn_id: TxnId) -> Result<()> {
         if let Some(modified) = &self.modified
             && modified.txn_id != txn_id
@@ -632,19 +591,18 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             return Err(crate::Error::NonUniqueIndexKey(D::NAME));
         }
 
-        match &self.delete_mask {
-            DeleteMask::All(dm_id, data) if *dm_id == txn_id => Ok(()),
-            DeleteMask::Some(dm_id, removed) if *dm_id == txn_id => Ok(()),
-            DeleteMask::None => Ok(()),
-            _ => Err(Error::TransactionFailed),
+        if !self.delete_mask.check_txn_id(txn_id) {
+            return Err(Error::TransactionFailed);
         }
+
+        Ok(())
     }
 
     /// Apply this table's transaction state to its storage.
     ///
     /// If `collect_notifications`, returns a record of mutations that occurred during the transaction.
     ///
-    /// Precondition: `self.check_txn_consistency` returns `Ok`. (Otherwise, commit may not be atomic).
+    /// Precondition: `self.check_txn_consistency` returns `Ok`.
     ///
     /// Panics if `self.check_txn_consistency` would return an error.
     pub fn commit_primary_table(
@@ -653,28 +611,24 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         collect_notifications: bool,
     ) -> HashMap<D::Key, WatchedEvent<D::NotificationValue>>
     where
-        D: Notifiable,
+        D: PrimaryDesc,
     {
-        let modified = self.modified.take().and_then(|mut m| {
+        // The modified set is only used for notifications, so don't pay for filtering the mutable
+        // refs if there is nobody to notify.
+        if !collect_notifications {
+            self.commit_without_notifications(txn_id);
+            return HashMap::new();
+        }
+
+        let modified = self.modified.take().map(|mut m| {
             assert_eq!(m.txn_id, txn_id);
-            // The modified set is only used for notifications, so don't pay for filtering the
-            // mutable refs if there is nobody to notify.
-            if !collect_notifications {
-                return None;
-            }
             self.filter_mutated_refs(&mut m.ref_keys);
             m.keys.extend(m.ref_keys);
-            Some(m.keys)
+            m.keys
         });
 
         let result = match std::mem::take(&mut self.delete_mask) {
             DeleteMask::All(dm_id, data) if dm_id == txn_id => {
-                if !collect_notifications {
-                    self.data = data;
-                    self.cleared = self.data.is_empty();
-                    return HashMap::new();
-                }
-
                 // Only keys which were visible before this transaction can be notifiably removed;
                 // a key created and cleared within this transaction was never seen by subscribers.
                 let removed: HashSet<_> = self
@@ -694,14 +648,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                 result
             }
             DeleteMask::Some(dm_id, removed) if dm_id == txn_id => {
-                if !collect_notifications {
-                    removed.iter().for_each(|k| {
-                        self.data.remove(k);
-                    });
-                    self.cleared = self.data.is_empty();
-                    return HashMap::new();
-                }
-
                 let mut modified = modified.unwrap_or_default();
                 let mut result: HashMap<_, _> = removed
                     .into_iter()
@@ -715,21 +661,10 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                             .then_some((k, WatchedEvent::Remove))
                     })
                     .collect();
-                let modified = modified.into_iter().map(|k| {
-                    // Unwraps are ok because a value must be present at this txn_id since the key is
-                    // in the modified list and hasn't been deleted.
-                    let value = self.data.get(&k).unwrap().get(txn_id).unwrap();
-                    let value = D::clone_value_for_notification(value);
-                    (k, WatchedEvent::Upsert(value))
-                });
-                result.extend(modified);
+                result.extend(modified.into_iter().map(|k| self.upsert_event(k, txn_id)));
                 result
             }
             DeleteMask::None => {
-                if !collect_notifications {
-                    self.cleared = self.data.is_empty();
-                    return HashMap::new();
-                }
                 let Some(modified) = modified else {
                     return HashMap::new();
                 };
@@ -742,13 +677,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
                 } else {
                     modified
                         .into_iter()
-                        .map(|k| {
-                            // Unwraps are ok because a value must be present at this txn_id since the key is
-                            // in the modified list and hasn't been deleted.
-                            let value = self.data.get(&k).unwrap().get(txn_id).unwrap();
-                            let value = D::clone_value_for_notification(value);
-                            (k, WatchedEvent::Upsert(value))
-                        })
+                        .map(|k| self.upsert_event(k, txn_id))
                         .collect()
                 }
             }
@@ -760,11 +689,28 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         result
     }
 
-    /// Commit implementation for a table which is an index.
+    /// Create an upsert event for `key`.
     ///
-    /// Indexes can't have their own indexes or generate notifications, so this is a simpler version of
-    /// `commit_primary_table`.
-    pub fn commit_index(&mut self, txn_id: TxnId) {
+    /// Panics if a value for `key` is not present at `txn_id`.
+    fn upsert_event(
+        &self,
+        key: D::Key,
+        txn_id: TxnId,
+    ) -> (D::Key, WatchedEvent<D::NotificationValue>)
+    where
+        D: PrimaryDesc,
+    {
+        let value = self.data.get(&key).unwrap().get(txn_id).unwrap();
+        let value = D::clone_value_for_notification(value);
+        (key, WatchedEvent::Upsert(value))
+    }
+
+    /// Apply this table's transaction state to its storage without collecting notifications.
+    ///
+    /// Precondition: `self.check_txn_consistency` returns `Ok`.
+    ///
+    /// Panics if `self.check_txn_consistency` would return an error.
+    pub fn commit_without_notifications(&mut self, txn_id: TxnId) {
         match std::mem::take(&mut self.delete_mask) {
             DeleteMask::All(dm_id, data) if dm_id == txn_id => {
                 self.data = data;
@@ -805,23 +751,14 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
 
     pub(crate) fn len(&self, txn_id: TxnId) -> usize {
         match &self.delete_mask {
-            DeleteMask::None => self.iter_data(txn_id).count(),
-            DeleteMask::All(_, pending) => pending.len(),
-            // Note that this only works because we take care in `VersionedValue::remove` only to track
-            // removals where the value is already in the main data.
-            DeleteMask::Some(_, removed) => self.iter_data(txn_id).count() - removed.len(),
+            // In this case, we can ignore the main data and just count the new data in the delete mask.
+            DeleteMask::All(dm_id, pending) if *dm_id == txn_id => pending.len(),
+            _ => self.iter(txn_id).count(),
         }
     }
 
     pub(crate) fn is_empty(&self, txn_id: TxnId) -> bool {
-        match &self.delete_mask {
-            DeleteMask::None => self.iter_data(txn_id).count() == 0,
-            DeleteMask::All(_, pending) => pending.is_empty(),
-            DeleteMask::Some(..) if self.data.is_empty() => true,
-            // Note that this only works because we take care in `VersionedValue::remove` only to track
-            // removals where the value is already in the main data.
-            DeleteMask::Some(_, removed) => self.iter_data(txn_id).count() - removed.len() == 0,
-        }
+        self.iter(txn_id).next().is_none()
     }
 
     pub(crate) fn iter<'a>(&'a self, txn_id: TxnId) -> TableIterator<'a, D> {
@@ -854,7 +791,7 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     /// Get a mutable iterator over the table. Does not keep indexes up to date, nor record mutations.
     /// The caller must call `rebuild_indexes_for_key` and `record_mutated_key` for any key the
     /// iterator yields.
-    pub(crate) fn iter_mut<'a>(&'a mut self, txn_id: TxnId) -> TableIteratorMut<'a, D, I> {
+    pub(crate) fn iter_mut<'a>(&'a mut self, txn_id: TxnId) -> TableIteratorMut<'a, D> {
         debug_assert!(self.delete_mask.check_txn_id(txn_id));
 
         let (data, removed) = match &mut self.delete_mask {
@@ -902,12 +839,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         Some(result)
     }
 
-    fn iter_data(&self, txn_id: TxnId) -> impl Iterator<Item = (&D::Key, &D::Value)> {
-        self.data
-            .iter()
-            .filter_map(move |(k, v)| Some((k, v.get(txn_id)?)))
-    }
-
     pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
         if let Some(old_value) =
             get_from_table::<D, D::Key>(&self.delete_mask, &self.data, &key, txn_id)
@@ -916,13 +847,9 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         }
         self.indexes.on_insert(&key, &value, txn_id);
 
-        match self.delete_mask.insert(key, value, txn_id) {
-            MaskInsertResult::NotWritten(key, value) => {
-                record_mutation(&mut self.modified, &key, txn_id);
-                let entry = self.data.entry(key).or_default();
-                entry.set(value, txn_id);
-            }
-            MaskInsertResult::Written(_) => {}
+        if let Some((key, value)) = self.delete_mask.insert(key, value, txn_id) {
+            record_mutation(&mut self.modified, &key, txn_id);
+            self.data.entry(key).or_default().set(value, txn_id);
         }
     }
 
@@ -1084,15 +1011,14 @@ impl<'a, D: schema::TableDesc> Iterator for TableIterator<'a, D> {
 ///
 /// Indexes for yielded key/value pairs are cleared, the caller is responsible for rebuilding the
 /// indexes.
-pub(crate) struct TableIteratorMut<'a, D: schema::TableDesc, I> {
+pub(crate) struct TableIteratorMut<'a, D: schema::TableDesc> {
     data: std::collections::hash_map::IterMut<'a, D::Key, VersionedValue<D::Value>>,
     removed: Option<&'a HashSet<D::Key>>,
-    indexes: &'a mut I,
+    indexes: &'a mut D::IndexStorage,
     txn_id: TxnId,
 }
 
-impl<'a, D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Iterator
-    for TableIteratorMut<'a, D, I>
+impl<'a, D: schema::TableDesc> Iterator for TableIteratorMut<'a, D>
 where
     D::Value: Clone + PartialEq,
 {
@@ -1182,64 +1108,6 @@ mod test {
             slot_b: Some((TxnId::new(2), 20u32)),
         };
         assert_eq!(v.get(TxnId::new(3)), Some(&20));
-    }
-
-    #[test]
-    fn take_returns_none_when_empty() {
-        let mut v: VersionedValue<u32> = VersionedValue::default();
-        assert!(v.take(TxnId::new(2)).is_none());
-    }
-
-    #[test]
-    fn take_returns_and_clears_slot_a() {
-        let mut v = VersionedValue {
-            slot_a: Some((TxnId::new(2), 42u32)),
-            slot_b: None,
-        };
-        assert_eq!(v.take(TxnId::new(2)), Some(42));
-        assert!(v.slot_a.is_none());
-    }
-
-    #[test]
-    fn take_returns_and_clears_slot_b() {
-        let mut v = VersionedValue {
-            slot_a: None,
-            slot_b: Some((TxnId::new(2), 42u32)),
-        };
-        assert_eq!(v.take(TxnId::new(2)), Some(42));
-        assert!(v.slot_b.is_none());
-    }
-
-    #[test]
-    fn take_returns_most_recent_and_clears_its_slot() {
-        let mut v = VersionedValue {
-            slot_a: Some((TxnId::new(3), 10u32)),
-            slot_b: Some((TxnId::new(2), 20u32)),
-        };
-        assert_eq!(v.take(TxnId::new(5)), Some(10));
-        assert!(v.slot_a.is_none());
-        assert!(v.slot_b.is_some());
-    }
-
-    #[test]
-    fn take_returns_none_when_id_less_than_slot_id() {
-        let mut v = VersionedValue {
-            slot_a: Some((TxnId::new(3), 42u32)),
-            slot_b: None,
-        };
-        assert!(v.take(TxnId::new(2)).is_none());
-        assert!(v.slot_a.is_some());
-    }
-
-    #[test]
-    fn take_returns_visible_value_when_one_slot_is_not_visible() {
-        let mut v = VersionedValue {
-            slot_a: Some((TxnId::new(5), 10u32)),
-            slot_b: Some((TxnId::new(2), 20u32)),
-        };
-        assert_eq!(v.take(TxnId::new(3)), Some(20));
-        assert!(v.slot_b.is_none());
-        assert!(v.slot_a.is_some());
     }
 
     #[test]

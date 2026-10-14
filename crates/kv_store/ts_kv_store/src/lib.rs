@@ -244,10 +244,10 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// subscriptions is harmless but pointless.
     ///
     /// Does nothing if the subscriber is unknown (e.g., because it has already been removed).
-    pub fn remove_subscriber(&self, subscriber: Subscriber) {
+    pub fn remove_subscriber(&self, subscriber: impl Into<Subscriber>) {
         self.get_read_lock()
             .subscriptions
-            .remove_subscriber(subscriber)
+            .remove_subscriber(subscriber.into())
     }
 
     /// Might (theoretically) panic, see the note on [`Self::clear_lock_poison`].
