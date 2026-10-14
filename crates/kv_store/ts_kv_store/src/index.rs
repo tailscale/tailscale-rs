@@ -732,6 +732,56 @@ mod test_transactional_index {
     }
 
     #[test]
+    fn txn_remove_already_removed_key_keeps_other_rows_index_entry() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Users>().remove(&1);
+        txn.table::<Users>().insert(2, row("Alice"));
+        // A no-op, but row 1's stale value shares an index key with row 2.
+        txn.table::<Users>().remove(&1);
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Alice").unwrap(),
+            (2, row("Alice"))
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store
+                .table_by::<index::Users::name>(OWNER)
+                .get("Alice")
+                .unwrap(),
+            (2, row("Alice"))
+        );
+    }
+
+    #[test]
+    fn txn_remove_absent_key_after_clear_keeps_other_rows_index_entry() {
+        let store = KvStore::new();
+        store.table::<Users>(OWNER).insert(1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Users>().clear();
+        txn.table::<Users>().insert(2, row("Alice"));
+        // A no-op, but row 1's cleared value shares an index key with row 2.
+        txn.table::<Users>().remove(&1);
+        assert_eq!(
+            txn.table_by::<index::Users::name>().get("Alice").unwrap(),
+            (2, row("Alice"))
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store
+                .table_by::<index::Users::name>(OWNER)
+                .get("Alice")
+                .unwrap(),
+            (2, row("Alice"))
+        );
+    }
+
+    #[test]
     fn txn_base_iter_mut_updates_index_on_field_change() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
