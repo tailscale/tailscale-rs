@@ -50,9 +50,9 @@ const CHANNEL_CAPACITY: usize = 2;
 /// The generic parameter `Storage` links a notifier instance to a specific store.
 pub struct TokioNotifier<Storage: GeneratedStorage> {
     store: Arc<KvStore<Storage>>,
-    senders: Mutex<HashMap<Subscriber, SubscriberSender<Storage>>>,
+    senders: Mutex<HashMap<Subscriber, SubscriberSender<Storage::Notification>>>,
     /// Notifications waiting to be sent, oldest first.
-    queue: Mutex<VecDeque<QueuedNotifications<Storage>>>,
+    queue: Mutex<VecDeque<QueuedNotifications<Storage::Notification>>>,
     /// Signalled whenever `queue` is added to, to wake `task`.
     notify: Arc<Notify>,
     /// Async task which sends queued notifications to subscribers.
@@ -62,8 +62,7 @@ pub struct TokioNotifier<Storage: GeneratedStorage> {
 /// The notifications from a single transaction, as queued for sending.
 ///
 /// This is a [`Notifications`] in its map form.
-type QueuedNotifications<Storage> =
-    HashMap<Subscription, Vec<<Storage as GeneratedStorage>::Notification>>;
+type QueuedNotifications<N> = HashMap<Subscription, Vec<N>>;
 
 impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
     /// Create a new `TokioNotifier` and [`KvStore`]. Spawns a task to send notifications.
@@ -190,15 +189,15 @@ impl<Storage: GeneratedStorage + 'static> Drop for TokioSubscriber<Storage> {
 }
 
 /// A subscriber's channel, and how it is doing at receiving notifications.
-struct SubscriberSender<Storage: GeneratedStorage> {
-    sender: Sender<Storage::Notification>,
+struct SubscriberSender<N> {
+    sender: Sender<N>,
     /// `None` if the last send to this subscriber succeeded, otherwise how close we are to giving
     /// up on it.
     failing: Option<notify::Failing>,
 }
 
-impl<Storage: GeneratedStorage> SubscriberSender<Storage> {
-    fn new(sender: Sender<Storage::Notification>) -> Self {
+impl<N> SubscriberSender<N> {
+    fn new(sender: Sender<N>) -> Self {
         SubscriberSender {
             sender,
             failing: None,
