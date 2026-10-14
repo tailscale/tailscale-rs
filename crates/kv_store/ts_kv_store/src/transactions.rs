@@ -629,36 +629,7 @@ mod test {
     );
 
     const OWNER: &str = "owner";
-    #[cfg(debug_assertions)]
     const OTHER: &str = "other";
-
-    #[test]
-    fn begin_transaction_works() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        txn.insert::<Count>(42);
-        assert_eq!(txn.get::<Count>(), Some(42));
-    }
-
-    #[test]
-    fn try_begin_transaction_returns_some_when_unlocked() {
-        let store = KvStore::new();
-        assert!(store.try_begin_transaction(OWNER).is_some());
-    }
-
-    #[test]
-    fn begin_ro_transaction_works() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 7);
-        let txn = store.begin_ro_transaction(OWNER);
-        assert_eq!(txn.get::<Count>(), Some(7));
-    }
-
-    #[test]
-    fn try_begin_ro_transaction_returns_some_when_unlocked() {
-        let store = KvStore::new();
-        assert!(store.try_begin_ro_transaction(OWNER).is_some());
-    }
 
     #[test]
     fn try_begin_transaction_after_commit_sees_committed() {
@@ -820,7 +791,7 @@ mod test {
     }
 
     #[test]
-    fn txn_writes_visible_after_drop() {
+    fn txn_writes_visible_after_commit() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         txn.insert::<Count>(42);
@@ -830,7 +801,7 @@ mod test {
     }
 
     #[test]
-    fn txn_table_writes_visible_after_drop() {
+    fn txn_table_writes_visible_after_commit() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         txn.table::<Items>().insert("k", "v".to_owned());
@@ -840,8 +811,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_insert_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
@@ -850,8 +820,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_with_mut_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
@@ -860,8 +829,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_remove_wrong_owner_panics() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
@@ -986,32 +954,6 @@ mod test {
         assert_eq!(
             items,
             vec![(&"a", &"alpha".to_owned()), (&"b", &"beta".to_owned())]
-        );
-    }
-
-    #[test]
-    fn txn_table_for_each_empty_calls_closure_zero_times() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        let table = txn.table::<Items>();
-        let mut count = 0;
-        table.iter().for_each(|_| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn txn_table_for_each_yields_all_rows() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        let mut table = txn.table::<Items>();
-        table.insert("a", "alpha".to_owned());
-        table.insert("b", "beta".to_owned());
-        let mut items: Vec<_> = Vec::new();
-        table.iter().for_each(|(k, v)| items.push((*k, v.clone())));
-        items.sort();
-        assert_eq!(
-            items,
-            vec![("a", "alpha".to_owned()), ("b", "beta".to_owned())]
         );
     }
 
@@ -1220,8 +1162,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_table_insert_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
@@ -1229,8 +1170,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
@@ -1239,8 +1179,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn txn_table_remove_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
@@ -1380,32 +1319,6 @@ mod test {
     }
 
     #[test]
-    fn ro_txn_table_for_each_empty_calls_closure_zero_times() {
-        let store = KvStore::new();
-        let txn = store.begin_ro_transaction(OWNER);
-        let table = txn.table::<Items>();
-        let mut count = 0;
-        table.iter().for_each(|_| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn ro_txn_table_for_each_yields_pre_txn_rows() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("a", "alpha".to_owned());
-        store.table::<Items>(OWNER).insert("b", "beta".to_owned());
-        let txn = store.begin_ro_transaction(OWNER);
-        let table = txn.table::<Items>();
-        let mut items: Vec<_> = Vec::new();
-        table.iter().for_each(|(k, v)| items.push((*k, v.clone())));
-        items.sort();
-        assert_eq!(
-            items,
-            vec![("a", "alpha".to_owned()), ("b", "beta".to_owned())]
-        );
-    }
-
-    #[test]
     fn ro_txn_table_iter_keys_cloned_empty() {
         let store = KvStore::new();
         let txn = store.begin_ro_transaction(OWNER);
@@ -1445,14 +1358,6 @@ mod test {
         let mut values: Vec<_> = table.values().collect();
         values.sort();
         assert_eq!(values, vec!["alpha", "beta"]);
-    }
-
-    #[test]
-    fn commit_returns_ok() {
-        let store = KvStore::new();
-        let mut txn = store.begin_transaction(OWNER);
-        txn.insert::<Count>(1);
-        assert!(txn.commit().is_ok());
     }
 
     #[test]
@@ -1710,43 +1615,6 @@ mod test {
     }
 
     #[test]
-    fn store_usable_after_rollback() {
-        let store = KvStore::new();
-        {
-            let mut txn = store.begin_transaction(OWNER);
-            txn.insert::<Count>(5);
-        }
-        assert_eq!(store.get::<Count>(OWNER), None);
-
-        // A subsequent raw operation round-trips normally.
-        store.insert::<Count>(OWNER, 9);
-        assert_eq!(store.get::<Count>(OWNER), Some(9));
-    }
-
-    #[test]
-    fn try_begin_transaction_succeeds_after_rollback() {
-        let store = KvStore::new();
-        {
-            let mut txn = store.begin_transaction(OWNER);
-            txn.insert::<Count>(1);
-        }
-        // The dropped transaction released the write lock.
-        assert!(store.try_begin_transaction(OWNER).is_some());
-    }
-
-    #[test]
-    fn new_txn_after_rollback_sees_committed_value() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        {
-            let mut txn = store.begin_transaction(OWNER);
-            txn.insert::<Count>(2);
-        }
-        let txn2 = store.begin_transaction(OWNER);
-        assert_eq!(txn2.get::<Count>(), Some(1));
-    }
-
-    #[test]
     fn panic_in_transaction_rolls_back() {
         let store = KvStore::new();
         store.insert::<Count>(OWNER, 1);
@@ -1828,20 +1696,6 @@ mod test {
     }
 
     #[test]
-    fn singleton_three_commits_same_key_latest_wins() {
-        let store = KvStore::new();
-
-        for v in [10u64, 20, 30] {
-            let mut txn = store.begin_transaction(OWNER);
-            // Each transaction sees the value committed by the previous one.
-            txn.insert::<Count>(v);
-            txn.commit().unwrap();
-            assert_eq!(store.get::<Count>(OWNER), Some(v));
-        }
-        assert_eq!(store.get::<Count>(OWNER), Some(30));
-    }
-
-    #[test]
     fn table_three_commits_same_key_latest_wins() {
         let store = KvStore::new();
 
@@ -1860,12 +1714,14 @@ mod test {
     #[test]
     fn singleton_many_commits_same_key() {
         let store = KvStore::new();
+        // Enough commits to cycle through both version slots several times.
         for v in 0..10u64 {
             let mut txn = store.begin_transaction(OWNER);
             txn.insert::<Count>(v);
             txn.commit().unwrap();
+            assert_eq!(store.get::<Count>(OWNER), Some(v));
+            assert_eq!(store.begin_ro_transaction(OWNER).get::<Count>(), Some(v));
         }
-        assert_eq!(store.get::<Count>(OWNER), Some(9));
     }
 
     // A new transaction begun after a rollback, with two committed versions of the key already
@@ -1904,27 +1760,6 @@ mod test {
         assert_eq!(store.table::<Items>(OWNER).get("k"), Some("v2".to_owned()));
         let mut txn = store.begin_transaction(OWNER);
         assert_eq!(txn.table::<Items>().get("k"), Some("v2".to_owned()));
-    }
-
-    #[test]
-    fn raw_insert_then_txn_overwrite_commit_visible_raw() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        let mut txn = store.begin_transaction(OWNER);
-        txn.insert::<Count>(2);
-        txn.commit().unwrap();
-        assert_eq!(store.get::<Count>(OWNER), Some(2));
-    }
-
-    #[test]
-    fn raw_insert_then_txn_overwrite_rollback_keeps_raw() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        {
-            let mut txn = store.begin_transaction(OWNER);
-            txn.insert::<Count>(2);
-        }
-        assert_eq!(store.get::<Count>(OWNER), Some(1));
     }
 
     #[test]
@@ -1981,36 +1816,17 @@ mod test {
     }
 
     #[test]
-    fn txn_len_unchanged_after_removing_absent_key() {
+    fn txn_len_unchanged_after_removing_absent_keys() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).insert("a", "1".to_owned());
         store.table::<Items>(OWNER).insert("b", "2".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Items>().remove(&"zzz");
-        assert_eq!(txn.table::<Items>().len(), 2);
-    }
-
-    #[test]
-    fn txn_is_empty_false_after_removing_absent_key() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("a", "1".to_owned());
-
-        let mut txn = store.begin_transaction(OWNER);
-        txn.table::<Items>().remove(&"zzz");
-        assert!(!txn.table::<Items>().is_empty());
-    }
-
-    #[test]
-    fn txn_len_after_removing_several_absent_keys() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("a", "1".to_owned());
-
-        let mut txn = store.begin_transaction(OWNER);
         txn.table::<Items>().remove(&"x");
         txn.table::<Items>().remove(&"y");
         txn.table::<Items>().remove(&"z");
-        assert_eq!(txn.table::<Items>().len(), 1);
+        assert_eq!(txn.table::<Items>().len(), 2);
+        assert!(!txn.table::<Items>().is_empty());
     }
 
     #[test]
@@ -2072,6 +1888,104 @@ mod test {
     }
 
     #[test]
+    fn txn_remove_then_reinsert_same_key() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("a", "old".to_owned());
+        store.table::<Items>(OWNER).insert("b", "b".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Items>().remove(&"a");
+        // `b` stays removed, so re-inserting `a` must only take `a` out of the set of removed keys.
+        txn.table::<Items>().remove(&"b");
+        txn.table::<Items>().insert("a", "new".to_owned());
+        assert_eq!(txn.table::<Items>().get("a"), Some("new".to_owned()));
+        assert_eq!(
+            txn.table::<Items>().keys().copied().collect::<Vec<_>>(),
+            vec!["a"]
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(store.table::<Items>(OWNER).get("a"), Some("new".to_owned()));
+        assert_eq!(store.table::<Items>(OWNER).get("b"), None);
+    }
+
+    #[test]
+    fn txn_clear_insert_then_remove_same_key() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("a", "1".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Items>().clear();
+        txn.table::<Items>().insert("b", "2".to_owned());
+        txn.table::<Items>().insert("c", "3".to_owned());
+        txn.table::<Items>().remove(&"b");
+        assert_eq!(txn.table::<Items>().get("b"), None);
+        assert_eq!(
+            txn.table::<Items>().keys().copied().collect::<Vec<_>>(),
+            vec!["c"]
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store
+                .table::<Items>(OWNER)
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec!["c"]
+        );
+    }
+
+    #[test]
+    fn txn_remove_cleared_key_after_clear() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("a", "1".to_owned());
+        store.table::<Items>(OWNER).insert("b", "2".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Items>().clear();
+        txn.table::<Items>().insert("b", "new".to_owned());
+        // `a` was cleared and not re-inserted, so removing it is a no-op.
+        txn.table::<Items>().remove(&"a");
+        assert_eq!(txn.table::<Items>().get("a"), None);
+        assert_eq!(
+            txn.table::<Items>().keys().copied().collect::<Vec<_>>(),
+            vec!["b"]
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(store.table::<Items>(OWNER).get("a"), None);
+        assert_eq!(store.table::<Items>(OWNER).get("b"), Some("new".to_owned()));
+        assert_eq!(store.table::<Items>(OWNER).len(), 1);
+    }
+
+    #[test]
+    fn txn_clear_twice() {
+        let store = KvStore::new();
+        store.table::<Items>(OWNER).insert("a", "1".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.table::<Items>().clear();
+        txn.table::<Items>().insert("b", "2".to_owned());
+        txn.table::<Items>().clear();
+        txn.table::<Items>().insert("c", "3".to_owned());
+        assert_eq!(
+            txn.table::<Items>().keys().copied().collect::<Vec<_>>(),
+            vec!["c"]
+        );
+        txn.commit().unwrap();
+
+        assert_eq!(
+            store
+                .table::<Items>(OWNER)
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec!["c"]
+        );
+    }
+
+    #[test]
     fn txn_mutate_committed_value_commit_persists() {
         let store = KvStore::new();
         store.table::<Items>(OWNER).insert("k", "orig".to_owned());
@@ -2114,30 +2028,6 @@ mod test {
 
         let txn = store.begin_ro_transaction(OWNER);
         assert_eq!(txn.get::<Count>(), Some(7));
-    }
-
-    #[test]
-    fn ro_txn_after_rollback_sees_pre_txn() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        {
-            let mut txn = store.begin_transaction(OWNER);
-            txn.insert::<Count>(2);
-        }
-        let txn = store.begin_ro_transaction(OWNER);
-        assert_eq!(txn.get::<Count>(), Some(1));
-    }
-
-    #[test]
-    fn ro_txn_after_multiple_commits_sees_latest() {
-        let store = KvStore::new();
-        for v in [10u64, 20, 30] {
-            let mut txn = store.begin_transaction(OWNER);
-            txn.insert::<Count>(v);
-            txn.commit().unwrap();
-        }
-        let txn = store.begin_ro_transaction(OWNER);
-        assert_eq!(txn.get::<Count>(), Some(30));
     }
 
     #[test]

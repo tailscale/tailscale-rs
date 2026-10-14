@@ -662,6 +662,17 @@ mod test {
     }
 
     #[test]
+    fn send_and_sync() {
+        fn require_send<T: Send>(_t: T) {}
+        fn require_sync<T: Sync>(_t: T) {}
+
+        store!(tables: { Foo(&'static str => String; "owner"; notify(Clone)), Bar(u32 => Vec<String>; "owner")});
+
+        require_send(KvStore::new());
+        require_sync(KvStore::new());
+    }
+
+    #[test]
     fn table_with_indexes() {
         #[derive(Clone, Debug)]
         pub struct BarT {

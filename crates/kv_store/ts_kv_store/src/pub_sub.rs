@@ -813,13 +813,6 @@ mod tests {
     use super::*;
     use crate::{Error, store};
 
-    /// A value type with an indexed field, for exercising mutation through an index.
-    #[derive(Clone, Debug, PartialEq)]
-    pub struct Row {
-        pub name: String,
-        pub count: u32,
-    }
-
     store!(
         kvs: {
             Count(u64; OWNER; notify(Clone)),
@@ -829,7 +822,6 @@ mod tests {
         tables: {
             Items(u32 => String; OWNER; notify(Clone)),
             Plain(u32 => String; OWNER),
-            Rows(u32 => Row; OWNER; index(name: String); notify(Clone)),
         }
     );
 
@@ -1254,6 +1246,7 @@ mod tests {
         let subs = new_subscriptions();
         let subscriber = subs.register_subscriber(OWNER);
         let sub = subs.create_global_subscription(subscriber).unwrap();
+        let kept = subs.create_global_subscription(subscriber).unwrap();
         subs.remove_global_subscription(sub);
 
         let mut notifs = Notifications::default();
@@ -1262,6 +1255,8 @@ mod tests {
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert!(!map.contains_key(&sub));
+        // Removing one global subscription must leave the others in place.
+        assert_eq!(map[&kept].len(), 2);
     }
 
     #[test]
@@ -1996,92 +1991,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn e2e_unsubscribe_stops_notifications() {
-        let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let subscriber = store.register_subscriber(OWNER);
-        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
-
-        store.table::<Items>(OWNER).unsubscribe(sub);
-        rec.reset();
-
-        store.table::<Items>(OWNER).insert(1, "a".to_owned());
-        assert!(rec.notifications_for(sub).is_empty());
-    }
-
-    #[test]
-    fn e2e_unsubscribe_global_stops_notifications() {
-        let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let subscriber = store.register_subscriber(OWNER);
-        let gone = store.subscribe_global(subscriber).unwrap();
-        let kept = store.subscribe_global(subscriber).unwrap();
-
-        store.unsubscribe_global(gone);
-        rec.reset();
-
-        store.table::<Items>(OWNER).insert(1, "a".to_owned());
-        store.insert::<Count>(OWNER, 7);
-
-        assert!(rec.notifications_for(gone).is_empty());
-        // Removing one global subscription must leave the others in place.
-        let kept = rec.notifications_for(kept);
-        assert_eq!(kept.len(), 2);
-        assert_eq!(ItemsKind::from(&kept[0]), ItemsKind::TableUpsert(vec![1]));
-        assert_eq!(CountKind::from(&kept[1]), CountKind::Upsert(7));
-    }
-
-    #[test]
-    fn e2e_remove_subscriber_stops_notifications() {
-        let (notifier, rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let gone = store.register_subscriber(OWNER);
-        let kept = store.register_subscriber(OWNER);
-
-        let table_sub = store.table::<Items>(OWNER).subscribe(gone).unwrap();
-        let singleton_sub = store.subscribe::<Count>(gone).unwrap();
-        let global_sub = store.subscribe_global(gone).unwrap();
-        let kept_sub = store.table::<Items>(OWNER).subscribe(kept).unwrap();
-
-        store.remove_subscriber(gone);
-        rec.reset();
-
-        store.table::<Items>(OWNER).insert(1, "a".to_owned());
-        store.insert::<Count>(OWNER, 7);
-
-        // All of the removed subscriber's subscriptions are dead, whatever they watched...
-        assert!(rec.notifications_for(table_sub).is_empty());
-        assert!(rec.notifications_for(singleton_sub).is_empty());
-        assert!(rec.notifications_for(global_sub).is_empty());
-        // ...but the other subscriber is unaffected.
-        assert_eq!(
-            rec.notifications_for(kept_sub)
-                .iter()
-                .map(ItemsKind::from)
-                .collect::<Vec<_>>(),
-            vec![ItemsKind::TableUpsert(vec![1])]
-        );
-    }
-
-    #[test]
-    fn e2e_removed_subscriber_cannot_subscribe_again() {
-        let (notifier, _rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-        let subscriber = store.register_subscriber(OWNER);
-
-        store.remove_subscriber(subscriber);
-
-        assert_eq!(
-            store.table::<Items>(OWNER).subscribe(subscriber),
-            Err(Error::UnknownSubscriber)
-        );
-        assert_eq!(
-            store.subscribe::<Count>(subscriber),
-            Err(Error::UnknownSubscriber)
-        );
-    }
-
     /// Seed `Items` with `keys` (mapping each key `k` to the value `"v{k}"`) in a committed
     /// transaction, so that later mutations are reported per-key rather than as a table-level
     /// upsert.
@@ -2288,6 +2197,33 @@ mod tests {
 
         // Key 1 was never visible outside the transaction, so its removal is not notifiable.
         assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
+    fn e2e_remove_then_reinsert_in_one_txn_notifies_upsert() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.table::<Items>(OWNER).subscribe(subscriber).unwrap();
+        seed_items(&store, &[1]);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        {
+            let mut t = txn.table::<Items>();
+            t.remove(&1);
+            t.insert(1, "new".to_owned());
+        }
+        txn.commit().unwrap();
+
+        // The key ends the transaction present, so it is an upsert, not a remove.
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![ItemsKind::KeyUpsert(1, "new".to_owned())]
+        );
     }
 
     #[test]
@@ -2675,18 +2611,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![ItemsKind::TableUpsert(vec![3])]
         );
-    }
-
-    #[test]
-    fn e2e_no_singleton_subscribers_commits_value() {
-        let (notifier, _rec) = RecordingNotifier::new();
-        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
-
-        store.insert::<Count>(OWNER, 7);
-        assert_eq!(store.get::<Count>(OWNER), Some(7));
-
-        store.remove::<Count>(OWNER);
-        assert_eq!(store.get::<Count>(OWNER), None);
     }
 
     #[test]

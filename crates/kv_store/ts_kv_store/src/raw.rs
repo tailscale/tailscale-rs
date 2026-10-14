@@ -484,14 +484,6 @@ mod test {
     }
 
     #[test]
-    fn get_returns_none_after_remove() {
-        let store = KvStore::new();
-        store.insert::<Count>(OWNER, 1);
-        store.remove::<Count>(OWNER);
-        assert!(store.get::<Count>(OWNER).is_none());
-    }
-
-    #[test]
     fn get_ref_singleton() {
         static STATIC_LABEL: u64 = 99;
         let store = KvStore::new();
@@ -742,16 +734,6 @@ mod test {
     }
 
     #[test]
-    fn table_clear_preserves_ownership() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("k", "v".to_owned());
-        store.table::<Items>(OWNER).clear();
-        // Same owner can still write after clear
-        store.table::<Items>(OWNER).insert("k2", "v2".to_owned());
-        assert_eq!(store.table::<Items>(OWNER).get("k2"), Some("v2".to_owned()));
-    }
-
-    #[test]
     fn table_is_empty_on_fresh_store() {
         let store = KvStore::new();
         assert!(store.table::<Items>(OWNER).is_empty());
@@ -828,30 +810,6 @@ mod test {
     }
 
     #[test]
-    fn table_for_each_empty_calls_closure_zero_times() {
-        let store = KvStore::new();
-        let table = store.table::<Items>(OWNER);
-        let mut count = 0;
-        table.iter().for_each(|_| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn table_for_each_yields_all_rows() {
-        let store = KvStore::new();
-        let table = store.table::<Items>(OWNER);
-        table.insert("a", "alpha".to_owned());
-        table.insert("b", "beta".to_owned());
-        let mut items: Vec<_> = Vec::new();
-        table.iter().for_each(|(k, v)| items.push((*k, v.clone())));
-        items.sort();
-        assert_eq!(
-            items,
-            vec![("a", "alpha".to_owned()), ("b", "beta".to_owned())]
-        );
-    }
-
-    #[test]
     fn table_with_iter_mut_modifies_values() {
         let store = KvStore::new();
         let table = store.table::<Items>(OWNER);
@@ -924,8 +882,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Ownership violation")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn table_insert_wrong_owner_panics() {
         let store = KvStore::new();
         store.table::<Items>(OTHER).insert("k", "v".to_owned());
@@ -953,13 +910,5 @@ mod test {
     fn table_clear_wrong_owner_panics() {
         let store = KvStore::new();
         store.table::<Items>(OTHER).clear();
-    }
-
-    #[test]
-    fn table_remove_used_in_statement_position() {
-        let store = KvStore::new();
-        store.table::<Items>(OWNER).insert("k", "v".to_owned());
-        store.table::<Items>(OWNER).remove(&"k");
-        assert_eq!(store.table::<Items>(OWNER).get("k"), None);
     }
 }
