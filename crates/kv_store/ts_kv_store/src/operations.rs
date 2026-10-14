@@ -386,11 +386,10 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         let mut storage = self.write_lock();
         let storage = storage.storage();
         let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
 
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
-        table.clear(txn_id, max_committed_id);
+        table.clear(txn_id);
     }
 
     fn insert(
@@ -404,11 +403,10 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         let mut storage = self.write_lock();
         let storage = storage.storage();
         let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
 
-        table.insert(key, value, txn_id, max_committed_id);
+        table.insert(key, value, txn_id);
     }
 
     fn with_mut<Q, T>(
@@ -425,11 +423,10 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         let mut storage = self.write_lock();
         let storage = storage.storage();
         let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
 
-        table.with_mut(key, f, txn_id, max_committed_id)
+        table.with_mut(key, f, txn_id)
     }
 
     fn remove<Q>(self, key: &Q, owner: Owner)
@@ -440,10 +437,9 @@ pub(crate) trait TabularOpsMut<TableStorage: schema::GeneratedStorage>:
         let mut storage = self.write_lock();
         let storage = storage.storage();
         let txn_id = storage.txn_id();
-        let max_committed_id = storage.max_committed_id();
         let table = Self::TableDesc::get_table_mut(&mut storage.tables);
         table.assert_owner(owner);
-        table.remove(key, txn_id, max_committed_id);
+        table.remove(key, txn_id);
     }
 
     fn iter_mut<'guard>(

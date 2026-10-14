@@ -1,6 +1,6 @@
 //! Traits and macros for defining the KvStore schema.
 
-use std::{any::Any, hash::Hash};
+use std::{any::Any, borrow::Borrow, hash::Hash};
 
 use crate::{
     Owner,
@@ -87,62 +87,32 @@ pub trait IndexDesc: TableDesc {
     type BaseTable: Notifiable + TableDesc<Storage = Self::Storage, Key = Self::Value>;
 }
 
-/// Operations on an index.
+/// Operations on the indexes of a table.
 pub trait IndexStorage<K: Hash + Eq, V: Any + Send + Sync>: Default {
     /// Clear the whole index.
-    fn clear(
-        &mut self,
-        txn_id: crate::transactions::TxnId,
-        max_committed_id: crate::transactions::TxnId,
-    );
+    fn clear(&mut self, txn_id: TxnId);
 
-    /// An item has been inserted into the index.
-    fn on_insert<Q>(
-        &mut self,
-        key: &Q,
-        value: &V,
-        txn_id: crate::transactions::TxnId,
-        max_committed_id: crate::transactions::TxnId,
-    ) where
-        K: std::borrow::Borrow<Q>,
-        Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = K>;
+    /// An item has been inserted into the base table.
+    fn on_insert<Q>(&mut self, key: &Q, value: &V, txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = K>;
 
-    /// An item has been removed from the index.
-    fn on_remove(
-        &mut self,
-        value: &V,
-        txn_id: crate::transactions::TxnId,
-        max_committed_id: crate::transactions::TxnId,
-    );
+    /// An item has been removed from the base table.
+    fn on_remove(&mut self, value: &V, txn_id: TxnId);
 }
 
 impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
-    fn clear(
-        &mut self,
-        _txn_id: crate::transactions::TxnId,
-        _max_committed_id: crate::transactions::TxnId,
-    ) {
-    }
+    fn clear(&mut self, _txn_id: TxnId) {}
 
-    fn on_insert<Q>(
-        &mut self,
-        _key: &Q,
-        _value: &V,
-        _id: crate::transactions::TxnId,
-        _max_committed_id: crate::transactions::TxnId,
-    ) where
-        K: std::borrow::Borrow<Q>,
-        Q: ?Sized + std::hash::Hash + Eq,
+    fn on_insert<Q>(&mut self, _key: &Q, _value: &V, _txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
     {
     }
 
-    fn on_remove(
-        &mut self,
-        _value: &V,
-        _txn_id: crate::transactions::TxnId,
-        _max_committed_id: crate::transactions::TxnId,
-    ) {
-    }
+    fn on_remove(&mut self, _value: &V, _txn_id: TxnId) {}
 }
 
 /// A storage implementation.
@@ -459,18 +429,18 @@ macro_rules! store {
             }
 
             impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Storage {
-                fn clear(&mut self, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
+                fn clear(&mut self, _txn_id: $crate::transactions::TxnId) {
                     $(
-                        self.$field.clear(_txn_id, _max_committed_id);
+                        self.$field.clear(_txn_id);
                     )*
                 }
 
                 $crate::on_insert!($name, $key_ty, $value_ty, $(index($field: $field_ty $(; $unique)?),)*);
 
-                fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
+                fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId) {
                     $({
                         for value in index::$name::Storage::$field(_value) {
-                            self.$field.remove(&value, _txn_id, _max_committed_id);
+                            self.$field.remove(&value, _txn_id);
                         }
                     })*
                 }
@@ -531,13 +501,13 @@ macro_rules! get_index_fn {
 #[macro_export]
 macro_rules! on_insert {
     ($name: ident, $key_ty: ty, $value_ty: ty, $(index($field: ident: $field_ty: ty $(; $unique:ident)?),)*) => {
-        fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId)
+        fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId)
         where
             $key_ty: std::borrow::Borrow<Q>,
             Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = $key_ty>
         {
             $(
-                $crate::on_insert_each!($name, $field: $field_ty; (self, _key, _value, _txn_id, _max_committed_id) $(; $unique)?);
+                $crate::on_insert_each!($name, $field: $field_ty; (self, _key, _value, _txn_id) $(; $unique)?);
             )*
         }
     };
@@ -550,7 +520,7 @@ macro_rules! on_insert_each {
         $name:ident,
         $field:ident :
         $field_ty:ty;
-        ($self:ident, $key:ident, $value:ident, $txn_id:ident, $max_committed_id:ident); assert_unique
+        ($self:ident, $key:ident, $value:ident, $txn_id:ident); assert_unique
     ) => {
         for index_key in index::$name::Storage::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
@@ -560,23 +530,19 @@ macro_rules! on_insert_each {
                 stringify!($field),
                 stringify!($name),
             );
-            $self
-                .$field
-                .insert(index_key, $key.to_owned(), $txn_id, $max_committed_id);
+            $self.$field.insert(index_key, $key.to_owned(), $txn_id);
         }
     };
     (
         $name:ident,
         $field:ident :
         $field_ty:ty;
-        ($self:ident, $key:ident, $value:ident, $txn_id:ident, $max_committed_id:ident)
+        ($self:ident, $key:ident, $value:ident, $txn_id:ident)
     ) => {
         for index_key in index::$name::Storage::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
             if unique {
-                $self
-                    .$field
-                    .insert(index_key, $key.to_owned(), $txn_id, $max_committed_id);
+                $self.$field.insert(index_key, $key.to_owned(), $txn_id);
             } else {
                 $self.$field.set_poisoned($txn_id);
             }

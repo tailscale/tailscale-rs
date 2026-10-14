@@ -134,13 +134,7 @@ where
             _kind: PhantomData,
         };
         let txn_id = result.guard.storage().txn_id();
-        let max_transaction_id = result.guard.storage().max_committed_id();
-        result.inner = Some(inner_iter_mut::<D, Guard>(
-            &mut result.guard,
-            txn_id,
-            max_transaction_id,
-            owner,
-        ));
+        result.inner = Some(inner_iter_mut::<D, Guard>(&mut result.guard, txn_id, owner));
         result
     }
 
@@ -161,13 +155,12 @@ where
         self.inner = None;
         let storage = self.guard.storage();
         let txn_id = storage.txn_id();
-        let max_transaction_id = storage.max_committed_id();
         let table = D::get_table_mut(&mut storage.tables);
         for k in &self.modified {
-            table.rebuild_indexes_for_key(k, txn_id, max_transaction_id);
+            table.rebuild_indexes_for_key(k, txn_id);
             // The iterator handed out a `&mut` to this row, so treat it as mutated. Recording
             // happens here rather than as rows are yielded because the iterator borrows the table.
-            table.record_mutated_key(k, txn_id, max_transaction_id);
+            table.record_mutated_key(k, txn_id);
         }
     }
 }
@@ -313,7 +306,6 @@ where
 fn inner_iter_mut<'guard, D, Guard>(
     guard: &mut Guard,
     txn_id: TxnId,
-    max_transaction_id: TxnId,
     owner: Owner,
 ) -> InnerIteratorMut<'guard, D, D::IndexStorage>
 where
@@ -325,5 +317,5 @@ where
     let tables = unsafe { &mut *tables };
     let table = D::get_table_mut(tables);
     table.assert_owner(owner);
-    table.iter_mut(txn_id, max_transaction_id)
+    table.iter_mut(txn_id)
 }
