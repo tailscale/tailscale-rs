@@ -16,17 +16,15 @@
 use std::{
     any::{Any, TypeId},
     collections::{HashMap, HashSet},
-    convert::Infallible,
     fmt,
     hash::Hash,
-    marker::PhantomData,
     num::NonZeroUsize,
     sync::{Arc, Mutex, Weak, atomic::AtomicUsize},
 };
 
 use crate::{
     Error, Owner, Result,
-    schema::{GeneratedStorage, Notifiable, SingletonDesc, TableDesc},
+    schema::{Desc, GeneratedStorage, PrimaryDesc, SingletonDesc},
     storage::Storage,
 };
 
@@ -74,38 +72,40 @@ impl<Notification: Clone> Default for Notifications<Notification> {
     }
 }
 
-/// A single event within a notification.
+/// A change to a table, as delivered in a notification.
+///
+/// The changes a transaction makes to a table are summarised for each subscription as at most one
+/// `TableClear`, then at most one removal event (`KeyRemove` or `TableRemove`), then at most one
+/// upsert event (`KeyUpsert` or `TableUpsert`). A subscription to a single key only sees changes
+/// to that key; a subscription to the whole table (or store) sees changes to every key.
 #[non_exhaustive]
-pub enum Event<D, K: Clone, V: Clone> {
+pub enum Event<D: PrimaryDesc> {
     /// The table has been cleared.
     TableClear,
-    /// Mutations to a table where the table has gone from empty to non-empty or the
-    /// subscriber is watching the whole table.
-    TableUpsert(Vec<K>),
-    /// Removes where the subscriber is watching the whole table.
-    TableRemove(Vec<K>),
-    /// A single key/value is mutated.
-    KeyUpsert(K, V),
-    /// A key is removed.
-    KeyRemove(K),
-    // Need to put `PhantomData<D>` somewhere.
-    #[doc(hidden)]
-    __Nope(PhantomData<D>, Infallible),
+    /// Keys have been inserted or mutated, and either more than one key changed or the table was
+    /// empty at the start of the transaction or cleared during it.
+    TableUpsert(Vec<D::Key>),
+    /// More than one key has been removed.
+    TableRemove(Vec<D::Key>),
+    /// A single key has been inserted or mutated.
+    KeyUpsert(D::Key, D::NotificationValue),
+    /// A single key has been removed.
+    KeyRemove(D::Key),
 }
 
 /// A single event within a notification.
 #[non_exhaustive]
-pub enum SingletonEvent<D, V: Clone> {
+pub enum SingletonEvent<D: SingletonDesc> {
     /// The singleton has been mutated.
-    Upsert(V),
+    Upsert(D::NotificationValue),
     /// A value has been removed from a singleton.
     Remove,
-    // Need to put `PhantomData<D>` somewhere.
-    #[doc(hidden)]
-    __Nope(PhantomData<D>, Infallible),
 }
 
-impl<D: Notifiable, K: Clone + fmt::Debug, V: Clone> fmt::Debug for Event<D, K, V> {
+impl<D: PrimaryDesc> fmt::Debug for Event<D>
+where
+    D::Key: fmt::Debug,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TableClear => write!(f, "TableClear({})", D::NAME),
@@ -113,12 +113,11 @@ impl<D: Notifiable, K: Clone + fmt::Debug, V: Clone> fmt::Debug for Event<D, K, 
             Self::TableRemove(_) => write!(f, "TableRemove({})", D::NAME),
             Self::KeyUpsert(k, _) => write!(f, "KeyUpsert({}, {k:?})", D::NAME),
             Self::KeyRemove(k) => write!(f, "KeyRemove({}, {k:?})", D::NAME),
-            Self::__Nope(..) => unreachable!(),
         }
     }
 }
 
-impl<D, K: Clone, V: Clone> Clone for Event<D, K, V> {
+impl<D: PrimaryDesc> Clone for Event<D> {
     fn clone(&self) -> Self {
         match self {
             Self::TableClear => Self::TableClear,
@@ -126,12 +125,14 @@ impl<D, K: Clone, V: Clone> Clone for Event<D, K, V> {
             Self::TableRemove(arg0) => Self::TableRemove(arg0.clone()),
             Self::KeyUpsert(arg0, arg1) => Self::KeyUpsert(arg0.clone(), arg1.clone()),
             Self::KeyRemove(arg0) => Self::KeyRemove(arg0.clone()),
-            Self::__Nope(..) => unreachable!(),
         }
     }
 }
 
-impl<D, K: Clone + PartialEq, V: Clone + PartialEq> PartialEq for Event<D, K, V> {
+impl<D: PrimaryDesc> PartialEq for Event<D>
+where
+    D::NotificationValue: PartialEq,
+{
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::TableClear, Self::TableClear) => true,
@@ -139,45 +140,45 @@ impl<D, K: Clone + PartialEq, V: Clone + PartialEq> PartialEq for Event<D, K, V>
             (Self::TableRemove(l0), Self::TableRemove(r0)) => l0 == r0,
             (Self::KeyUpsert(l0, l1), Self::KeyUpsert(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::KeyRemove(l0), Self::KeyRemove(r0)) => l0 == r0,
-            (Self::__Nope(..), _) | (_, Self::__Nope(..)) => unreachable!(),
             _ => false,
         }
     }
 }
-impl<D, K: Clone + PartialEq, V: Clone + PartialEq> Eq for Event<D, K, V> {}
 
-impl<D: crate::schema::SingletonDesc, V: Clone> fmt::Debug for SingletonEvent<D, V> {
+impl<D: PrimaryDesc> Eq for Event<D> where D::NotificationValue: PartialEq {}
+
+impl<D: SingletonDesc> fmt::Debug for SingletonEvent<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Upsert(_) => write!(f, "Upsert({})", std::any::type_name::<D>()),
             Self::Remove => write!(f, "Remove({})", std::any::type_name::<D>()),
-            Self::__Nope(..) => unreachable!(),
         }
     }
 }
 
-impl<D, V: Clone> Clone for SingletonEvent<D, V> {
+impl<D: SingletonDesc> Clone for SingletonEvent<D> {
     fn clone(&self) -> Self {
         match self {
             Self::Upsert(arg0) => Self::Upsert(arg0.clone()),
             Self::Remove => Self::Remove,
-            Self::__Nope(..) => unreachable!(),
         }
     }
 }
 
-impl<D, V: Clone + PartialEq> PartialEq for SingletonEvent<D, V> {
+impl<D: SingletonDesc> PartialEq for SingletonEvent<D>
+where
+    D::NotificationValue: PartialEq,
+{
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Upsert(l0), Self::Upsert(r0)) => l0 == r0,
             (Self::Remove, Self::Remove) => true,
-            (Self::__Nope(..), _) | (_, Self::__Nope(..)) => unreachable!(),
             _ => false,
         }
     }
 }
 
-impl<D, V: Clone + PartialEq> Eq for SingletonEvent<D, V> {}
+impl<D: SingletonDesc> Eq for SingletonEvent<D> where D::NotificationValue: PartialEq {}
 
 /// An object which forwards notifications from the store to subscribers.
 pub trait Notifier: Send + Sync + std::fmt::Debug + 'static {
@@ -274,7 +275,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     ///
     /// May be an over-approximation (i.e., there may be false positives but not false
     /// negatives, as long as the global lock on the store is held).
-    pub fn has_subscribers<D: Notifiable>(&self) -> bool {
+    pub fn has_subscribers<D: PrimaryDesc>(&self) -> bool {
         if !self.all.lock().unwrap().is_empty() {
             return true;
         }
@@ -289,7 +290,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Process events for `D` and add to `notifications`.
-    pub fn collect_events<D: Notifiable>(
+    pub fn collect_events<D: PrimaryDesc>(
         &self,
         notifications: &mut Notifications<NotificationType<D>>,
         events: HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
@@ -311,7 +312,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         }
 
         for (k, s) in table.subscriptions.iter() {
-            let events = process_events::<D>(&events, Some(k.clone()));
+            let events = process_events::<D>(&events, Some(k));
             if !events.is_empty() {
                 for s in s {
                     notifications.append_notifications(*s, &events);
@@ -446,7 +447,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Associate a subscription ID with a single key of a table.
-    pub(crate) fn create_table_subscription<D: Notifiable>(
+    pub(crate) fn create_table_subscription<D: PrimaryDesc>(
         &self,
         key: D::Key,
         subscriber: Subscriber,
@@ -455,21 +456,18 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         D::Key: Send,
     {
         self.register_subscription(subscriber, |subscription| {
-            self.tables
-                .lock()
-                .unwrap()
-                .entry(TypeId::of::<D>())
-                .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()))
-                .downcast_mut::<D::Key>()
-                .subscriptions
-                .entry(key)
-                .or_default()
-                .insert(subscription);
+            self.with_table_subscriptions::<D>(|table| {
+                table
+                    .subscriptions
+                    .entry(key)
+                    .or_default()
+                    .insert(subscription);
+            });
         })
     }
 
     /// Associate a subscription ID with a table (watching all keys).
-    pub(crate) fn create_table_subscription_all<D: Notifiable>(
+    pub(crate) fn create_table_subscription_all<D: PrimaryDesc>(
         &self,
         subscriber: Subscriber,
     ) -> Result<Subscription>
@@ -477,19 +475,28 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         D::Key: Send,
     {
         self.register_subscription(subscriber, |subscription| {
-            self.tables
-                .lock()
-                .unwrap()
-                .entry(TypeId::of::<D>())
-                .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()))
-                .downcast_mut::<D::Key>()
-                .subscriptions_all
-                .insert(subscription);
+            self.with_table_subscriptions::<D>(|table| {
+                table.subscriptions_all.insert(subscription);
+            });
         })
     }
 
+    /// Pass the subscriptions for the table `D` to `f`, creating them if there are none.
+    fn with_table_subscriptions<D: PrimaryDesc>(
+        &self,
+        f: impl FnOnce(&mut TableSubscriptions<D::Key>),
+    ) where
+        D::Key: Send,
+    {
+        let mut tables = self.tables.lock().unwrap();
+        let table = tables
+            .entry(TypeId::of::<D>())
+            .or_insert_with(|| Box::new(TableSubscriptions::<D::Key>::default()));
+        f(table.downcast_mut::<D::Key>());
+    }
+
     /// Remove a subscription from a specific table (whether single-key or whole-table).
-    pub(crate) fn remove_table_subscription<D: Notifiable>(&self, subscription: Subscription) {
+    pub(crate) fn remove_table_subscription<D: PrimaryDesc>(&self, subscription: Subscription) {
         let mut tables = self.tables.lock().unwrap();
         let Some(subs) = tables.get_mut(&TypeId::of::<D>()) else {
             return;
@@ -520,14 +527,11 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         for table in tables.values_mut() {
             table.remove_subscriber(subscriber);
         }
-
-        // Hold the lock on `subscribers` until we're done.
-        drop(subscribers);
     }
 }
 
 /// Send a notification for the current value of `key` to `subscription`.
-pub(crate) fn send_current<D: Notifiable>(
+pub(crate) fn send_current<D: PrimaryDesc>(
     subs: &Subscriptions<<D::Storage as GeneratedStorage>::Notification>,
     storage: &Storage<D::Storage>,
     key: D::Key,
@@ -548,7 +552,10 @@ pub(crate) fn send_current_singleton<S: SingletonDesc>(
     storage: &Storage<S::Storage>,
     subscription: Subscription,
 ) {
-    let Some(value) = storage.get_singleton_notification_value::<S>(storage.txn_id()) else {
+    let Some(value) = S::get_ref(&storage.tables).get(storage.txn_id()) else {
+        return;
+    };
+    let Some(value) = S::notification_value(value).clone() else {
         return;
     };
     let notification = S::make_notification(SingletonEvent::Upsert(value));
@@ -650,9 +657,9 @@ impl<N: Clone> Notifications<N> {
 /// into the public event type and wrapping it in the table's notification type.
 ///
 /// `filter` is used when a subscriber is just watching a single key in the table, not all of them.
-fn process_events<D: Notifiable>(
+fn process_events<D: PrimaryDesc>(
     events: &HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
-    filter: Option<D::Key>,
+    filter: Option<&D::Key>,
 ) -> Vec<NotificationType<D>> {
     use collect::CollectEvents;
 
@@ -664,7 +671,7 @@ fn process_events<D: Notifiable>(
     for (k, e) in events {
         // We could have separate functions for one key vs the whole table and be a little bit more
         // efficient. I don't think it would be a huge difference though.
-        if let Some(f) = &filter
+        if let Some(f) = filter
             && f != k
         {
             continue;
@@ -685,13 +692,13 @@ fn process_events<D: Notifiable>(
     }
     match removes {
         CollectEvents::None => {}
-        CollectEvents::One(k, _) => result.push(D::make_notification(Event::KeyRemove(k.clone()))),
+        CollectEvents::One(k, _) => result.push(D::make_notification(Event::KeyRemove(k))),
         CollectEvents::Many(ks) => result.push(D::make_notification(Event::TableRemove(ks))),
     }
     match upserts {
         CollectEvents::None => {}
         CollectEvents::One(k, v) => {
-            result.push(D::make_notification(Event::KeyUpsert(k.clone(), v.clone())))
+            result.push(D::make_notification(Event::KeyUpsert(k, v.clone())))
         }
         CollectEvents::Many(ks) => result.push(D::make_notification(Event::TableUpsert(ks))),
     }
@@ -699,8 +706,7 @@ fn process_events<D: Notifiable>(
 }
 
 // Helper type for getting the generated, public notification enum for the store from a table description `D`.
-type NotificationType<D> =
-    <<D as TableDesc>::Storage as crate::schema::GeneratedStorage>::Notification;
+type NotificationType<D> = <<D as Desc>::Storage as crate::schema::GeneratedStorage>::Notification;
 
 mod collect {
     /// Helper type for collecting a table's events into the shapes used by the public notification API.
@@ -719,31 +725,22 @@ mod collect {
         pub fn push(&mut self, k: K, v: V) {
             match self {
                 CollectEvents::None => *self = CollectEvents::One(k, v),
-                CollectEvents::One(..) => {
-                    let prev = std::mem::replace(self, CollectEvents::None);
-                    let CollectEvents::One(k0, _) = prev else {
-                        unreachable!();
-                    };
-                    *self = CollectEvents::Many(vec![k0, k]);
-                }
-                CollectEvents::Many(ks) => ks.push(k),
+                _ => self.force_many(k),
             }
         }
 
         /// Add an event and (if not already) convert the collection into the `Many` variant. Used
         /// where an event should always be reported as a list of keys rather than key and value.
         pub fn force_many(&mut self, k: K) {
-            match self {
-                CollectEvents::None => *self = CollectEvents::Many(vec![k]),
-                CollectEvents::One(..) => {
-                    let prev = std::mem::replace(self, CollectEvents::None);
-                    let CollectEvents::One(k0, _) = prev else {
-                        unreachable!();
-                    };
-                    *self = CollectEvents::Many(vec![k0, k]);
+            let ks = match std::mem::replace(self, CollectEvents::None) {
+                CollectEvents::None => vec![k],
+                CollectEvents::One(k0, _) => vec![k0, k],
+                CollectEvents::Many(mut ks) => {
+                    ks.push(k);
+                    ks
                 }
-                CollectEvents::Many(ks) => ks.push(k),
-            }
+            };
+            *self = CollectEvents::Many(ks);
         }
     }
 
@@ -930,7 +927,6 @@ mod tests {
                     ItemsKind::TableRemove(ks)
                 }
                 Event::TableClear => ItemsKind::TableClear,
-                _ => unreachable!(),
             }
         }
     }
@@ -950,7 +946,6 @@ mod tests {
             match e {
                 SingletonEvent::Upsert(v) => CountKind::Upsert(*v),
                 SingletonEvent::Remove => CountKind::Remove,
-                _ => unreachable!(),
             }
         }
     }
@@ -971,7 +966,6 @@ mod tests {
             match e {
                 SingletonEvent::Upsert(()) => QuietKind::Upsert,
                 SingletonEvent::Remove => QuietKind::Remove,
-                _ => unreachable!(),
             }
         }
     }
@@ -1070,14 +1064,14 @@ mod tests {
     fn process_events_filter_selects_only_matching_key() {
         let evs = events(&[(1, upsert("a")), (2, upsert("b"))]);
 
-        let matched = process_events::<Items>(&evs, Some(1));
+        let matched = process_events::<Items>(&evs, Some(&1));
         assert_eq!(matched.len(), 1);
         assert_eq!(
             ItemsKind::from(&matched[0]),
             ItemsKind::KeyUpsert(1, "a".to_owned())
         );
 
-        let missing = process_events::<Items>(&evs, Some(3));
+        let missing = process_events::<Items>(&evs, Some(&3));
         assert!(missing.is_empty());
     }
 
