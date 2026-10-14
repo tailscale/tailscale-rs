@@ -419,7 +419,7 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
         *self = Self::All(txn_id, HashMap::new());
     }
 
-    fn remove<Q>(&mut self, k: &Q, txn_id: TxnId, data: &HashMap<K, VersionedValue<V>>) -> Option<V>
+    fn remove<Q>(&mut self, k: &Q, txn_id: TxnId, data: &HashMap<K, VersionedValue<V>>)
     where
         K: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
@@ -436,16 +436,14 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
                     removed.insert(k.to_owned());
                     *self = Self::Some(txn_id, removed);
                 }
-                None
             }
             DeleteMask::All(_, present_rows) => {
-                present_rows.remove(k).and_then(|mut v| v.take(txn_id))
+                present_rows.remove(k);
             }
             DeleteMask::Some(_, removed) => {
                 if present {
                     removed.insert(k.to_owned());
                 }
-                None
             }
         }
     }
@@ -933,13 +931,13 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        let dm_result = self.delete_mask.remove(key, txn_id, &self.data);
-        if let Some(value) = dm_result
-            .as_ref()
-            .or_else(|| self.data.get(key).and_then(|v| v.get(txn_id)))
-        {
+        // Only the value visible to this transaction is indexed. Any other value for `key` in
+        // `self.data` (e.g., if `key` has already been removed in this transaction) may share
+        // an index key with a different row, whose index entry must be kept.
+        if let Some(value) = get_from_table::<D, Q>(&self.delete_mask, &self.data, key, txn_id) {
             self.indexes.on_remove(value, txn_id);
         }
+        self.delete_mask.remove(key, txn_id, &self.data);
     }
 
     pub fn clear(&mut self, txn_id: TxnId) {
