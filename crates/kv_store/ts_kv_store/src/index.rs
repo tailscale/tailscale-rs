@@ -70,7 +70,7 @@ impl<'store, D: IndexDesc> KvTableIndex<'store, D> {
         <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner)
     }
 
-    /// Iterate all the keys in the index and value in the base table.
+    /// Iterate all the keys in the index and values in the base table.
     pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
         D: 'store,
@@ -159,7 +159,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableTransactionalIndex<'guard, 'txn, D> {
         <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.txn.owner)
     }
 
-    /// Iterate all the keys in the index and value in the base table.
+    /// Iterate all the keys in the index and values in the base table.
     pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
         D: 'guard,
@@ -237,7 +237,7 @@ impl<'guard, 'txn, D: IndexDesc> KvTableRoTransactionalIndex<'guard, 'txn, D> {
         <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.txn.owner)
     }
 
-    /// Iterate all the keys in the index and value in the base table.
+    /// Iterate all the keys in the index and values in the base table.
     pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &BaseKey<D>, &BaseValue<D>)>
     where
         D: 'guard,

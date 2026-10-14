@@ -206,9 +206,11 @@ pub trait GeneratedStorage: Default + Send + Sync {
 ///
 /// # Indexes
 ///
-/// The syntax of an index is `index(field: Type(; assert_unique)?)` where `field` is the name of
-/// a field in the value type of the base table and `Type` is the type of that field. You can
-/// specify multiple indexes for each table, separated with a semicolon. E.g.,
+/// The syntax of an index is `index(field: Type (= closure)? (; assert_unique)?)` where `field` is
+/// the name of the index and `Type` is the type of the index key. By default, `field` is also the
+/// name of a field in the value type of the base table, whose value is used as the index key;
+/// `closure` can be specified to compute the index key instead. You can specify multiple indexes
+/// for each table, separated with a semicolon. E.g.,
 ///
 /// ```rust
 /// # use ts_kv_store::store;
@@ -227,7 +229,7 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// );
 /// ```
 ///
-/// This will create indexes on nodes for fields `a`, `b`, and `c`. `c`'s index key is
+/// This will create indexes `a`, `b`, and `c` on nodes. `c`'s index key is
 /// computed by the specified closure, which is expected to return
 /// `impl IntoIterator<Item = I>` (where `I` is the index key type), for example an `Option<I>` for
 /// zero or one index keys per value.
@@ -238,7 +240,7 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// By adding `assert_unique` to an index declaration (after the index field, separated with a semicolon),
 /// attempting to store multiple rows with the same index key will cause a panic.
 ///
-/// ## Notifications
+/// # Notifications
 ///
 /// The `notify(...)` argument is used to control notifications about the table or singleton. Accepted
 /// values are `Clone` and `None`. The default is `None`.
@@ -363,7 +365,7 @@ macro_rules! store {
 
         /// Macro-generated notification type, there is a variant for each table and singleton with
         /// the appropriate types (wrapping event types in `ts_kv_store`). For notifications which
-        /// don't include a value (either by default or by opting-out using `notify(None)`, the value
+        /// don't include a value (either by default or by opting-out using `notify(None)`), the value
         /// type is `()`.
         #[derive(Clone)]
         #[allow(unused)]
@@ -477,13 +479,14 @@ macro_rules! store {
 
         /// A key-value store.
         ///
-        /// See [`$crate::KvStore`] (which this type implicitly derefences to) for full docs.
+        /// See `ts_kv_store::KvStore` (which this type implicitly dereferences to) for full docs.
         pub struct KvStore($crate::KvStore<TableStorage>);
 
         impl KvStore {
             /// Create a new, empty KV store as described by the schema macros.
             ///
-            /// The store has a no-op notifier, so subscribers are never notified of changes.
+            /// The store has no notifier, so it does not support subscriptions: subscribing returns
+            /// `ts_kv_store::Error::MissingNotifier`.
             #[allow(dead_code, clippy::new_without_default)]
             pub fn new() -> Self {
                 // The store only holds a weak reference to its notifier, so downgrading a

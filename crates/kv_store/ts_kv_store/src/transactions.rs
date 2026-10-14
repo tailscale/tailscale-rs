@@ -124,7 +124,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         })
         // We only try once, rather than loop because if the user is calling `try_begin_...`, they
         // presumably don't want to wait and we'd only need to retry if someone else grabbed the
-        // the lock before we could.
+        // lock before we could.
     }
 }
 
@@ -386,7 +386,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
         <&mut Self as TabularOpsMut<_>>::insert(self, key, value, self.txn.owner)
     }
 
-    /// Get mutable access to a row of the table in the store in the store.
+    /// Get mutable access to a row of the table in the store.
     ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
     pub fn with_mut<Q, T>(&mut self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
@@ -446,7 +446,7 @@ impl<'guard, D: TableDesc> KvTableTransactional<'guard, '_, D> {
 /// Create a read-only transaction by calling [`KvStore::begin_ro_transaction`] or [`KvStore::try_begin_ro_transaction`].
 /// A read-only transaction holds a read lock on the whole store while it is active so ensure that
 /// code within a transaction is relatively quick to execute and that you drop transactions as soon
-/// as possible([`RoTransaction::commit`] can be used for this).
+/// as possible ([`RoTransaction::commit`] can be used for this).
 ///
 /// A transaction must not be kept alive over an `await` point. This can lead to deadlock.
 pub struct RoTransaction<'guard, TableStorage: schema::GeneratedStorage> {

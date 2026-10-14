@@ -26,7 +26,7 @@ pub const RETRY_TIME: Duration = Duration::from_millis(5);
 /// takes at least `RETRY_TIME * (MAX_RETRIES - 1)`, however often we retry in the meantime.
 ///
 /// This is reset with a successful send. If a receiver is receiving notifications, but handling
-/// them more slowly than they are being generated, the notifiers internal queue can grow without
+/// them more slowly than they are being generated, the notifier's internal queue can grow without
 /// bound.
 #[cfg(not(test))]
 const MAX_RETRIES: u32 = 10;
