@@ -59,10 +59,6 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         self.pending_txn
     }
 
-    pub(crate) fn max_committed_id(&self) -> TxnId {
-        self.committed
-    }
-
     pub(crate) fn insert_singleton<D: schema::SingletonDesc<Storage = TableStorage>>(
         &mut self,
         value: D::Value,
@@ -586,14 +582,9 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     }
 
     /// Rebuild all indexes for a specific key in this table.
-    pub(crate) fn rebuild_indexes_for_key(
-        &mut self,
-        key: &D::Key,
-        txn_id: TxnId,
-        max_committed_id: TxnId,
-    ) {
+    pub(crate) fn rebuild_indexes_for_key(&mut self, key: &D::Key, txn_id: TxnId) {
         if let Some(v) = get_from_table::<D, D::Key>(&self.delete_mask, &self.data, key, txn_id) {
-            self.indexes.on_insert(key, v, txn_id, max_committed_id);
+            self.indexes.on_insert(key, v, txn_id);
         }
     }
 
@@ -853,27 +844,19 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
     /// Only needed by callers which mutate values without going via a method which records the
     /// mutation itself (i.e., `iter_mut`, which cannot record keys while iterating because the
     /// iterator borrows the table).
-    pub(crate) fn record_mutated_key(
-        &mut self,
-        key: &D::Key,
-        txn_id: TxnId,
-        max_committed_id: TxnId,
-    ) where
+    pub(crate) fn record_mutated_key(&mut self, key: &D::Key, txn_id: TxnId)
+    where
         // Required because committing a recorded key compares values using `D::value_eq`, which
         // panics for value types without `PartialEq`.
         D::Value: PartialEq,
     {
-        record_mut_ref(&mut self.modified, key, txn_id, max_committed_id);
+        record_mut_ref(&mut self.modified, key, txn_id);
     }
 
     /// Get a mutable iterator over the table. Does not keep indexes up to date, nor record mutations.
     /// The caller must call `rebuild_indexes_for_key` and `record_mutated_key` for any key the
     /// iterator yields.
-    pub(crate) fn iter_mut<'a>(
-        &'a mut self,
-        txn_id: TxnId,
-        max_committed_id: TxnId,
-    ) -> TableIteratorMut<'a, D, I> {
+    pub(crate) fn iter_mut<'a>(&'a mut self, txn_id: TxnId) -> TableIteratorMut<'a, D, I> {
         debug_assert!(self.delete_mask.check_txn_id(txn_id));
 
         let (data, removed) = match &mut self.delete_mask {
@@ -886,7 +869,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             removed,
             indexes: &mut self.indexes,
             txn_id,
-            max_committed_id,
         }
     }
 
@@ -906,7 +888,6 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         key: &Q,
         f: impl FnOnce(&mut D::Value) -> T,
         txn_id: TxnId,
-        max_committed_id: TxnId,
     ) -> Option<T>
     where
         D::Key: Borrow<Q>,
@@ -916,10 +897,10 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
         // Recorded before calling `f` so that if `f` panics, the (already cloned) value is still
         // rolled back by `gc_txn`.
-        record_mut_ref(&mut self.modified, key, txn_id, max_committed_id);
-        self.indexes.on_remove(value, txn_id, max_committed_id);
+        record_mut_ref(&mut self.modified, key, txn_id);
+        self.indexes.on_remove(value, txn_id);
         let result = f(value);
-        self.indexes.on_insert(key, value, txn_id, max_committed_id);
+        self.indexes.on_insert(key, value, txn_id);
         Some(result)
     }
 
@@ -929,18 +910,17 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
             .filter_map(move |(k, v)| Some((k, v.get(txn_id)?)))
     }
 
-    pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId, max_committed_id: TxnId) {
+    pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
         if let Some(old_value) =
             get_from_table::<D, D::Key>(&self.delete_mask, &self.data, &key, txn_id)
         {
-            self.indexes.on_remove(old_value, txn_id, max_committed_id);
+            self.indexes.on_remove(old_value, txn_id);
         }
-        self.indexes
-            .on_insert(&key, &value, txn_id, max_committed_id);
+        self.indexes.on_insert(&key, &value, txn_id);
 
         match self.delete_mask.insert(key, value, txn_id) {
             MaskInsertResult::NotWritten(key, value) => {
-                record_mutation(&mut self.modified, &key, txn_id, max_committed_id);
+                record_mutation(&mut self.modified, &key, txn_id);
                 let entry = self.data.entry(key).or_default();
                 entry.set(value, txn_id);
             }
@@ -948,38 +928,24 @@ impl<D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Table<D, I> {
         }
     }
 
-    pub fn remove<Q>(&mut self, key: &Q, txn_id: TxnId, max_committed_id: TxnId)
+    pub fn remove<Q>(&mut self, key: &Q, txn_id: TxnId)
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        if txn_id > max_committed_id {
-            let dm_result = self.delete_mask.remove(key, txn_id, &self.data);
-            if let Some(value) = dm_result
-                .as_ref()
-                .or_else(|| self.data.get(key).and_then(|v| v.get(txn_id)))
-            {
-                self.indexes.on_remove(value, txn_id, max_committed_id);
-            }
-        } else {
-            unreachable!(
-                "current transaction id less than committed id: {txn_id:?} <= {max_committed_id:?}"
-            );
+        let dm_result = self.delete_mask.remove(key, txn_id, &self.data);
+        if let Some(value) = dm_result
+            .as_ref()
+            .or_else(|| self.data.get(key).and_then(|v| v.get(txn_id)))
+        {
+            self.indexes.on_remove(value, txn_id);
         }
     }
 
-    pub fn clear(&mut self, txn_id: TxnId, max_committed_id: TxnId) {
-        if txn_id > max_committed_id {
-            self.delete_mask.clear(txn_id);
-        } else {
-            unreachable!(
-                "current transaction id less than committed id: {txn_id:?} <= {max_committed_id:?}"
-            );
-        }
-
+    pub fn clear(&mut self, txn_id: TxnId) {
+        self.delete_mask.clear(txn_id);
         self.poisoned.set(false, txn_id);
-
-        self.indexes.clear(txn_id, max_committed_id);
+        self.indexes.clear(txn_id);
     }
 
     pub(crate) fn assert_owner(&mut self, owner: Owner) {
@@ -1046,13 +1012,8 @@ struct TxnMutations<K> {
 fn with_mutations<K>(
     modified: &mut Option<TxnMutations<K>>,
     txn_id: TxnId,
-    max_committed_id: TxnId,
     f: impl FnOnce(&mut TxnMutations<K>),
 ) {
-    if txn_id == max_committed_id {
-        return;
-    }
-
     let modified = modified.get_or_insert_with(|| TxnMutations {
         txn_id,
         keys: HashSet::new(),
@@ -1062,30 +1023,22 @@ fn with_mutations<K>(
     f(modified);
 }
 
-fn record_mutation<K, Q>(
-    modified: &mut Option<TxnMutations<K>>,
-    key: &Q,
-    txn_id: TxnId,
-    max_committed_id: TxnId,
-) where
+fn record_mutation<K, Q>(modified: &mut Option<TxnMutations<K>>, key: &Q, txn_id: TxnId)
+where
     K: Borrow<Q> + Hash + Eq,
     Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
 {
-    with_mutations(modified, txn_id, max_committed_id, |m| {
+    with_mutations(modified, txn_id, |m| {
         m.keys.insert(key.to_owned());
     });
 }
 
-fn record_mut_ref<K, Q>(
-    modified: &mut Option<TxnMutations<K>>,
-    key: &Q,
-    txn_id: TxnId,
-    max_committed_id: TxnId,
-) where
+fn record_mut_ref<K, Q>(modified: &mut Option<TxnMutations<K>>, key: &Q, txn_id: TxnId)
+where
     K: Borrow<Q> + Hash + Eq,
     Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
 {
-    with_mutations(modified, txn_id, max_committed_id, |m| {
+    with_mutations(modified, txn_id, |m| {
         m.ref_keys.insert(key.to_owned());
     });
 }
@@ -1138,7 +1091,6 @@ pub(crate) struct TableIteratorMut<'a, D: schema::TableDesc, I> {
     removed: Option<&'a HashSet<D::Key>>,
     indexes: &'a mut I,
     txn_id: TxnId,
-    max_committed_id: TxnId,
 }
 
 impl<'a, D: schema::TableDesc, I: IndexStorage<D::Key, D::Value>> Iterator
@@ -1159,8 +1111,7 @@ where
                 Some(v) => {
                     // Remove this row's current index entries; they must be rebuilt from the (possibly
                     // mutated) value after iteration finishes.
-                    self.indexes
-                        .on_remove(v, self.txn_id, self.max_committed_id);
+                    self.indexes.on_remove(v, self.txn_id);
                     return Some((k, v));
                 }
                 None => continue,
