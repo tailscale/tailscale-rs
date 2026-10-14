@@ -1,6 +1,6 @@
-//! # ts-kvstore
+//! # ts_kv_store
 //!
-//! An in-memory, async, concurrent, ACID, and strongly-typed KV store for the Rust Tailscale client.
+//! An in-memory, concurrent, ACID, and strongly-typed KV store for the Rust Tailscale client.
 //!
 //! # Example:
 //!
@@ -49,7 +49,7 @@
 //! for all rows in the table.
 //!
 //! The data store has raw and transactional APIs. The raw API guarantees that each operation is
-//! atomic, but has no guarantees across multiple operatons. The transactional API groups operations
+//! atomic, but has no guarantees across multiple operations. The transactional API groups operations
 //! into transactions which are atomic and serializable. Both singleton and tabular data can be part
 //! of a transaction. The `Table` types used for accessing tabular data do not add any transactional
 //! elements. That is, operations on a `Table` created from the main store are not part of a transaction,
@@ -60,7 +60,7 @@
 //! a panic or early return at any stage of a transaction (they are always atomic and leave the store
 //! internally consistent; i.e., transactions are ACID).
 //!
-//! All data is owned. An owner is a simple token, its up to the user of the library to decide how
+//! All data is owned. An owner is a simple token, it's up to the user of the library to decide how
 //! to use these tokens and what rules to follow. Every KV pair has a single owner and can only be
 //! mutated by that owner. A table has a single owner for all rows. Reading data is not protected by
 //! ownership. Ownership for writes are currently only enforced in debug builds.
@@ -85,9 +85,10 @@
 //!
 //! # Async access
 //!
-//! ts-kvstore has a synchronous API and no async functions. It is safe to use it in an async context, as
-//! long as **a transaction or iterator is never live across an `await` point** (which can lead to degraded
-//! performance or deadlock). Transactions are `!Send` and `!Sync` to help prevent this.
+//! ts_kv_store has a synchronous API and no async functions. It is safe to use it in an async
+//! context, as long as **a transaction or iterator is never live across an `await` point** (which
+//! can lead to degraded performance or deadlock). Transactions are `!Send` and `!Sync` to help
+//! prevent this.
 //!
 //! A global lock is used internally and is held for the duration of a transaction. This is a `std`
 //! `RwLock` and so waiting for it will block the waiting thread (not just the async task). This is
@@ -100,11 +101,11 @@
 //! but there is no explicit publication). This crate provides a foundation for subscriptions and
 //! notifications, but not the mechanism for notification (e.g., async broadcast). Subscriptions and
 //! subscribers are kept pretty abstract and it is left for the notification implementation to map
-//! these concepts to concrete entities.
+//! these concepts to concrete entities. (See, e.g., ts_kv_store_tokio for a notifier using Tokio).
 //!
 //! Subscribers and subscriptions are essentially just opaque identifiers. Subscriptions always belong
 //! to a single subscriber. A subscriber has a single owner (multiple subscribers may have the same
-//! owner). Subscriptions watch either the whole store, a whole table, a single singleton, or a single
+//! owner). Subscriptions watch either the whole store, a whole table, a singleton, or a single
 //! key in a table. Subscribers can be added or removed (removing a subscriber also removes all its
 //! subscriptions; a subscriber with no subscriptions does nothing). Subscriptions can be added or
 //! removed (note that removing a subscription or subscriber requires searching through all
@@ -123,7 +124,7 @@
 //! The schema macros are an 'essential' component of the system, not just a convenience. Unfortunately
 //! Rust macros do not have visibility/privacy hygiene, so many internal types and traits are public.
 //! Anything marked as `doc(hidden)` is meant for internal use only and should not be considered
-//! part of the API.
+//! part of the API (no backwards compatibility guarantee under semver for this crate).
 //!
 //! Part of the work of the macros is to generate an internal storage struct. To ensure an ergonomic
 //! API, the generic [`KvStore`] is wrapped in a local `KvStore` which can be deref-ed to the inner,
@@ -150,7 +151,7 @@
 //! The KV store uses a simplified version of MVCC to implement transactions. Only two versions are
 //! required for each key, one will be the currently committed version and one will either be empty,
 //! the version belonging to the currently in-progress transaction, or the version belonging to a
-//! partially rolled-back or abandoned transaction. So, every value in the store is stored internally as a
+//! partially rolled-back or abandoned transaction. Every value in the store is stored internally as a
 //! `VersionedValue`, which has these two slots and a version and value in each. Deletes are stored
 //! outside of the main storage in a per-table delete mask.
 //!
@@ -249,7 +250,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             .remove_subscriber(subscriber)
     }
 
-    /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
+    /// Might (theoretically) panic, see the note on [`Self::clear_lock_poison`].
     fn get_read_lock(&self) -> RwLockReadGuard<'_, storage::Storage<TableStorage>> {
         self.clear_lock_poison();
 
@@ -264,7 +265,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         RwLockWriteGuard::downgrade(lock)
     }
 
-    /// Might (theoretically) panic, see the note on [`clear_lock_poison`].
+    /// Might (theoretically) panic, see the note on [`Self::clear_lock_poison`].
     fn get_write_lock(&self) -> RwLockWriteGuard<'_, storage::Storage<TableStorage>> {
         self.clear_lock_poison();
         let mut lock = self.storage.write().unwrap();
@@ -318,10 +319,10 @@ pub enum Error {
     /// The specified subscriber is not known to the store (either removed or never registered).
     #[error("Unknown subscriber")]
     UnknownSubscriber,
-    /// An attempt was made to subscribe to the store, but the store has no notifier, so subscriptions
+    /// An attempt was made to subscribe to the store, but the store has no notifier, so notifications
     /// would not be sent. This is likely because there is a reference to the store but not the notifier,
     /// so the notifier has been dropped.
-    #[error("Store has no registered notifer")]
+    #[error("Store has no registered notifier")]
     MissingNotifier,
 }
 
@@ -330,7 +331,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Helper trait for making it easier for [`Error`] and `Option` to interoperate.
 ///
-/// `Err(Error::NotPresent)` for `Result<T, Error>`has the same meaning as `None` for `Option<T>`
+/// `Err(Error::NotPresent)` for `Result<T, Error>` has the same meaning as `None` for `Option<T>`
 /// for most map operations. This trait allows treating `Result<T, Error>` a bit more like
 /// an `Option` in various ways so that using functions which return `Result<T, Error>` can be
 /// more ergonomic. (Annoyingly we can't implement helpers directly on `Result` or make conversion

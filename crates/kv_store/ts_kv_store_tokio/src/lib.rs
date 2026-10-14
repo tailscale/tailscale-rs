@@ -58,7 +58,7 @@ type QueuedNotifications<Storage> =
     HashMap<Subscription, Vec<<Storage as GeneratedStorage>::Notification>>;
 
 impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
-    /// Create a new `TokioNotifier` and [`KvStore`]. Spawns a task to send notifcations.
+    /// Create a new `TokioNotifier` and [`KvStore`]. Spawns a task to send notifications.
     ///
     /// The notifier owns the store and the store holds a weak reference back to the notifier.
     ///
@@ -200,10 +200,10 @@ pub enum Error {
     /// The subscriber is not (or no longer) known to the store.
     #[error("Unknown subscriber")]
     UnknownSubscriber,
-    /// An attempt was made to subscribe to the store, but the store has no notifier, so subscriptions
+    /// An attempt was made to subscribe to the store, but the store has no notifier, so notifications
     /// would not be sent. This is likely because there is a reference to the store but not the notifier,
     /// so the notifier has been dropped.
-    #[error("Store has no registered notifer")]
+    #[error("Store has no registered notifier")]
     MissingNotifier,
     /// A non-blocking [`TokioSubscriber::try_recv`] found no notification waiting.
     #[error("No notifications in channel")]

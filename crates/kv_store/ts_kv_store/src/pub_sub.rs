@@ -181,7 +181,7 @@ impl<D, V: Clone + PartialEq> Eq for SingletonEvent<D, V> {}
 
 /// An object which forwards notifications from the store to subscribers.
 pub trait Notifier: Send + Sync + std::fmt::Debug + 'static {
-    /// The store's notification enum.
+    /// The associated store's notification enum.
     type Notification: Clone;
 
     /// Notify subscribers.
@@ -193,8 +193,8 @@ pub trait Notifier: Send + Sync + std::fmt::Debug + 'static {
     /// Implementers must not call back into the store because a read lock is held while this method
     /// is called.
     ///
-    /// If possible, implementers should not block while sending these notifications. If sending is
-    /// possible to block, or take significant time, Notifications should be queued and sent asynchronously.
+    /// If possible, implementers should not block while sending these notifications. If sending notifications
+    /// may block or take significant time, notifications should be queued and sent asynchronously.
     fn notify(&self, notifications: Notifications<Self::Notification>);
 }
 
@@ -445,7 +445,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         all.retain(|s| s != &subscription);
     }
 
-    /// Associate a subscription ID with a table (watching all keys).
+    /// Associate a subscription ID with a single key of a table.
     pub(crate) fn create_table_subscription<D: Notifiable>(
         &self,
         key: D::Key,
@@ -468,7 +468,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         })
     }
 
-    /// Associate a subscription ID with a table (watching a single keys).
+    /// Associate a subscription ID with a table (watching all keys).
     pub(crate) fn create_table_subscription_all<D: Notifiable>(
         &self,
         subscriber: Subscriber,
@@ -488,7 +488,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         })
     }
 
-    /// Remove all subscriptions from a specific table (single-key and whole-table subscriptions).
+    /// Remove a subscription from a specific table (whether single-key or whole-table).
     pub(crate) fn remove_table_subscription<D: Notifiable>(&self, subscription: Subscription) {
         let mut tables = self.tables.lock().unwrap();
         let Some(subs) = tables.get_mut(&TypeId::of::<D>()) else {
@@ -858,8 +858,8 @@ mod tests {
     }
 
     impl RecordingNotifier {
-        /// Returns the notifier as a trait object (for `KvStore::new`) plus a handle sharing the
-        /// same buffer for assertions.
+        /// Returns the notifier as a trait object (for `KvStore::from_notifier`) plus a handle
+        /// sharing the same buffer for assertions.
         fn new() -> (
             Arc<dyn Notifier<Notification = Notification>>,
             RecordingNotifier,
@@ -898,7 +898,7 @@ mod tests {
         }
     }
 
-    // Helpers for asserting on the generated (non-`PartialEq`, non-`Debug`) notifications.
+    // Helpers for asserting on the generated (non-`PartialEq`) notifications.
 
     /// A comparable projection of an `Items` notification. Key lists are sorted because the
     /// underlying events come from a `HashMap` and so have no deterministic order.
@@ -1039,7 +1039,8 @@ mod tests {
 
     #[test]
     fn process_events_single_init_is_table_upsert() {
-        // `Init` (empty -> non-empty) is always reported as a table-level upsert, even for one key.
+        // `KeyOnlyUpsert` (empty -> non-empty) is always reported as a table-level upsert, even for
+        // one key.
         let result = process_events::<Items>(&events(&[(1, WatchedEvent::KeyOnlyUpsert)]), None);
         assert_eq!(result.len(), 1);
         assert_eq!(ItemsKind::from(&result[0]), ItemsKind::TableUpsert(vec![1]));
@@ -2089,7 +2090,7 @@ mod tests {
 
     /// Seed `Items` with `keys` (mapping each key `k` to the value `"v{k}"`) in a committed
     /// transaction, so that later mutations are reported per-key rather than as a table-level
-    /// `Init`.
+    /// upsert.
     fn seed_items(store: &KvStore, keys: &[u32]) {
         let mut txn = store.begin_transaction(OWNER);
         {

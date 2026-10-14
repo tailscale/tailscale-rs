@@ -161,7 +161,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         Ok(id)
     }
 
-    /// Unsubscribe to a singleton key-value pair.
+    /// Unsubscribe from a singleton key-value pair.
     pub fn unsubscribe<S: schema::SingletonDesc<Storage = TableStorage>>(
         &self,
         subscription: crate::Subscription,
@@ -380,7 +380,7 @@ impl<D: schema::TableDesc> KvTable<'_, D> {
         txn.commit()
     }
 
-    /// Get mutable access to a row of the table in the store in the store.
+    /// Get mutable access to a row of the table in the store.
     ///
     /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
     pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Result<T>

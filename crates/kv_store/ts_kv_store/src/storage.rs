@@ -12,7 +12,7 @@ use crate::{
     transactions::TxnId,
 };
 
-/// Where we store the data.
+/// Where data is actually stored.
 #[doc(hidden)]
 pub struct Storage<TableStorage: schema::GeneratedStorage> {
     /// Storage for tabular data. The concrete type will be macro-generated, see the [`crate::schema`]
@@ -129,7 +129,7 @@ impl<TableStorage: schema::GeneratedStorage> Storage<TableStorage> {
         D::get_cloned(&self.tables, txn_id)
     }
 
-    /// Begin a new transaction. Returns the transactions unique id.
+    /// Begin a new transaction. Returns the transaction's unique id.
     pub(crate) fn begin_transaction(&mut self) -> TxnId {
         let new_txn_id = self.next_txn;
         self.pending_txn = Some(new_txn_id);
@@ -222,7 +222,7 @@ impl<T> VersionedValue<T> {
         }
     }
 
-    /// The value written by `txn_id`, if this transaction wrote to either slot.
+    /// The value written by `txn_id`, if that transaction wrote to either slot.
     pub fn modified_in_txn(&self, txn_id: TxnId) -> Option<&T> {
         if let Some((id, v)) = &self.slot_a
             && *id == txn_id
@@ -263,7 +263,8 @@ impl<T> VersionedValue<T> {
             if txn_id == *aid {
                 Some(&mut self.slot_a.as_mut().unwrap().1)
             } else if let Some((bid, b)) = &mut self.slot_b {
-                // Use the current transaction's value or the older of the other two (committed) values.
+                // Use the current transaction's value, or clone the newer of the two committed values
+                // over the older.
                 if txn_id == *bid {
                     Some(&mut self.slot_b.as_mut().unwrap().1)
                 } else if aid > bid {
@@ -558,7 +559,7 @@ pub struct Table<D: schema::TableDesc, I> {
     ///
     /// Currently this is used for indexes if multiple primary keys are stored for a single index key.
     poisoned: VersionedValue<bool>,
-    /// All indexes of this table (empty if there are no indexes or this table itself is an index).
+    /// All indexes of this table (empty if there are no indexes or this table is itself an index).
     pub indexes: I,
 }
 
@@ -1397,7 +1398,7 @@ mod test {
 
 #[cfg(test)]
 mod txn_test {
-    // The `tables!` macro generates a `KvStore` wrapper, which these storage-level tests
+    // The `store!` macro generates a `KvStore` wrapper, which these storage-level tests
     // (operating on `Storage` directly) do not use.
     #![allow(dead_code)]
 
