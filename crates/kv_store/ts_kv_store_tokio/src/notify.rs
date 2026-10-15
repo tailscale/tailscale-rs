@@ -10,7 +10,7 @@ use tokio::{
     sync::{Notify, mpsc::error::TrySendError},
     time::{Instant, timeout},
 };
-use ts_kv_store::{GeneratedStorage, Subscriber};
+use ts_kv_store::{GeneratedStore, Subscriber};
 
 use crate::{QueuedNotifications, SubscriberSender, TokioNotifier};
 
@@ -26,7 +26,7 @@ pub const RETRY_TIME: Duration = Duration::from_millis(5);
 /// takes at least `RETRY_TIME * (MAX_RETRIES - 1)`, however often we retry in the meantime.
 ///
 /// This is reset with a successful send. If a receiver is receiving notifications, but handling
-/// them more slowly than they are being generated, the notifiers internal queue can grow without
+/// them more slowly than they are being generated, the notifier's internal queue can grow without
 /// bound.
 #[cfg(not(test))]
 const MAX_RETRIES: u32 = 10;
@@ -34,8 +34,8 @@ const MAX_RETRIES: u32 = 10;
 pub const MAX_RETRIES: u32 = 3;
 
 /// Wakes up when notified and sends any queued notifications.
-pub(super) async fn notify_loop<Storage: GeneratedStorage + 'static>(
-    notifier: Weak<TokioNotifier<Storage>>,
+pub(super) async fn notify_loop<Store: GeneratedStore>(
+    notifier: Weak<TokioNotifier<Store>>,
     notify: Arc<Notify>,
 ) {
     // Don't start looping until the first time we're notified. This means that we won't try
@@ -71,7 +71,7 @@ pub(super) struct Failing {
     last_failure: Instant,
 }
 
-impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
+impl<Store: GeneratedStore> TokioNotifier<Store> {
     /// Send every queued notification to its subscriber's channel, returning whether this round of
     /// notifications should be retried.
     ///
@@ -98,20 +98,20 @@ impl<Storage: GeneratedStorage + 'static> TokioNotifier<Storage> {
 }
 
 /// A notification could not be sent to its subscriber.
-enum SendError<Storage: GeneratedStorage> {
+enum SendError<N> {
     /// The channel filled up; the field is the notifications which were not sent.
-    Full(Vec<Storage::Notification>),
+    Full(Vec<N>),
     /// The subscriber has not taken a notification for [`MAX_RETRIES`] rounds or the channel is
     /// closed.
     Dead,
 }
 
-impl<Storage: GeneratedStorage> SubscriberSender<Storage> {
+impl<N> SubscriberSender<N> {
     /// Record a failure to send to this subscriber, giving up on it (by returning
     /// [`SendError::Dead`]) once it has used up all [`MAX_RETRIES`] of its retries.
     ///
     /// Only failures at least [`RETRY_TIME`] apart count, so retrying sooner is free.
-    fn record_failure(&mut self) -> Result<(), SendError<Storage>> {
+    fn record_failure(&mut self) -> Result<(), SendError<N>> {
         let now = Instant::now();
         let counts = match &self.failing {
             Some(failing) => now.duration_since(failing.last_failure) >= RETRY_TIME,
@@ -145,10 +145,10 @@ impl<Storage: GeneratedStorage> SubscriberSender<Storage> {
 /// reported as [`SendError::Full`] so that the caller can retry it later, or as
 /// [`SendError::Dead`] once it has ignored us for [`MAX_RETRIES`] rounds in a row. Retrying sooner
 /// than [`RETRY_TIME`] does not count towards `MAX_RETRIES`.
-fn send_to_subscriber<Storage: GeneratedStorage>(
-    channel: &mut SubscriberSender<Storage>,
-    notifications: Vec<Storage::Notification>,
-) -> Result<(), SendError<Storage>> {
+fn send_to_subscriber<N>(
+    channel: &mut SubscriberSender<N>,
+    notifications: Vec<N>,
+) -> Result<(), SendError<N>> {
     let mut notifications = notifications.into_iter();
     while let Some(notification) = notifications.next() {
         match channel.sender.try_send(notification) {
@@ -171,8 +171,7 @@ fn send_to_subscriber<Storage: GeneratedStorage>(
 }
 
 /// The bookkeeping for a single round of sending.
-#[derive(Default)]
-struct SendRound<Storage: GeneratedStorage> {
+struct SendRound<N> {
     /// Subscribers whose remaining notifications are discarded (because the receiver is dead).
     skip: HashSet<Subscriber>,
     /// Subscribers whose remaining notifications are re-queued because their channel is full.
@@ -180,15 +179,24 @@ struct SendRound<Storage: GeneratedStorage> {
     /// Subscribers to remove from the store and notifier.
     to_remove: Vec<Subscriber>,
     /// Notifications to be queued for re-sending.
-    requeue: VecDeque<QueuedNotifications<Storage>>,
+    requeue: VecDeque<QueuedNotifications<N>>,
 }
 
-impl<Storage: GeneratedStorage> SendRound<Storage> {
+impl<N> SendRound<N> {
+    fn new() -> Self {
+        SendRound {
+            skip: HashSet::new(),
+            full: HashSet::new(),
+            to_remove: Vec::new(),
+            requeue: VecDeque::new(),
+        }
+    }
+
     fn send_all(
-        senders: &mut HashMap<Subscriber, SubscriberSender<Storage>>,
-        queue: VecDeque<QueuedNotifications<Storage>>,
+        senders: &mut HashMap<Subscriber, SubscriberSender<N>>,
+        queue: VecDeque<QueuedNotifications<N>>,
     ) -> Self {
-        let mut round = Self::default();
+        let mut round = Self::new();
         for queued in queue {
             round.send_transaction(senders, queued);
         }
@@ -198,8 +206,8 @@ impl<Storage: GeneratedStorage> SendRound<Storage> {
     /// Send the notifications from a single transaction.
     fn send_transaction(
         &mut self,
-        senders: &mut HashMap<Subscriber, SubscriberSender<Storage>>,
-        queued: QueuedNotifications<Storage>,
+        senders: &mut HashMap<Subscriber, SubscriberSender<N>>,
+        queued: QueuedNotifications<N>,
     ) {
         let mut leftover = HashMap::new();
 

@@ -1,6 +1,6 @@
 //! Traits and macros for defining the KvStore schema.
 
-use std::{any::Any, hash::Hash};
+use std::{any::Any, borrow::Borrow, hash::Hash, ops::Deref};
 
 use crate::{
     Owner,
@@ -9,140 +9,175 @@ use crate::{
     transactions::TxnId,
 };
 
+/// Describes a kind of data in the store, either a singleton or table.
+#[doc(hidden)]
+pub trait Desc: Sized + 'static {
+    /// The data's owner.
+    const OWNER: Owner;
+    /// The storage for this data.
+    type Storage: GeneratedStorage;
+}
+
 /// A singleton key/value.
 ///
 /// Prefer to use the macros in this module rather than this trait directly.
-pub trait SingletonDesc: Sized + 'static {
-    /// The datum's owner.
-    const OWNER: Owner;
-
+///
+/// # Safety
+///
+/// `value_ptr` must return a pointer derived from its argument `storage` without
+/// creating a reference to `*storage`, and which does not overlap any other singleton's value or any
+/// table in `Self::Storage`. The transactional API relies on this to give each
+/// view of a transaction exclusive access to its own data.
+#[doc(hidden)]
+pub unsafe trait SingletonDesc: Desc {
     /// The type of the value.
     type Value: Any + Send + Sync;
     /// The type of the notification for this singleton (either `Self::Value` or `()`).
     type NotificationValue: Clone;
-    /// The storage for this singleton KV.
-    type Storage: GeneratedStorage;
 
-    /// Get a clone of the value from `storage` if the singleton uses cloning for notification values,
-    /// or `()` if not.
-    fn get_cloned(storage: &Self::Storage, txn_id: TxnId) -> Option<Self::NotificationValue>;
     /// Get a reference to the field storing this singleton in `storage`.
     fn get_ref(storage: &Self::Storage) -> &VersionedValue<Option<Self::Value>>;
-    /// Get a mutable reference to the field storing this singleton in `storage`.
-    fn get_mut(storage: &mut Self::Storage) -> &mut VersionedValue<Option<Self::Value>>;
-    /// Convert an optional reference to this singleton's value to it's notification value.
-    fn notif_value(value: &Option<Self::Value>) -> &Option<Self::NotificationValue>;
+
+    /// Project a pointer to the storage to a pointer to the field storing this singleton, without
+    /// creating a reference to the storage.
+    ///
+    /// # Safety
+    ///
+    /// `storage` must be valid for reads and writes (i.e., dereferenceable).
+    unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut VersionedValue<Option<Self::Value>>;
+
+    /// Convert an optional reference to this singleton's value to its notification value.
+    fn notification_value(value: &Option<Self::Value>) -> &Option<Self::NotificationValue>;
+
     /// Create a notification from an event.
     fn make_notification(
-        event: crate::SingletonEvent<Self, Self::NotificationValue>,
+        event: crate::SingletonEvent<Self>,
     ) -> <Self::Storage as GeneratedStorage>::Notification;
 }
 
 /// Describes tabular key/values in the store.
 ///
 /// Prefer to use the macros in this module rather than this trait directly.
-pub trait TableDesc: Sized + 'static {
+///
+/// # Safety
+///
+/// `table_ptr` must return a pointer derived from its argument `storage` without creating a
+/// reference to `*storage`, and which does not overlap any singleton's value or any other table in
+/// `Self::Storage` (except that an index's table is contained in its base table (see
+/// [`IndexDesc`])). The transactional API relies on this to give each view of a transaction exclusive
+/// access to its own data.
+#[doc(hidden)]
+pub unsafe trait TableDesc: Desc {
     /// The name of the table.
     const NAME: &'static str;
-    /// The table's owner.
-    const OWNER: Owner;
 
     /// The type of the key.
     type Key: Hash + Eq + Clone;
     /// The type of the value.
     type Value: Any + Send + Sync;
-    /// The storage for the table.
-    type Storage: GeneratedStorage;
-    /// The storage type for keeping this table's indexes.
+    /// The storage type for this table's indexes.
     type IndexStorage: IndexStorage<Self::Key, Self::Value>;
 
-    /// Get a reference to the table in storage.
-    fn get_table(storage: &Self::Storage) -> &Table<Self, Self::IndexStorage>;
+    /// Get a reference to the table in `storage`.
+    fn get_table(storage: &Self::Storage) -> &Table<Self>;
 
-    /// Get a mutable reference to the table in storage.
-    fn get_table_mut(storage: &mut Self::Storage) -> &mut Table<Self, Self::IndexStorage>;
+    /// Project a pointer to the storage to a pointer to this table, without creating a reference
+    /// to the storage.
+    ///
+    /// # Safety
+    ///
+    /// `storage` must be valid for reads and writes (i.e., dereferenceable).
+    unsafe fn table_ptr(storage: *mut Self::Storage) -> *mut Table<Self>;
 
     /// Compare two references to this table's value type, returns `true` if the value type impls
-    /// `PartialEq` and the values are equal. **Panics** if `Self::Value` does not impl `PartialEq`.
+    /// `PartialEq` and the values are equal.
+    ///
+    /// **Panics** if `Self::Value` does not impl `PartialEq`.
     fn value_eq(a: &Self::Value, b: &Self::Value) -> bool;
 }
 
-/// A table where changes can generate notifications to subscribers.
-pub trait Notifiable: TableDesc {
+/// A primary table (i.e., not an index).
+///
+/// Among other things, only these tables can generate notifications to subscribers.
+#[doc(hidden)]
+pub trait PrimaryDesc: TableDesc {
     /// The type of the notification for this table (either `Self::Value` or `()`).
     type NotificationValue: Clone;
 
     /// Create a notification from an event.
     fn make_notification(
-        event: crate::Event<Self, Self::Key, Self::NotificationValue>,
+        event: crate::Event<Self>,
     ) -> <Self::Storage as GeneratedStorage>::Notification;
 
     /// Create a value for a notification, possibly by cloning `value`.
     fn clone_value_for_notification(value: &Self::Value) -> Self::NotificationValue;
 }
 
-/// Describes a table used as an index.
-pub trait IndexDesc: TableDesc {
-    /// The table which is indexed.
-    type BaseTable: Notifiable + TableDesc<Storage = Self::Storage, Key = Self::Value>;
+/// A table which may have indexes.
+#[doc(hidden)]
+pub trait Indexable: PrimaryDesc {
+    /// An object containing this table's indexes.
+    type Indexes: From<std::sync::Arc<crate::KvStore<Self::Storage>>>;
+
+    /// An object containing this table's indexes (with an owner).
+    type IndexesWithOwner: From<(std::sync::Arc<crate::KvStore<Self::Storage>>, Owner)>;
+
+    /// An object containing this table's indexes.
+    type TransactionIndexes<'guard, 'txn>: From<&'txn crate::TableTransaction<'guard, Self>>
+    where
+        'guard: 'txn;
+
+    /// An object containing this table's indexes.
+    type RoTransactionIndexes<'guard, 'txn>: From<&'txn crate::RoTableTransaction<'guard, Self>>
+    where
+        'guard: 'txn;
 }
 
-/// Operations on an index.
+/// A table used as an index.
+///
+/// # Safety
+///
+/// This index's table (as returned by `TableDesc::table_ptr`) must be contained in the table of
+/// `Self::BaseTable` (as returned by its `table_ptr`), and must not overlap any other index's table.
+#[doc(hidden)]
+pub unsafe trait IndexDesc: TableDesc {
+    /// The table which is indexed.
+    type BaseTable: PrimaryDesc + TableDesc<Storage = Self::Storage, Key = Self::Value>;
+}
+
+/// Operations on the indexes of a table.
+#[doc(hidden)]
 pub trait IndexStorage<K: Hash + Eq, V: Any + Send + Sync>: Default {
+    /// Whether there are any indexes, i.e., whether the methods of this trait do anything. If
+    /// `false`, callers may skip work which only serves to maintain indexes.
+    const HAS_INDEXES: bool = true;
+
     /// Clear the whole index.
-    fn clear(
-        &mut self,
-        txn_id: crate::transactions::TxnId,
-        max_committed_id: crate::transactions::TxnId,
-    );
+    fn clear(&mut self, txn_id: TxnId);
 
-    /// An item has been inserted into the index.
-    fn on_insert<Q>(
-        &mut self,
-        key: &Q,
-        value: &V,
-        txn_id: crate::transactions::TxnId,
-        max_committed_id: crate::transactions::TxnId,
-    ) where
-        K: std::borrow::Borrow<Q>,
-        Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = K>;
+    /// An item has been inserted into the base table.
+    fn on_insert<Q>(&mut self, key: &Q, value: &V, txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = K>;
 
-    /// An item has been removed from the index.
-    fn on_remove(
-        &mut self,
-        value: &V,
-        txn_id: crate::transactions::TxnId,
-        max_committed_id: crate::transactions::TxnId,
-    );
+    /// An item has been removed from the base table.
+    fn on_remove(&mut self, value: &V, txn_id: TxnId);
 }
 
 impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
-    fn clear(
-        &mut self,
-        _txn_id: crate::transactions::TxnId,
-        _max_committed_id: crate::transactions::TxnId,
-    ) {
-    }
+    const HAS_INDEXES: bool = false;
 
-    fn on_insert<Q>(
-        &mut self,
-        _key: &Q,
-        _value: &V,
-        _id: crate::transactions::TxnId,
-        _max_committed_id: crate::transactions::TxnId,
-    ) where
-        K: std::borrow::Borrow<Q>,
-        Q: ?Sized + std::hash::Hash + Eq,
+    fn clear(&mut self, _txn_id: TxnId) {}
+
+    fn on_insert<Q>(&mut self, _key: &Q, _value: &V, _txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
     {
     }
 
-    fn on_remove(
-        &mut self,
-        _value: &V,
-        _txn_id: crate::transactions::TxnId,
-        _max_committed_id: crate::transactions::TxnId,
-    ) {
-    }
+    fn on_remove(&mut self, _value: &V, _txn_id: TxnId) {}
 }
 
 /// A storage implementation.
@@ -150,8 +185,20 @@ impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
 /// This should be considered a sealed trait and not implemented except by the macros in this module.
 /// Unfortunately it has to be public because of macro visibility hygiene.
 #[doc(hidden)]
-pub trait GeneratedStorage: Default + Send + Sync {
+pub trait GeneratedStorage: Default + Send + Sync + 'static {
+    /// An enum of all notification types.
     type Notification: Clone + Send + 'static;
+    /// The type of transactions for a store.
+    ///
+    /// Will contain a field for each singleton and table.
+    type Transaction<'a>: Into<crate::Transaction<'a, Self>>
+    where
+        Self: 'a;
+    /// A read-only version of `Transaction`.
+    type RoTransaction<'a>: Into<crate::RoTransaction<'a, Self>>
+    where
+        Self: 'a;
+
     /// Commit a transaction by applying all tables' transaction state to their permanent data.
     ///
     /// This operation must be atomic. I.e., it will only fail without any tables committed, and if it
@@ -165,6 +212,32 @@ pub trait GeneratedStorage: Default + Send + Sync {
 
     /// Delete any uncommitted per-transaction state associated with `txn_id` held in tables.
     fn gc_txn(&mut self, txn_id: TxnId);
+
+    /// Create a schema-specific transaction from a general transaction object.
+    fn make_txn<'a>(store_txn: crate::Transaction<'a, Self>) -> Self::Transaction<'a>;
+
+    /// Create a schema-specific read-only transaction from a general transaction object.
+    fn make_ro_txn<'a>(store_txn: crate::RoTransaction<'a, Self>) -> Self::RoTransaction<'a>;
+}
+
+/// Implemented by stores generated by the schema macros.
+pub trait GeneratedStore:
+    'static + Send + Sync + Deref<Target = crate::KvStore<Self::Storage>>
+{
+    /// The underlying storage for the store.
+    type Storage: GeneratedStorage;
+
+    /// Create a new, empty KV store as described by the schema macros, which sends
+    /// notifications of changes to `notifier`.
+    ///
+    /// The store keeps only a weak reference to `notifier`, so the caller is responsible for
+    /// keeping the notifier alive (e.g. via the subscribers it hands out). Once the last
+    /// strong reference is dropped the store stops sending notifications.
+    fn from_notifier(
+        n: std::sync::Weak<
+            dyn crate::Notifier<Notification = <Self::Storage as GeneratedStorage>::Notification>,
+        >,
+    ) -> Self;
 }
 
 /// Declare the schema of a key/value store. Generates the store itself with the specified tables and
@@ -179,7 +252,8 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// ```
 /// where `Name` is an identifier to name the table or singleton (in which case it is also the key),
 /// `KeyType` and `ValueType` are types. `owner` is an expression which evaluates to an `Owner`.
-/// `Name` is used as a type argument to KvStore methods to identify the table or singleton.
+/// `Name` is also the name of the field of the generated store used to access the table or
+/// singleton. Names (of tables, singletons, and indexes) should not start with `__`.
 ///
 /// # Example:
 ///
@@ -206,9 +280,11 @@ pub trait GeneratedStorage: Default + Send + Sync {
 ///
 /// # Indexes
 ///
-/// The syntax of an index is `index(field: Type(; assert_unique)?)` where `field` is the name of
-/// a field in the value type of the base table and `Type` is the type of that field. You can
-/// specify multiple indexes for each table, separated with a semicolon. E.g.,
+/// The syntax of an index is `index(field: Type (= closure)? (; assert_unique)?)` where `field` is
+/// the name of the index and `Type` is the type of the index key. By default, `field` is also the
+/// name of a field in the value type of the base table, whose value is used as the index key;
+/// `closure` can be specified to compute the index key instead. You can specify multiple indexes
+/// for each table, separated with a semicolon. E.g.,
 ///
 /// ```rust
 /// # use ts_kv_store::store;
@@ -227,7 +303,7 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// );
 /// ```
 ///
-/// This will create indexes on nodes for fields `a`, `b`, and `c`. `c`'s index key is
+/// This will create indexes `a`, `b`, and `c` on nodes. `c`'s index key is
 /// computed by the specified closure, which is expected to return
 /// `impl IntoIterator<Item = I>` (where `I` is the index key type), for example an `Option<I>` for
 /// zero or one index keys per value.
@@ -238,7 +314,7 @@ pub trait GeneratedStorage: Default + Send + Sync {
 /// By adding `assert_unique` to an index declaration (after the index field, separated with a semicolon),
 /// attempting to store multiple rows with the same index key will cause a panic.
 ///
-/// ## Notifications
+/// # Notifications
 ///
 /// The `notify(...)` argument is used to control notifications about the table or singleton. Accepted
 /// values are `Clone` and `None`. The default is `None`.
@@ -263,32 +339,34 @@ macro_rules! store {
         $($(
             /// Describes a singleton in the KV store.
             #[allow(non_camel_case_types)]
-            pub struct $sname;
+            pub enum $sname {}
 
-            impl $crate::schema::SingletonDesc for $sname {
+            impl $crate::schema::Desc for $sname {
                 const OWNER: $crate::Owner = $sowner;
+                type Storage = TableStorage;
+            }
+
+            // SAFETY: `value_ptr` points to the singleton's own field of `TableStorage`.
+            unsafe impl $crate::schema::SingletonDesc for $sname {
                 type Value = $svalue_ty;
                 type NotificationValue = $crate::notification_value_type!($svalue_ty $(; notify($snotif))?);
-                type Storage = TableStorage;
-
-                fn get_cloned(_storage: &Self::Storage, _txn_id: $crate::transactions::TxnId) -> Option<Self::NotificationValue> {
-                    $crate::get_cloned_notification_value!($sname, _storage, _txn_id $(; notify($snotif))?)
-                }
 
                 fn get_ref(storage: &Self::Storage) -> &$crate::storage::VersionedValue<Option<Self::Value>> {
                     &storage.$sname
                 }
 
-                fn get_mut(storage: &mut Self::Storage) -> &mut $crate::storage::VersionedValue<Option<Self::Value>>{
-                    &mut storage.$sname
+                unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut $crate::storage::VersionedValue<Option<Self::Value>> {
+                    // SAFETY: `storage` is dereferenceable (by the caller's contract). This only
+                    // computes a place, it does not create a reference to the storage.
+                    unsafe { &raw mut (*storage).$sname }
                 }
 
-                fn notif_value(_value: &Option<Self::Value>) -> &Option<Self::NotificationValue> {
+                fn notification_value(_value: &Option<Self::Value>) -> &Option<Self::NotificationValue> {
                     $crate::notification_value!(_value $(; notify($snotif))? )
                 }
 
                 fn make_notification(
-                    event: $crate::SingletonEvent<Self, Self::NotificationValue>,
+                    event: $crate::SingletonEvent<Self>,
                 ) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
                     Notification::$sname(event)
                 }
@@ -296,31 +374,36 @@ macro_rules! store {
         )*)?
         $($(
             /// Describes a table in the KV store.
-            #[derive(Default)]
-            pub struct $name;
+            pub enum $name {}
 
-            impl $crate::schema::TableDesc for $name {
-                const NAME: &'static str = stringify!($name);
+            impl $crate::schema::Desc for $name {
                 const OWNER: $crate::Owner = $owner;
+                type Storage = TableStorage;
+            }
+
+            // SAFETY: `table_ptr` points to the table's own field of `TableStorage`.
+            unsafe impl $crate::schema::TableDesc for $name {
+                const NAME: &'static str = stringify!($name);
                 type Key = $key_ty;
                 type Value = $value_ty;
-                type Storage = TableStorage;
                 type IndexStorage = index::$name::Storage;
 
-                fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::IndexStorage> {
+                fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self> {
                     &storage.$name
                 }
-                fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::IndexStorage> {
-                    &mut storage.$name
+                unsafe fn table_ptr(storage: *mut TableStorage) -> *mut $crate::storage::Table<Self> {
+                    // SAFETY: `storage` is dereferenceable (by the caller's contract). This only
+                    // computes a place, it does not create a reference to the storage.
+                    unsafe { &raw mut (*storage).$name }
                 }
 
                 $crate::value_eq!(Self::Value);
             }
 
-            impl $crate::schema::Notifiable for $name {
+            impl $crate::schema::PrimaryDesc for $name {
                 type NotificationValue = $crate::notification_value_type!($value_ty $(; notify($notif))?);
 
-                fn make_notification(event: $crate::Event<Self, Self::Key, Self::NotificationValue>) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
+                fn make_notification(event: $crate::Event<Self>) -> <Self::Storage as $crate::schema::GeneratedStorage>::Notification {
                     Notification::$name(event)
                 }
                 fn clone_value_for_notification(_value: &Self::Value) -> Self::NotificationValue {
@@ -328,26 +411,42 @@ macro_rules! store {
                 }
             }
 
+            impl $crate::schema::Indexable for $name {
+                type Indexes = index::$name::Indexes;
+                type IndexesWithOwner = index::$name::IndexesWithOwner;
+                type TransactionIndexes<'guard, 'txn> = index::$name::TransactionIndexes<'guard, 'txn> where 'guard: 'txn;
+                type RoTransactionIndexes<'guard, 'txn> = index::$name::RoTransactionIndexes<'txn> where 'guard: 'txn;
+            }
+
             $(
-                impl $crate::schema::TableDesc for index::$name::$field where $field_ty: Clone {
-                    const NAME: &'static str = stringify!($name by $field);
+
+                impl $crate::schema::Desc for index::$name::$field {
                     const OWNER: $crate::Owner = $owner;
+                    type Storage = TableStorage;
+                }
+
+                // SAFETY: `table_ptr` points to the index's own field of its base table's
+                // `indexes`.
+                unsafe impl $crate::schema::TableDesc for index::$name::$field where $field_ty: Clone {
+                    const NAME: &'static str = stringify!($name by $field);
                     type Key = $field_ty;
                     type Value = $key_ty;
-                    type Storage = TableStorage;
                     type IndexStorage = ();
 
-                    fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self, Self::IndexStorage> {
+                    fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self> {
                         &storage.$name.indexes.$field
                     }
-                    fn get_table_mut(storage: &mut TableStorage) -> &mut $crate::storage::Table<Self, Self::IndexStorage> {
-                        &mut storage.$name.indexes.$field
+                    unsafe fn table_ptr(storage: *mut TableStorage) -> *mut $crate::storage::Table<Self> {
+                        // SAFETY: `storage` is dereferenceable (by the caller's contract). This
+                        // only computes a place, it does not create a reference to the storage or
+                        // the base table.
+                        unsafe { &raw mut (*storage).$name.indexes.$field }
                     }
-
                     $crate::value_eq!(Self::Value);
                 }
 
-                impl $crate::schema::IndexDesc for index::$name::$field {
+                // SAFETY: the index's table is a field of `$name`'s table (see `table_ptr`).
+                unsafe impl $crate::schema::IndexDesc for index::$name::$field {
                     type BaseTable = $name;
                 }
             )*
@@ -357,19 +456,20 @@ macro_rules! store {
         #[derive(Default)]
         #[allow(non_snake_case)]
         pub struct TableStorage {
-            $($($name: $crate::storage::Table<$name, index::$name::Storage>,)*)?
+            $($($name: $crate::storage::Table<$name>,)*)?
             $($($sname: $crate::storage::VersionedValue<Option<$svalue_ty>>,)*)?
         }
 
         /// Macro-generated notification type, there is a variant for each table and singleton with
         /// the appropriate types (wrapping event types in `ts_kv_store`). For notifications which
-        /// don't include a value (either by default or by opting-out using `notify(None)`, the value
+        /// don't include a value (either by default or by opting-out using `notify(None)`), the value
         /// type is `()`.
         #[derive(Clone)]
         #[allow(unused)]
+        #[allow(non_camel_case_types)]
         pub enum Notification {
-            $($($name($crate::Event<$name, <$name as $crate::schema::TableDesc>::Key, <$name as $crate::schema::Notifiable>::NotificationValue>),)*)?
-            $($($sname($crate::SingletonEvent<$sname, <$sname as $crate::schema::SingletonDesc>::NotificationValue>),)*)?
+            $($($name($crate::Event<$name>),)*)?
+            $($($sname($crate::SingletonEvent<$sname>),)*)?
         }
 
         impl std::fmt::Debug for Notification {
@@ -383,6 +483,8 @@ macro_rules! store {
 
         impl $crate::schema::GeneratedStorage for TableStorage {
             type Notification = Notification;
+            type Transaction<'a> = Transaction<'a>;
+            type RoTransaction<'a> = RoTransaction<'a>;
 
             fn commit_txn(&mut self, _txn_id: $crate::transactions::TxnId, _notifications: &mut $crate::Notifications<Notification>, _subscriptions: &$crate::pub_sub::Subscriptions<Self::Notification>) -> $crate::Result<()> {
                 $(
@@ -396,7 +498,7 @@ macro_rules! store {
                         if _subscriptions.has_singleton_subscribers::<$sname>()
                             && let Some(event) = self.$sname.modified_in_txn(_txn_id)
                         {
-                            _subscriptions.collect_singleton_events::<$sname>(_notifications, <$sname as $crate::schema::SingletonDesc>::notif_value(event));
+                            _subscriptions.collect_singleton_events::<$sname>(_notifications, <$sname as $crate::schema::SingletonDesc>::notification_value(event));
                         }
                     )*
                 )?
@@ -406,7 +508,7 @@ macro_rules! store {
                         if !events.is_empty() {
                             _subscriptions.collect_events::<$name>(_notifications, events);
                         }
-                        $(self.$name.indexes.$field.commit_index(_txn_id);)*
+                        $(self.$name.indexes.$field.commit_without_notifications(_txn_id);)*
                     )*
                 )?
 
@@ -426,6 +528,14 @@ macro_rules! store {
                     )*
                 )?
             }
+
+            fn make_txn<'a>(store_txn: $crate::Transaction<'a, Self>) -> Self::Transaction<'a> {
+                Transaction::new(store_txn)
+            }
+
+            fn make_ro_txn<'a>(store_txn: $crate::RoTransaction<'a, Self>) -> Self::RoTransaction<'a> {
+                RoTransaction::new(store_txn)
+            }
         }
 
         pub mod index {
@@ -437,10 +547,57 @@ macro_rules! store {
                         pub struct $field;
                     )*
 
+                    /// Storage for the table's indexes.
                     #[derive(Default)]
                     pub struct Storage {
                         $(
-                            pub $field: $crate::storage::Table<$field, ()>,
+                            #[allow(dead_code)]
+                            pub $field: $crate::storage::Table<$field>,
+                        )*
+                    }
+
+                    /// Access to the table's indexes, with a field for each index.
+                    ///
+                    /// Returned by `Table::indexes`.
+                    pub struct Indexes {
+                        $(
+                            #[allow(dead_code)]
+                            pub $field: $crate::Index<$field>,
+                        )*
+                    }
+
+                    /// Access to the table's indexes with a fixed owner, with a field for each index.
+                    ///
+                    /// Returned by `TableWithOwner::indexes`.
+                    pub struct IndexesWithOwner {
+                        $(
+                            #[allow(dead_code)]
+                            pub $field: $crate::IndexWithOwner<$field>,
+                        )*
+                    }
+
+                    /// Access to the table's indexes within a transaction, with a field for each index.
+                    ///
+                    /// Returned by `TableTransaction::indexes`.
+                    pub struct TransactionIndexes<'guard, 'txn> {
+                        #[doc(hidden)]
+                        pub(in super::super) __txn: core::marker::PhantomData<(&'txn (), &'guard ())>,
+                        $(
+                            #[allow(dead_code)]
+                            pub $field: $crate::IndexTransaction<'guard, 'txn, $field>,
+                        )*
+                    }
+
+                    /// Access to the table's indexes within a read-only transaction, with a field
+                    /// for each index.
+                    ///
+                    /// Returned by `RoTableTransaction::indexes`.
+                    pub struct RoTransactionIndexes<'txn> {
+                        #[doc(hidden)]
+                        pub(in super::super) __txn: core::marker::PhantomData<&'txn ()>,
+                        $(
+                            #[allow(dead_code)]
+                            pub $field: $crate::RoIndexTransaction<'txn, $field>,
                         )*
                     }
                 }
@@ -448,6 +605,40 @@ macro_rules! store {
         }
 
         $($(
+            impl From<std::sync::Arc<$crate::KvStore<TableStorage>>> for index::$name::Indexes {
+                fn from(_store: std::sync::Arc<$crate::KvStore<TableStorage>>) -> Self {
+                    index::$name::Indexes {
+                        $($field: $crate::Index::new(std::sync::Arc::clone(&_store)),)*
+                    }
+                }
+            }
+
+            impl From<(std::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)> for index::$name::IndexesWithOwner {
+                fn from((_store, _owner): (std::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)) -> Self {
+                    index::$name::IndexesWithOwner {
+                        $($field: $crate::IndexWithOwner::new(std::sync::Arc::clone(&_store), _owner),)*
+                    }
+                }
+            }
+
+            impl<'guard, 'txn> From<&'txn $crate::TableTransaction<'guard, $name>> for index::$name::TransactionIndexes<'guard, 'txn> {
+                fn from(_base: &'txn $crate::TableTransaction<'guard, $name>) -> Self {
+                    index::$name::TransactionIndexes {
+                        __txn: core::marker::PhantomData,
+                        $($field: $crate::IndexTransaction::new(_base),)*
+                    }
+                }
+            }
+
+            impl<'guard, 'txn> From<&'txn $crate::RoTableTransaction<'guard, $name>> for index::$name::RoTransactionIndexes<'txn> {
+                fn from(_base: &'txn $crate::RoTableTransaction<'guard, $name>) -> Self {
+                    index::$name::RoTransactionIndexes {
+                        __txn: core::marker::PhantomData,
+                        $($field: $crate::RoIndexTransaction::new(_base),)*
+                    }
+                }
+            }
+
             impl index::$name::Storage {
                 $(
                     fn $field(val: &$value_ty) -> impl IntoIterator<Item = $field_ty> {
@@ -457,18 +648,26 @@ macro_rules! store {
             }
 
             impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Storage {
-                fn clear(&mut self, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
+                fn clear(&mut self, _txn_id: $crate::transactions::TxnId) {
                     $(
-                        self.$field.clear(_txn_id, _max_committed_id);
+                        self.$field.clear(_txn_id);
                     )*
                 }
 
-                $crate::on_insert!($name, $key_ty, $value_ty, $(index($field: $field_ty $(; $unique)?),)*);
+                fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId)
+                where
+                    $key_ty: std::borrow::Borrow<Q>,
+                    Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = $key_ty>
+                {
+                    $(
+                        $crate::on_insert_each!($name, $field: $field_ty; (self, _key, _value, _txn_id) $(; $unique)?);
+                    )*
+                }
 
-                fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId) {
+                fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId) {
                     $({
                         for value in index::$name::Storage::$field(_value) {
-                            self.$field.remove(&value, _txn_id, _max_committed_id);
+                            self.$field.remove(&value, _txn_id);
                         }
                     })*
                 }
@@ -477,29 +676,37 @@ macro_rules! store {
 
         /// A key-value store.
         ///
-        /// See [`$crate::KvStore`] (which this type implicitly derefences to) for full docs.
-        pub struct KvStore($crate::KvStore<TableStorage>);
+        /// See `ts_kv_store::KvStore` (which this type implicitly dereferences to) for full docs.
+        #[allow(non_snake_case)]
+        pub struct KvStore {
+            __store: std::sync::Arc<$crate::KvStore<TableStorage>>,
+
+            $($(#[allow(dead_code)] pub $name: $crate::Table<$name>,)*)?
+            $($(#[allow(dead_code)] pub $sname: $crate::Singleton<$sname>,)*)?
+        }
 
         impl KvStore {
             /// Create a new, empty KV store as described by the schema macros.
             ///
-            /// The store has a no-op notifier, so subscribers are never notified of changes.
+            /// The store has no notifier, so it does not support subscriptions: subscribing returns
+            /// `ts_kv_store::Error::MissingNotifier`.
             #[allow(dead_code, clippy::new_without_default)]
             pub fn new() -> Self {
                 // The store only holds a weak reference to its notifier, so downgrading a
                 // throwaway no-op notifier leaves the store with a dead weak reference. Upgrading it
                 // always fails, which means no notifications are ever sent.
-                Self::from_notifier(std::sync::Arc::downgrade(&$crate::NoOpNotifier::new()))
+                <Self as $crate::GeneratedStore>::from_notifier(std::sync::Arc::downgrade(&$crate::NoOpNotifier::new()))
             }
 
-            /// Create a new, empty KV store as described by the schema macros, which sends
-            /// notifications of changes to `notifier`.
-            ///
-            /// The store keeps only a weak reference to `notifier`, so the caller is responsible for
-            /// keeping the notifier alive (e.g. via the subscribers it hands out). Once the last
-            /// strong reference is dropped the store stops sending notifications.
-            pub fn from_notifier(notifier: std::sync::Weak<dyn $crate::Notifier<Notification = <TableStorage as $crate::schema::GeneratedStorage>::Notification>>) -> Self {
-                KvStore($crate::KvStore::new_with_storage(std::sync::RwLock::new($crate::storage::Storage::new(notifier))))
+            /// A convenience for operating on the store with a specified owner.
+            #[allow(dead_code)]
+            pub fn with_owner(&self, owner: $crate::Owner) -> KvStoreWithOwner<'_> {
+                KvStoreWithOwner {
+                    $($($name: $crate::TableWithOwner::new(std::sync::Arc::clone(&self.__store), owner),)*)?
+                    $($($sname: $crate::SingletonWithOwner::new(std::sync::Arc::clone(&self.__store), owner),)*)?
+                    __store: &self.__store,
+                    __owner: owner,
+                }
             }
         }
 
@@ -507,7 +714,208 @@ macro_rules! store {
             type Target = $crate::KvStore<TableStorage>;
 
             fn deref(&self) -> &Self::Target {
-                &self.0
+                &self.__store
+            }
+        }
+
+        impl $crate::GeneratedStore for KvStore {
+            type Storage = TableStorage;
+
+            fn from_notifier(notifier: std::sync::Weak<dyn $crate::Notifier<Notification = <TableStorage as $crate::schema::GeneratedStorage>::Notification>>) -> Self {
+                let store = std::sync::Arc::new($crate::KvStore::from_notifier(notifier));
+                KvStore {
+                    $($($name: $crate::Table::new(std::sync::Arc::clone(&store)),)*)?
+                    $($($sname: $crate::Singleton::new(std::sync::Arc::clone(&store)),)*)?
+                    __store: store,
+                }
+            }
+
+        }
+
+        /// A key-value store with a fixed owner.
+        ///
+        /// Created by `KvStore::with_owner`. Operations on its fields do not take an owner, they
+        /// use the owner supplied to `KvStore::with_owner`.
+        #[allow(non_snake_case)]
+        pub struct KvStoreWithOwner<'a> {
+            __store: &'a $crate::KvStore<TableStorage>,
+            __owner: $crate::Owner,
+
+            $($(#[allow(dead_code)] pub $name: $crate::TableWithOwner<$name>,)*)?
+            $($(#[allow(dead_code)] pub $sname: $crate::SingletonWithOwner<$sname>,)*)?
+        }
+
+        #[allow(dead_code)]
+        impl<'a> KvStoreWithOwner<'a> {
+            /// Start a transaction.
+            ///
+            /// Blocks until the store's global lock is available for write access.
+            pub fn begin_transaction(&self) -> Transaction<'a> {
+                self.__store.begin_transaction(self.__owner)
+            }
+
+            /// Start a transaction.
+            ///
+            /// Returns `None` if the store's global lock is unavailable for write access.
+            pub fn try_begin_transaction(&self) -> Option<Transaction<'a>> {
+                self.__store.try_begin_transaction(self.__owner)
+            }
+
+            /// Start a read-only transaction (i.e., only supports non-mutating access to the store,
+            /// but all reads are guaranteed to be atomic).
+            ///
+            /// Blocks until the store's global lock is available for read access.
+            pub fn begin_ro_transaction(&self) -> RoTransaction<'a> {
+                self.__store.begin_ro_transaction(self.__owner)
+            }
+
+            /// Start a read-only transaction (i.e., only supports non-mutating access to the store,
+            /// but all reads are guaranteed to be atomic).
+            ///
+            /// Returns `None` if the store's global lock is unavailable for read access.
+            pub fn try_begin_ro_transaction(&self) -> Option<RoTransaction<'a>> {
+                self.__store.try_begin_ro_transaction(self.__owner)
+            }
+
+            /// Register a new subscriber (with the owner supplied to `with_owner`) to the store.
+            ///
+            /// Does not create any subscriptions.
+            pub fn register_subscriber(&self) -> $crate::Subscriber {
+                self.__store.register_subscriber(self.__owner)
+            }
+
+            /// Remove a subscriber from the store, along with all of its subscriptions.
+            ///
+            /// The subscriber receives no further notifications and cannot subscribe again
+            /// (subscribing with a removed subscriber gives
+            /// `ts_kv_store::Error::UnknownSubscriber`). Unsubscribing any of its subscriptions is
+            /// harmless but pointless.
+            ///
+            /// Does nothing if the subscriber is unknown (e.g., because it has already been
+            /// removed).
+            pub fn remove_subscriber(&self, subscriber: impl core::convert::Into<$crate::Subscriber>) {
+                self.__store.remove_subscriber(subscriber)
+            }
+
+            /// Subscribe to the whole store.
+            pub fn subscribe_global(
+                &self,
+                subscriber: impl core::convert::Into<$crate::Subscriber>,
+            ) -> $crate::Result<$crate::Subscription> {
+                self.__store.subscribe_global(subscriber)
+            }
+
+            /// Remove a subscription to the whole store.
+            pub fn unsubscribe_global(&self, subscription: $crate::Subscription) {
+                self.__store.unsubscribe_global(subscription);
+            }
+        }
+
+        #[allow(non_snake_case)]
+        #[allow(dead_code)]
+        pub struct Transaction<'a> {
+            // Shared with every view (field) of the transaction.
+            __store_txn: std::rc::Rc<$crate::Transaction<'a, TableStorage>>,
+
+            $($(pub $name: $crate::TableTransaction<'a, $name>,)*)?
+            $($(pub $sname: $crate::SingletonTransaction<'a, $sname>,)*)?
+        }
+
+        #[allow(dead_code)]
+        impl<'a> Transaction<'a> {
+            fn new(store_txn: $crate::Transaction<'a, TableStorage>) -> Self {
+                let store_txn = std::rc::Rc::new(store_txn);
+
+                Transaction {
+                    $($(
+                        // SAFETY: this is the only view of `$name`.
+                        $name: unsafe { $crate::TableTransaction::new(std::rc::Rc::clone(&store_txn)) },
+                    )*)?
+                    $($(
+                        // SAFETY: this is the only view of `$sname`.
+                        $sname: unsafe { $crate::SingletonTransaction::new(std::rc::Rc::clone(&store_txn)) },
+                    )*)?
+
+                    __store_txn: store_txn,
+                }
+            }
+
+            /// Commit this transaction.
+            ///
+            /// Returns `ts_kv_store::Error::TransactionFailed` (and rolls back the transaction) if
+            /// a panic unwound out of an operation on the transaction and was caught.
+            ///
+            /// Returns `ts_kv_store::Error::NonUniqueIndexKey` (and rolls back the transaction) if
+            /// the transaction made an index non-unique.
+            ///
+            /// Panics if any of this transaction's fields have been moved out but are still live.
+            pub fn commit(self) -> $crate::Result<()> {
+                core::convert::Into::<$crate::Transaction<'_, _>>::into(self).commit()
+            }
+
+            /// Explicitly rollback this transaction.
+            ///
+            /// A transaction can also be rolled-back by dropping it without first calling `commit`.
+            pub fn rollback(self) {
+                // Dropping `self` causes the rollback.
+            }
+        }
+
+        impl<'a> core::convert::From<Transaction<'a>> for $crate::Transaction<'a, TableStorage> {
+            fn from(t: Transaction<'a>) -> $crate::Transaction<'a, TableStorage> {
+                let store_txn = std::rc::Rc::clone(&t.__store_txn);
+                // Drop all views so that `store_txn` is the only reference to the transaction.
+                drop(t);
+
+                std::rc::Rc::into_inner(store_txn).unwrap()
+            }
+        }
+
+        #[allow(non_snake_case)]
+        #[allow(dead_code)]
+        pub struct RoTransaction<'a> {
+            __store_txn: std::rc::Rc<$crate::RoTransaction<'a, TableStorage>>,
+
+            $($(pub $name: $crate::RoTableTransaction<'a, $name>,)*)?
+            $($(pub $sname: $crate::RoSingletonTransaction<'a, $sname>,)*)?
+        }
+
+        #[allow(dead_code)]
+        impl<'a> RoTransaction<'a> {
+            fn new(store_txn: $crate::RoTransaction<'a, TableStorage>) -> Self {
+                let store_txn = std::rc::Rc::new(store_txn);
+
+                RoTransaction {
+                    $($($name: $crate::RoTableTransaction::new(std::rc::Rc::clone(&store_txn)),)*)?
+                    $($($sname: $crate::RoSingletonTransaction::new(std::rc::Rc::clone(&store_txn)),)*)?
+
+                    __store_txn: store_txn,
+                }
+            }
+
+            /// 'Commit' this transaction.
+            ///
+            /// This simply drops the transaction (releasing its lock on the store) and always
+            /// succeeds.
+            pub fn commit(self) -> $crate::Result<()> {
+                Ok(())
+            }
+
+            /// 'Rollback' this transaction.
+            ///
+            /// Like `commit`, this only drops this transaction's lock.
+            pub fn rollback(self) {
+                // Dropping `self` causes the rollback.
+            }
+        }
+
+        impl<'a> core::convert::From<RoTransaction<'a>> for $crate::RoTransaction<'a, TableStorage> {
+            fn from(t: RoTransaction<'a>) -> $crate::RoTransaction<'a, TableStorage> {
+                let store_txn = std::rc::Rc::clone(&t.__store_txn);
+                // Drop all views so that `store_txn` is the only reference to the transaction.
+                drop(t);
+
+                std::rc::Rc::into_inner(store_txn).unwrap()
             }
         }
     };
@@ -526,28 +934,12 @@ macro_rules! get_index_fn {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! on_insert {
-    ($name: ident, $key_ty: ty, $value_ty: ty, $(index($field: ident: $field_ty: ty $(; $unique:ident)?),)*) => {
-        fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId, _max_committed_id: $crate::transactions::TxnId)
-        where
-            $key_ty: std::borrow::Borrow<Q>,
-            Q: ?Sized + std::hash::Hash + Eq + std::borrow::ToOwned<Owned = $key_ty>
-        {
-            $(
-                $crate::on_insert_each!($name, $field: $field_ty; (self, _key, _value, _txn_id, _max_committed_id) $(; $unique)?);
-            )*
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
 macro_rules! on_insert_each {
     (
         $name:ident,
         $field:ident :
         $field_ty:ty;
-        ($self:ident, $key:ident, $value:ident, $txn_id:ident, $max_committed_id:ident); assert_unique
+        ($self:ident, $key:ident, $value:ident, $txn_id:ident); assert_unique
     ) => {
         for index_key in index::$name::Storage::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
@@ -557,23 +949,19 @@ macro_rules! on_insert_each {
                 stringify!($field),
                 stringify!($name),
             );
-            $self
-                .$field
-                .insert(index_key, $key.to_owned(), $txn_id, $max_committed_id);
+            $self.$field.insert(index_key, $key.to_owned(), $txn_id);
         }
     };
     (
         $name:ident,
         $field:ident :
         $field_ty:ty;
-        ($self:ident, $key:ident, $value:ident, $txn_id:ident, $max_committed_id:ident)
+        ($self:ident, $key:ident, $value:ident, $txn_id:ident)
     ) => {
         for index_key in index::$name::Storage::$field($value) {
             let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
             if unique {
-                $self
-                    .$field
-                    .insert(index_key, $key.to_owned(), $txn_id, $max_committed_id);
+                $self.$field.insert(index_key, $key.to_owned(), $txn_id);
             } else {
                 $self.$field.set_poisoned($txn_id);
             }
@@ -646,17 +1034,6 @@ macro_rules! notification_value {
     };
 }
 
-#[doc(hidden)]
-#[macro_export]
-macro_rules! get_cloned_notification_value {
-    ($name:ident, $storage:ident, $txn_id:ident; notify(Clone)) => {
-        $storage.$name.get($txn_id)?.as_ref().map(|v| v.clone())
-    };
-    ($name:ident, $storage:ident, $txn_id:ident $(; notify(None))?) => {
-        $storage.$name.get($txn_id)?.as_ref().map(|_| ())
-    };
-}
-
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
@@ -673,8 +1050,8 @@ mod test {
         );
 
         let store = KvStore::new();
-        store.insert::<Foo>("owner", Box::new(42));
-        assert_eq!(store.get::<Foo>("owner").unwrap(), Box::new(42));
+        store.Foo.insert("owner", Box::new(42));
+        assert_eq!(store.Foo.get("owner").unwrap(), Box::new(42));
     }
 
     #[test]
@@ -683,18 +1060,27 @@ mod test {
 
         let store = KvStore::new();
 
-        store
-            .table::<Foo>("owner")
-            .insert("hello", "world".to_owned());
-        assert_eq!(store.table::<Foo>("owner").get("hello").unwrap(), "world");
+        store.Foo.insert("owner", "hello", "world".to_owned());
+        assert_eq!(store.Foo.get("owner", "hello").unwrap(), "world");
 
         store
-            .table::<Bar>("owner")
-            .insert(5, vec!["boo".to_owned(), "bang".to_owned()]);
+            .Bar
+            .insert("owner", 5, vec!["boo".to_owned(), "bang".to_owned()]);
         assert_eq!(
-            store.table::<Bar>("owner").get(&5).unwrap(),
+            store.Bar.get("owner", &5).unwrap(),
             vec!["boo".to_owned(), "bang".to_owned()]
         );
+    }
+
+    #[test]
+    fn send_and_sync() {
+        fn require_send<T: Send>(_t: T) {}
+        fn require_sync<T: Sync>(_t: T) {}
+
+        store!(tables: { Foo(&'static str => String; "owner"; notify(Clone)), Bar(u32 => Vec<String>; "owner")});
+
+        require_send(KvStore::new());
+        require_sync(KvStore::new());
     }
 
     #[test]
@@ -711,22 +1097,18 @@ mod test {
         );
 
         let store = KvStore::new();
-        store.table::<Bar>("owner").insert(
+        store.Bar.insert(
+            "owner",
             5,
             BarT {
                 a: "hello".to_owned(),
             },
         );
-        let value = store
-            .table_by::<index::Bar::a>("owner")
-            .get("hello")
-            .unwrap();
+        let value = store.Bar.indexes().a.get("owner", "hello").unwrap();
         assert_eq!(value.1.a, "hello");
 
-        store
-            .table::<Foo>("owner")
-            .insert("foo", "hello".to_owned());
-        let value = store.table_by::<index::Foo::len>("owner").get(&5).unwrap();
+        store.Foo.insert("owner", "foo", "hello".to_owned());
+        let value = store.Foo.indexes().len.get("owner", &5).unwrap();
         assert_eq!(value, ("foo", "hello".to_owned()));
     }
 }
