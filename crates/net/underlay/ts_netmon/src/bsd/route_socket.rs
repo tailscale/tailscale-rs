@@ -36,7 +36,8 @@ impl RouteSocket {
             );
         }
 
-        let fd = AsyncFd::new(sock)?;
+        // SAFETY: `sock` is valid here and will remain valid while `fd` exists.
+        let fd = unsafe { AsyncFd::register(sock) }?;
         Ok(Self { fd })
     }
 
@@ -193,7 +194,7 @@ mod test {
         Ok((
             sock_tx,
             RouteSocket {
-                fd: AsyncFd::new(sock)?,
+                fd: unsafe { AsyncFd::register(sock) }?,
             },
         ))
     }

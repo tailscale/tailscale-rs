@@ -31,8 +31,8 @@ tracing.workspace = true
 zerocopy.workspace = true
 
 [dev-dependencies]
-rand = "0.10"
-proptest = "1.11"
+rand.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

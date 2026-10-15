@@ -330,7 +330,7 @@ impl<const WORDS: usize, const VEC_SIZE: usize> BitOrAssign for DynBitset<WORDS,
 mod test {
     use alloc::vec::Vec;
 
-    use proptest::prelude::{Rng, Strategy};
+    use proptest::prelude::{RngExt, Strategy};
     use ts_bitset::{BitsetDyn, BitsetStatic, ConstBitset};
 
     use super::*;
