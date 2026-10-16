@@ -174,6 +174,13 @@ Target-independent Rust checks (clippy, fmt, deny) and validation of the Nix str
 $ nix flake check
 ```
 
+End-to-end tests of the examples against a real [headscale](https://github.com/juanfont/headscale),
+in NixOS VMs (see [`nix/e2e.nix`](nix/e2e.nix)), need Linux with KVM:
+
+```sh
+$ nix build .#e2e -L
+```
+
 ## Releases
 
 We aim for a roughly monthly release schedule. Releases are time-based, not feature-based. We will
