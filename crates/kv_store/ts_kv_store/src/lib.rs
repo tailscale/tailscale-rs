@@ -6,7 +6,7 @@
 //!
 //! ```rust
 //! # use ts_kv_store::{Owner, store};
-//! # const OWNER: Owner = "owner";
+//! # const OWNER: Owner = Owner("owner");
 //! store!(
 //!     kvs: { foo(u64; OWNER) }
 //!     tables: { Nodes(u32 => String; OWNER) }
@@ -184,6 +184,7 @@ extern crate alloc;
 pub extern crate alloc as __alloc;
 
 use alloc::sync::Weak;
+use core::fmt;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod index;
@@ -311,7 +312,14 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
 
 /// A token indicating ownership of a KV singleton or table. See crate docs for what ownership means
 /// for a store.
-pub type Owner = &'static str;
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub struct Owner(pub &'static str);
+
+impl fmt::Display for Owner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// An error from a [`KvStore`].
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]

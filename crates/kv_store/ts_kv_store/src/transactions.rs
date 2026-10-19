@@ -757,15 +757,15 @@ mod test {
     use core::panic::AssertUnwindSafe;
     use std::panic::catch_unwind;
 
-    use crate::store;
+    use crate::{Owner, store};
 
     store!(
         kvs: { Count(u64; OWNER), Shared(Arc<String>; OWNER) }
         tables: { Items(&'static str => String; OWNER), Counters(u32 => u64; OWNER) }
     );
 
-    const OWNER: &str = "owner";
-    const OTHER: &str = "other";
+    const OWNER: Owner = Owner("owner");
+    const OTHER: Owner = Owner("other");
 
     #[test]
     fn try_begin_transaction_after_commit_sees_committed() {

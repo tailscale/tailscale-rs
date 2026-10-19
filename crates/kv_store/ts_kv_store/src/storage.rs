@@ -1104,9 +1104,9 @@ mod txn_test {
     // (operating on `Storage` directly) do not use.
     #![allow(dead_code)]
 
-    use crate::{Error, pub_sub::NoOpNotifier, storage::Storage, store};
+    use crate::{Error, Owner, pub_sub::NoOpNotifier, storage::Storage, store};
 
-    store!(kvs: { Count(u64; "owner") });
+    store!(kvs: { Count(u64; Owner("owner")) });
 
     #[test]
     fn commit_with_mismatched_id_fails() {

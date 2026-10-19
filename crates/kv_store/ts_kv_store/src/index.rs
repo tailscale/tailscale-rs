@@ -308,7 +308,7 @@ impl<D: IndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
 
 #[cfg(test)]
 mod test {
-    use crate::{Error, KvErrorExt, store};
+    use crate::{Error, KvErrorExt, Owner, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -323,7 +323,7 @@ mod test {
 
     store!(tables: { Users(u32 => Row; OWNER; index(name: String)) });
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     #[test]
     fn index_get_returns_none_when_absent() {
@@ -523,7 +523,7 @@ mod test {
 
 #[cfg(test)]
 mod test_two_indexes {
-    use crate::{KvErrorExt, store};
+    use crate::{KvErrorExt, Owner, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Person {
@@ -540,7 +540,7 @@ mod test_two_indexes {
 
     store!(tables: { People(u32 => Person; OWNER; index(email: String); index(username: Vec<u8>)) });
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     #[test]
     fn each_index_returns_correct_value() {
@@ -673,7 +673,7 @@ mod test_two_indexes {
 
 #[cfg(test)]
 mod test_transactional_index {
-    use crate::{Error, KvErrorExt, store};
+    use crate::{Error, KvErrorExt, Owner, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -690,7 +690,7 @@ mod test_transactional_index {
 
     store!(tables: { Users(u32 => Row; OWNER; index(name: String)) });
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     #[test]
     fn txn_index_get_returns_none_when_absent() {
@@ -1053,7 +1053,7 @@ mod test_poison {
     use core::panic::AssertUnwindSafe;
     use std::panic::catch_unwind;
 
-    use crate::{Error, KvErrorExt, store};
+    use crate::{Error, KvErrorExt, Owner, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Row {
@@ -1075,7 +1075,7 @@ mod test_poison {
         }
     );
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     #[test]
     fn ops_return_error_when_poisoned() {
@@ -1430,7 +1430,7 @@ mod test_poison {
 
 #[cfg(test)]
 mod test_computed_index {
-    use crate::{Error, KvErrorExt, store};
+    use crate::{Error, KvErrorExt, Owner, store};
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Post {
@@ -1446,7 +1446,7 @@ mod test_computed_index {
     // Each post is indexed under each of its tags, i.e., zero or more keys per row.
     store!(tables: { Posts(u32 => Post; OWNER; index(tag: String = |p: &Post| p.tags.clone())) });
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     #[test]
     fn row_with_no_index_keys_is_not_indexed() {

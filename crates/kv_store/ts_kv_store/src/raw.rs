@@ -648,7 +648,7 @@ impl<D: schema::Indexable> TableWithOwner<D> {
 mod test {
     use alloc::sync::Arc;
 
-    use crate::{KvErrorExt, store};
+    use crate::{KvErrorExt, Owner, store};
 
     store!(
         kvs: {
@@ -663,8 +663,8 @@ mod test {
         }
     );
 
-    const OWNER: &str = "owner";
-    const OTHER: &str = "other";
+    const OWNER: Owner = Owner("owner");
+    const OTHER: Owner = Owner("other");
 
     #[test]
     fn get_returns_none_when_absent() {

@@ -261,9 +261,9 @@ pub trait GeneratedStore:
 /// ```rust
 /// # use ts_kv_store::store;
 /// # use std::sync::Arc;
-/// # const GRAPH_OWNER: ts_kv_store::Owner = "foo";
-/// # const NODES_OWNER: ts_kv_store::Owner = "bar";
-/// # const EDGES_OWNER: ts_kv_store::Owner = "baz";
+/// # const GRAPH_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("foo");
+/// # const NODES_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("bar");
+/// # const EDGES_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("baz");
 /// # pub struct Node;
 /// # #[derive(Clone, PartialEq)]
 /// # pub struct Gid;
@@ -289,7 +289,7 @@ pub trait GeneratedStore:
 ///
 /// ```rust
 /// # use ts_kv_store::store;
-/// # const NODES_OWNER: ts_kv_store::Owner = "foo";
+/// # const NODES_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("foo");
 /// # pub struct Node { a: u32, b: String };
 /// store!(
 ///   tables: {
@@ -1051,36 +1051,40 @@ macro_rules! notification_value {
 mod test {
     use alloc::sync::Arc;
 
+    use crate::Owner;
+
+    const OWNER: Owner = Owner("owner");
+
     #[test]
     fn single() {
         store!(
             kvs: {
-                Foo(Box<u64>; "owner"; notify(Clone)),
-                Bar(Arc<u64>; "owner"; notify(None)),
-                Baz(&'static u64; "owner"),
-                Qux(u64; "owner"),
+                Foo(Box<u64>; OWNER; notify(Clone)),
+                Bar(Arc<u64>; OWNER; notify(None)),
+                Baz(&'static u64; OWNER),
+                Qux(u64; OWNER),
             }
         );
 
         let store = KvStore::new();
-        store.Foo.insert("owner", Box::new(42));
-        assert_eq!(store.Foo.get("owner").unwrap(), Box::new(42));
+        store.Foo.insert(OWNER, Box::new(42));
+        assert_eq!(store.Foo.get(OWNER).unwrap(), Box::new(42));
     }
 
     #[test]
     fn table() {
-        store!(tables: { Foo(&'static str => String; "owner"; notify(Clone)), Bar(u32 => Vec<String>; "owner")});
+        store!(tables: { Foo(&'static str => String; OWNER; notify(Clone)), Bar(u32 => Vec<String>; OWNER)});
 
         let store = KvStore::new();
 
-        store.Foo.insert("owner", "hello", "world".to_owned());
-        assert_eq!(store.Foo.get("owner", "hello").unwrap(), "world");
+        store.Foo.insert(OWNER, "hello", "world".to_owned());
+        assert_eq!(store.Foo.get(OWNER, "hello").unwrap(), "world");
 
         store
             .Bar
-            .insert("owner", 5, vec!["boo".to_owned(), "bang".to_owned()]);
+            .insert(OWNER, 5, vec!["boo".to_owned(), "bang".to_owned()]);
         assert_eq!(
-            store.Bar.get("owner", &5).unwrap(),
+            store.Bar.get(OWNER, &5).unwrap(),
             vec!["boo".to_owned(), "bang".to_owned()]
         );
     }
@@ -1090,7 +1094,7 @@ mod test {
         fn require_send<T: Send>(_t: T) {}
         fn require_sync<T: Sync>(_t: T) {}
 
-        store!(tables: { Foo(&'static str => String; "owner"; notify(Clone)), Bar(u32 => Vec<String>; "owner")});
+        store!(tables: { Foo(&'static str => String; OWNER; notify(Clone)), Bar(u32 => Vec<String>; OWNER)});
 
         require_send(KvStore::new());
         require_sync(KvStore::new());
@@ -1104,24 +1108,24 @@ mod test {
         }
         store!(
             tables: {
-                Foo(&'static str => String; "owner"; index(len: usize = |v: &String| [v.len()])),
-                Bar(u32 => BarT; "owner"; index(a: String; assert_unique)),
+                Foo(&'static str => String; OWNER; index(len: usize = |v: &String| [v.len()])),
+                Bar(u32 => BarT; OWNER; index(a: String; assert_unique)),
             }
         );
 
         let store = KvStore::new();
         store.Bar.insert(
-            "owner",
+            OWNER,
             5,
             BarT {
                 a: "hello".to_owned(),
             },
         );
-        let value = store.Bar.indexes().a.get("owner", "hello").unwrap();
+        let value = store.Bar.indexes().a.get(OWNER, "hello").unwrap();
         assert_eq!(value.1.a, "hello");
 
-        store.Foo.insert("owner", "foo", "hello".to_owned());
-        let value = store.Foo.indexes().len.get("owner", &5).unwrap();
+        store.Foo.insert(OWNER, "foo", "hello".to_owned());
+        let value = store.Foo.indexes().len.get(OWNER, &5).unwrap();
         assert_eq!(value, ("foo", "hello".to_owned()));
     }
 }

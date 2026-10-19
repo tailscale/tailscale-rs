@@ -248,7 +248,7 @@ mod tests {
     use std::time::Duration;
 
     use tokio::time::{sleep, timeout};
-    use ts_kv_store::{Event, SingletonEvent};
+    use ts_kv_store::{Event, Owner, SingletonEvent};
 
     use super::*;
 
@@ -261,7 +261,7 @@ mod tests {
         }
     );
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     fn notifier() -> Arc<TokioNotifier<KvStore>> {
         TokioNotifier::new()

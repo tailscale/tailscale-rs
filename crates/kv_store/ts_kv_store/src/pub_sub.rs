@@ -813,7 +813,7 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
     use super::*;
-    use crate::{Error, GeneratedStore, store};
+    use crate::{Error, GeneratedStore, Owner, store};
 
     store!(
         kvs: {
@@ -827,7 +827,7 @@ mod tests {
         }
     );
 
-    const OWNER: &str = "owner";
+    const OWNER: Owner = Owner("owner");
 
     // --- A mock `Notifier` that records everything it is handed. ------------------------------
 
