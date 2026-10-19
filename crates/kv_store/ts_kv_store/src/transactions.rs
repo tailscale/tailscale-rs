@@ -1,15 +1,10 @@
 //! KvStore transactional API.
 
-use std::{
-    borrow::Borrow,
-    cell::Cell,
-    hash::Hash,
-    marker::PhantomData,
-    num::NonZeroU64,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{RwLockReadGuard, RwLockWriteGuard},
+use alloc::rc::Rc;
+use core::{
+    borrow::Borrow, cell::Cell, hash::Hash, marker::PhantomData, num::NonZeroU64, ptr::NonNull,
 };
+use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
     Error, KvStore, Owner, Result, iter,
@@ -758,7 +753,9 @@ impl<D: Desc> Drop for TransactionRef<'_, D> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use alloc::sync::Arc;
+    use core::panic::AssertUnwindSafe;
+    use std::panic::catch_unwind;
 
     use crate::store;
 
@@ -1754,7 +1751,7 @@ mod test {
         let store = KvStore::new();
         store.Count.insert(OWNER, 1);
 
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             let mut txn = store.begin_transaction(OWNER);
             txn.Count.insert(99);
             panic!();
@@ -1770,7 +1767,7 @@ mod test {
         let store = KvStore::new();
         store.Items.insert(OWNER, "k", "a".to_owned());
 
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             let mut txn = store.begin_transaction(OWNER);
             txn.Items.with_mut(&"k", |v| {
                 *v = "b".to_owned();
@@ -1790,7 +1787,7 @@ mod test {
     fn store_recovers_after_panicked_transaction() {
         let store = KvStore::new();
 
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             let mut txn = store.begin_transaction(OWNER);
             txn.Count.insert(5);
             panic!();
@@ -1815,7 +1812,7 @@ mod test {
 
         let mut txn = store.begin_transaction(OWNER);
         txn.Items.insert("b", "y".to_owned());
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             txn.Count.with_mut(|c| {
                 *c = 2;
                 panic!();
@@ -1840,7 +1837,7 @@ mod test {
 
         let mut txn = store.begin_transaction(OWNER);
         txn.Count.insert(1);
-        std::panic::catch_unwind(|| panic!()).unwrap_err();
+        catch_unwind(|| panic!()).unwrap_err();
         txn.commit().unwrap();
         assert_eq!(store.Count.get(OWNER), Some(1));
     }
@@ -1849,7 +1846,7 @@ mod test {
     fn operation_during_unwinding_does_not_fail_commit() {
         // Commits a transaction when dropped, e.g., while unwinding from a panic, and records the
         // result (asserting in `drop` would abort, since the thread is already panicking).
-        struct CommitOnDrop<'a>(&'a KvStore, &'a std::cell::Cell<Option<crate::Result<()>>>);
+        struct CommitOnDrop<'a>(&'a KvStore, &'a core::cell::Cell<Option<crate::Result<()>>>);
 
         impl Drop for CommitOnDrop<'_> {
             fn drop(&mut self) {
@@ -1860,8 +1857,8 @@ mod test {
         }
 
         let store = KvStore::new();
-        let result = std::cell::Cell::new(None);
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = core::cell::Cell::new(None);
+        catch_unwind(AssertUnwindSafe(|| {
             let _commit_on_drop = CommitOnDrop(&store, &result);
             panic!();
         }))
@@ -1927,7 +1924,7 @@ mod test {
         let store = KvStore::new();
         store.Items.insert(OWNER, "a", "x".to_owned());
 
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             let mut txn = store.begin_transaction(OWNER);
             txn.Items.with_iter_mut(|i| {
                 i.next().unwrap().1.push('!');
@@ -1948,7 +1945,7 @@ mod test {
         store.Count.insert(OWNER, 1);
 
         // Returns early (without committing) when `fail` is set, otherwise commits.
-        let run = |fail: bool| -> std::result::Result<(), ()> {
+        let run = |fail: bool| -> core::result::Result<(), ()> {
             let mut txn = store.begin_transaction(OWNER);
             txn.Count.insert(50);
             if fail {

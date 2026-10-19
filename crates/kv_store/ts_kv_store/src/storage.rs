@@ -1,9 +1,6 @@
-use std::{
-    borrow::Borrow,
-    collections::{HashMap, HashSet},
-    hash::Hash,
-    sync::Weak,
-};
+use alloc::sync::Weak;
+use core::{borrow::Borrow, hash::Hash};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     Error, Notifier, Result,
@@ -600,7 +597,7 @@ impl<D: schema::TableDesc> Table<D> {
             m.keys
         });
 
-        let result = match std::mem::take(&mut self.delete_mask) {
+        let result = match core::mem::take(&mut self.delete_mask) {
             DeleteMask::All(dm_id, data) if dm_id == txn_id => {
                 // Only keys which were visible before this transaction can be notifiably removed;
                 // a key created and cleared within this transaction was never seen by subscribers.
@@ -684,7 +681,7 @@ impl<D: schema::TableDesc> Table<D> {
     ///
     /// Panics if `self.check_txn_consistency` would return an error.
     pub fn commit_without_notifications(&mut self, txn_id: TxnId) {
-        match std::mem::take(&mut self.delete_mask) {
+        match core::mem::take(&mut self.delete_mask) {
             DeleteMask::All(dm_id, data) if dm_id == txn_id => {
                 self.data = data;
             }
@@ -1114,7 +1111,7 @@ mod txn_test {
     #[test]
     fn commit_with_mismatched_id_fails() {
         let mut storage =
-            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
+            Storage::<TableStorage>::new(alloc::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
         // A commit must target the in-progress transaction.
         assert!(matches!(
@@ -1126,7 +1123,7 @@ mod txn_test {
     #[test]
     fn commit_then_recommit_fails() {
         let mut storage =
-            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
+            Storage::<TableStorage>::new(alloc::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
         assert!(storage.commit_transaction(id).is_ok());
         // No transaction is pending after a successful commit.
@@ -1139,7 +1136,7 @@ mod txn_test {
     #[test]
     fn clear_transaction_rolls_back_and_frees_singleton_entry() {
         let mut storage =
-            Storage::<TableStorage>::new(std::sync::Arc::downgrade(&NoOpNotifier::new()));
+            Storage::<TableStorage>::new(alloc::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
         storage.tables.Count.set(Some(42), id);
         // Visible to the in-progress transaction.

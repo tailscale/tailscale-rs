@@ -1,6 +1,6 @@
 //! Iterate over tables or indexes.
 
-use std::hash::Hash;
+use core::hash::Hash;
 
 use crate::{
     operations::{BaseKey, BaseValue, IndexKey, IndexValue, StorageGuard},

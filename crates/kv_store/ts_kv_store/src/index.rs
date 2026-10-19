@@ -1,9 +1,6 @@
-use std::{
-    borrow::Borrow,
-    hash::Hash,
-    marker::PhantomData,
-    sync::{Arc, RwLockReadGuard},
-};
+use alloc::sync::Arc;
+use core::{borrow::Borrow, hash::Hash, marker::PhantomData};
+use std::sync::RwLockReadGuard;
 
 use crate::{
     KvStore, Owner, Result, RoTableTransaction, TableTransaction, iter,
@@ -1053,6 +1050,9 @@ mod test_transactional_index {
 
 #[cfg(test)]
 mod test_poison {
+    use core::panic::AssertUnwindSafe;
+    use std::panic::catch_unwind;
+
     use crate::{Error, KvErrorExt, store};
 
     #[derive(Clone, Debug, PartialEq)]
@@ -1287,7 +1287,7 @@ mod test_poison {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = catch_unwind(AssertUnwindSafe(|| {
             store.Users.insert(OWNER, 2, row("Alice", "alice2@x.com"));
         }));
         assert!(result.is_err(), "duplicate raw insert should panic");
@@ -1332,7 +1332,7 @@ mod test_poison {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = catch_unwind(AssertUnwindSafe(|| {
             let _ = store.Users.with_mut(OWNER, &1, |r| {
                 r.name = "Zelda".to_owned();
                 panic!("boom");
@@ -1360,7 +1360,7 @@ mod test_poison {
         store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
         let mut txn = store.begin_transaction(OWNER);
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             txn.Users.with_mut(&1, |_| panic!("boom"))
         }))
         .unwrap_err();
@@ -1381,7 +1381,7 @@ mod test_poison {
         store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
 
         let mut txn = store.begin_transaction(OWNER);
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             txn.Users.with_iter_mut(|iter| {
                 for (_, r) in iter {
                     r.name = "Zelda".to_owned();
@@ -1416,7 +1416,7 @@ mod test_poison {
             .insert(OWNER, 2, row("Bob", "bob@x.com"));
 
         let mut txn = store.begin_transaction(OWNER);
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        catch_unwind(AssertUnwindSafe(|| {
             // Removes the "Bob" index entry, then panics adding the (non-unique) "Alice" entry.
             txn.AssertingUsers.insert(2, row("Alice", "alice2@x.com"))
         }))

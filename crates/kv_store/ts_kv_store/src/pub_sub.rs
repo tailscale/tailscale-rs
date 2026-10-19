@@ -13,13 +13,17 @@
 //! As with other code, many things here are public where they should only be used by the macro-
 //! generated code (marked `doc(hidden)`).
 
-use std::{
+use alloc::sync::{Arc, Weak};
+use core::{
     any::{Any, TypeId},
-    collections::{HashMap, HashSet},
     fmt,
     hash::Hash,
     num::NonZeroUsize,
-    sync::{Arc, Mutex, Weak, atomic::AtomicUsize},
+    sync::atomic::AtomicUsize,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
 };
 
 use crate::{
@@ -150,8 +154,8 @@ impl<D: PrimaryDesc> Eq for Event<D> where D::NotificationValue: PartialEq {}
 impl<D: SingletonDesc> fmt::Debug for SingletonEvent<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Upsert(_) => write!(f, "Upsert({})", std::any::type_name::<D>()),
-            Self::Remove => write!(f, "Remove({})", std::any::type_name::<D>()),
+            Self::Upsert(_) => write!(f, "Upsert({})", core::any::type_name::<D>()),
+            Self::Remove => write!(f, "Remove({})", core::any::type_name::<D>()),
         }
     }
 }
@@ -181,7 +185,7 @@ where
 impl<D: SingletonDesc> Eq for SingletonEvent<D> where D::NotificationValue: Eq {}
 
 /// An object which forwards notifications from the store to subscribers.
-pub trait Notifier: Send + Sync + std::fmt::Debug + 'static {
+pub trait Notifier: Send + Sync + fmt::Debug + 'static {
     /// The associated store's notification enum.
     type Notification: Clone;
 
@@ -200,9 +204,9 @@ pub trait Notifier: Send + Sync + std::fmt::Debug + 'static {
 }
 
 /// A notifier which does no notification, calls to `notify` do nothing.
-pub struct NoOpNotifier<T: Send>(std::marker::PhantomData<T>);
+pub struct NoOpNotifier<T: Send>(core::marker::PhantomData<T>);
 
-impl<T: Clone + Send + Sync + 'static> std::fmt::Debug for NoOpNotifier<T> {
+impl<T: Clone + Send + Sync + 'static> fmt::Debug for NoOpNotifier<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("NoOpNotifier").finish()
     }
@@ -212,7 +216,7 @@ impl<T: Clone + Send + Sync + 'static> NoOpNotifier<T> {
     /// Create a new `NoOpNotifier` as a `Notifier` trait object.
     #[allow(clippy::new_ret_no_self)]
     pub fn new() -> Arc<dyn Notifier<Notification = T>> {
-        Arc::new(Self(std::marker::PhantomData))
+        Arc::new(Self(core::marker::PhantomData))
     }
 }
 
@@ -353,13 +357,13 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         };
 
         for s in self.all.lock().unwrap().iter() {
-            notifications.append_notifications(*s, std::slice::from_ref(&notification));
+            notifications.append_notifications(*s, core::slice::from_ref(&notification));
         }
 
         let singletons = self.singletons.lock().unwrap();
         if let Some(subs) = singletons.get(&TypeId::of::<S>()) {
             for s in subs {
-                notifications.append_notifications(*s, std::slice::from_ref(&notification));
+                notifications.append_notifications(*s, core::slice::from_ref(&notification));
             }
         }
     }
@@ -368,7 +372,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     pub(crate) fn register_subscriber(&self, owner: Owner) -> Subscriber {
         let id = self
             .cur_subscriber_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let result = Subscriber(NonZeroUsize::new(id + 1).unwrap());
         self.subscribers.lock().unwrap().insert(result, owner);
         result
@@ -394,7 +398,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
 
         let id = self
             .cur_subscription_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let subscription = Subscription(NonZeroUsize::new(id + 1).unwrap(), subscriber);
 
         f(subscription);
@@ -732,7 +736,7 @@ mod collect {
         /// Add an event and (if not already) convert the collection into the `Many` variant. Used
         /// where an event should always be reported as a list of keys rather than key and value.
         pub fn force_many(&mut self, k: K) {
-            let ks = match std::mem::replace(self, CollectEvents::None) {
+            let ks = match core::mem::replace(self, CollectEvents::None) {
                 CollectEvents::None => vec![k],
                 CollectEvents::One(k0, _) => vec![k0, k],
                 CollectEvents::Many(mut ks) => {
@@ -804,11 +808,9 @@ mod collect {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        num::NonZeroUsize,
-        sync::{Arc, Mutex},
-    };
+    use alloc::sync::Arc;
+    use core::num::NonZeroUsize;
+    use std::{collections::HashMap, sync::Mutex};
 
     use super::*;
     use crate::{Error, GeneratedStore, store};
@@ -840,7 +842,7 @@ mod tests {
         calls: RecordedCalls,
     }
 
-    impl std::fmt::Debug for RecordingNotifier {
+    impl fmt::Debug for RecordingNotifier {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("RecordingNotifier").finish()
         }
@@ -1096,7 +1098,7 @@ mod tests {
         // requires a notifier which has not been dropped.
         let notifier = NoOpNotifier::<Notification>::new();
         let subs = Subscriptions::new(Arc::downgrade(&notifier));
-        std::mem::forget(notifier);
+        core::mem::forget(notifier);
         subs
     }
 

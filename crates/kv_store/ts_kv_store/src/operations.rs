@@ -8,7 +8,7 @@
 //! `SingletonOpsMut` for operating on singleton key/values, `TabularOps` and `TabularOpsMut` for
 //! operating on tables of data, and `IndexedOps` for operating on tables via an index.
 
-use std::{borrow::Borrow, hash::Hash, ops::Deref};
+use core::{borrow::Borrow, hash::Hash, ops::Deref};
 
 use crate::{
     Error, Owner, Result, iter,

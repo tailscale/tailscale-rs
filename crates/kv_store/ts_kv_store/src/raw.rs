@@ -1,6 +1,7 @@
 //! KvStore non-transactional API.
 
-use std::{borrow::Borrow, hash::Hash, rc::Rc, sync::Arc};
+use alloc::{rc::Rc, sync::Arc};
+use core::{borrow::Borrow, hash::Hash};
 
 use crate::{
     Error, KvStore, Owner, Result, SingletonTransaction, TableTransaction,
@@ -645,7 +646,7 @@ impl<D: schema::Indexable> TableWithOwner<D> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     use crate::{KvErrorExt, store};
 

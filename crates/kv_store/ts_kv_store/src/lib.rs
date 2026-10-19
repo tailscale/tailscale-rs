@@ -179,7 +179,12 @@
 //! never gives it up (e.g., by panicking without calling destructors, or leaking the transaction
 //! handle), then the KV store cannot be recovered.
 
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
+extern crate alloc;
+#[doc(hidden)]
+pub extern crate alloc as __alloc;
+
+use alloc::sync::Weak;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod index;
 mod iter;
@@ -335,7 +340,7 @@ pub enum Error {
 }
 
 /// `Result` alias for a KvStore [`Error`].
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Helper trait for making it easier for [`Error`] and `Option` to interoperate.
 ///
