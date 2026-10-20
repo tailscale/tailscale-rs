@@ -4,7 +4,8 @@ use alloc::{rc::Rc, sync::Arc};
 use core::{borrow::Borrow, hash::Hash};
 
 use crate::{
-    Error, KvStore, Owner, Result, SingletonTransaction, TableTransaction,
+    KvStore, Owner, Result, SingletonTransaction, Subscription, SubscriptionResult,
+    TableTransaction,
     operations::{Ops, SingletonOps, TabularOps},
     schema::{self, PrimaryDesc, SingletonDesc},
     storage::Storage,
@@ -24,10 +25,7 @@ impl<S: SingletonDesc> Singleton<S> {
     }
 
     /// Subscribe to a singleton key-value pair.
-    pub fn subscribe(
-        &self,
-        subscriber: impl Into<crate::Subscriber>,
-    ) -> Result<crate::Subscription> {
+    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> SubscriptionResult {
         self.store
             .get_read_lock()
             .subscriptions
@@ -38,7 +36,7 @@ impl<S: SingletonDesc> Singleton<S> {
     pub fn subscribe_and_notify(
         &self,
         subscriber: impl Into<crate::Subscriber>,
-    ) -> Result<crate::Subscription> {
+    ) -> SubscriptionResult {
         let storage = self.store.get_read_lock();
         let subs = &storage.subscriptions;
         let id = subs.create_singleton_subscription::<S>(subscriber.into())?;
@@ -49,7 +47,7 @@ impl<S: SingletonDesc> Singleton<S> {
     }
 
     /// Unsubscribe from a singleton key-value pair.
-    pub fn unsubscribe(&self, subscription: crate::Subscription) {
+    pub fn unsubscribe(&self, subscription: Subscription) {
         self.store
             .get_read_lock()
             .subscriptions
@@ -174,35 +172,57 @@ impl<D: PrimaryDesc> Table<D> {
 
     /// Insert `value` into the table.
     ///
+    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) (without inserting)
+    /// if the insert would make an index non-unique. Panics instead if that index is declared with
+    /// `assert_unique`.
+    pub fn try_insert(&self, owner: Owner, key: D::Key, value: D::Value) -> Result<()> {
+        self.in_txn(owner, |txn| txn.insert(key, value))
+    }
+
+    /// Insert `value` into the table.
+    ///
     /// Panics if a value is already indexed with the same index key.
     pub fn insert(&self, owner: Owner, key: D::Key, value: D::Value) {
         self.try_insert(owner, key, value).unwrap();
     }
 
-    /// Insert `value` into the table.
-    ///
-    /// Returns [`Error::NonUniqueIndexKey`] (without inserting) if the insert would make an index
-    /// non-unique. Panics instead if that index is declared with `assert_unique`.
-    pub fn try_insert(&self, owner: Owner, key: D::Key, value: D::Value) -> Result<()> {
-        self.in_txn(owner, |txn| txn.insert(key, value))
-    }
-
     /// Get mutable access to a row of the table.
     ///
-    /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<Q, T>(
+    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
+    ///
+    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) if `f` makes a unique
+    /// index key non-unique, in which case the mutation is not applied.
+    pub fn try_with_mut<Q, T>(
         &self,
         owner: Owner,
         key: &Q,
         f: impl FnOnce(&mut D::Value) -> T,
-    ) -> Result<T>
+    ) -> Result<Option<T>>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
         D::Value: Clone + PartialEq,
     {
-        self.in_txn(owner, |txn| txn.with_mut(key, f))?
-            .ok_or(Error::NotPresent)
+        self.in_txn(owner, |txn| txn.with_mut(key, f))
+    }
+
+    /// Get mutable access to a row of the table.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn with_mut<Q, T>(
+        &self,
+        owner: Owner,
+        key: &Q,
+        f: impl FnOnce(&mut D::Value) -> T,
+    ) -> Option<T>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_mut(owner, key, f).unwrap()
     }
 
     /// Remove a row from the table.
@@ -250,7 +270,7 @@ impl<D: PrimaryDesc> Table<D> {
     ///
     /// Returns `Error::NonUniqueIndexKey` if `f` makes a unique index key non-unique, in which
     /// case none of the mutations are applied.
-    pub fn with_iter_mut<F, T>(&self, owner: Owner, f: F) -> Result<T>
+    pub fn try_with_iter_mut<F, T>(&self, owner: Owner, f: F) -> Result<T>
     where
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
         D::Value: Clone + PartialEq,
@@ -258,8 +278,26 @@ impl<D: PrimaryDesc> Table<D> {
         self.in_txn(owner, |txn| txn.with_iter_mut(f))
     }
 
+    /// Iterate over all key/value pairs in the table, with mutable access to the
+    /// values.
+    ///
+    /// Access is scoped by a closure because the table's indexes are updated from the mutated
+    /// values once `f` returns.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn with_iter_mut<F, T>(&self, owner: Owner, f: F) -> T
+    where
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_iter_mut(owner, f).unwrap()
+    }
+
     /// Iterate over all values in the table, with mutable access.
-    pub fn with_values_mut<F, T>(&self, owner: Owner, f: F) -> Result<T>
+    ///
+    /// Returns `Error::NonUniqueIndexKey` if `f` makes a unique index key non-unique, in which
+    /// case none of the mutations are applied.
+    pub fn try_with_values_mut<F, T>(&self, owner: Owner, f: F) -> Result<T>
     where
         F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a mut D::Value>) -> T,
         D::Value: Clone + PartialEq,
@@ -267,8 +305,19 @@ impl<D: PrimaryDesc> Table<D> {
         self.in_txn(owner, |txn| txn.with_values_mut(f))
     }
 
+    /// Iterate over all values in the table, with mutable access.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn with_values_mut<F, T>(&self, owner: Owner, f: F) -> T
+    where
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a mut D::Value>) -> T,
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_values_mut(owner, f).unwrap()
+    }
+
     /// Subscribe to the whole table.
-    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> Result<crate::Subscription>
+    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -279,7 +328,7 @@ impl<D: PrimaryDesc> Table<D> {
     }
 
     /// Unsubscribe from the table (whole table or single key).
-    pub fn unsubscribe(&self, subscription: crate::Subscription) {
+    pub fn unsubscribe(&self, subscription: Subscription) {
         self.store
             .get_read_lock()
             .subscriptions
@@ -291,7 +340,7 @@ impl<D: PrimaryDesc> Table<D> {
         &self,
         subscriber: impl Into<crate::Subscriber>,
         key: D::Key,
-    ) -> Result<crate::Subscription>
+    ) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -306,7 +355,7 @@ impl<D: PrimaryDesc> Table<D> {
         &self,
         subscriber: impl Into<crate::Subscriber>,
         key: D::Key,
-    ) -> Result<crate::Subscription>
+    ) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -384,10 +433,7 @@ impl<S: SingletonDesc> SingletonWithOwner<S> {
     }
 
     /// Subscribe to a singleton key-value pair.
-    pub fn subscribe(
-        &self,
-        subscriber: impl Into<crate::Subscriber>,
-    ) -> Result<crate::Subscription> {
+    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> SubscriptionResult {
         self.inner.subscribe(subscriber)
     }
 
@@ -395,12 +441,12 @@ impl<S: SingletonDesc> SingletonWithOwner<S> {
     pub fn subscribe_and_notify(
         &self,
         subscriber: impl Into<crate::Subscriber>,
-    ) -> Result<crate::Subscription> {
+    ) -> SubscriptionResult {
         self.inner.subscribe_and_notify(subscriber)
     }
 
     /// Unsubscribe from a singleton key-value pair.
-    pub fn unsubscribe(&self, subscription: crate::Subscription) {
+    pub fn unsubscribe(&self, subscription: Subscription) {
         self.inner.unsubscribe(subscription)
     }
 
@@ -500,29 +546,51 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
 
     /// Insert `value` into the table.
     ///
+    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) (without inserting)
+    /// if the insert would make an index non-unique. Panics instead if that index is declared with
+    /// `assert_unique`.
+    pub fn try_insert(&self, key: D::Key, value: D::Value) -> Result<()> {
+        self.inner.try_insert(self.owner, key, value)
+    }
+
+    /// Insert `value` into the table.
+    ///
     /// Panics if a value is already indexed with the same index key.
     pub fn insert(&self, key: D::Key, value: D::Value) {
         self.inner.insert(self.owner, key, value)
     }
 
-    /// Insert `value` into the table.
-    ///
-    /// Returns [`Error::NonUniqueIndexKey`] (without inserting) if the insert would make an index
-    /// non-unique. Panics instead if that index is declared with `assert_unique`.
-    pub fn try_insert(&self, key: D::Key, value: D::Value) -> Result<()> {
-        self.inner.try_insert(self.owner, key, value)
-    }
-
     /// Get mutable access to a row of the table in the store.
     ///
-    /// Returns `Error::NotPresent` (and does not call `f`) if there is no value for the specified key.
-    pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Result<T>
+    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
+    ///
+    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) if `f` makes a unique
+    /// index key non-unique, in which case the mutation is not applied.
+    pub fn try_with_mut<Q, T>(
+        &self,
+        key: &Q,
+        f: impl FnOnce(&mut D::Value) -> T,
+    ) -> Result<Option<T>>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
         D::Value: Clone + PartialEq,
     {
-        self.inner.with_mut(self.owner, key, f)
+        self.inner.try_with_mut(self.owner, key, f)
+    }
+
+    /// Get mutable access to a row of the table in the store.
+    ///
+    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn with_mut<Q, T>(&self, key: &Q, f: impl FnOnce(&mut D::Value) -> T) -> Option<T>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_mut(key, f).unwrap()
     }
 
     /// Remove a row from the table.
@@ -570,25 +638,54 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
     ///
     /// Returns `Error::NonUniqueIndexKey` if `f` makes a unique index key non-unique, in which
     /// case none of the mutations are applied.
-    pub fn with_iter_mut<F, T>(&self, f: F) -> Result<T>
+    pub fn try_with_iter_mut<F, T>(&self, f: F) -> Result<T>
     where
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
         D::Value: Clone + PartialEq,
     {
-        self.inner.with_iter_mut(self.owner, f)
+        self.inner.try_with_iter_mut(self.owner, f)
+    }
+
+    /// Iterate over all key/value pairs in the table, with mutable access to the
+    /// values.
+    ///
+    /// Access is scoped by a closure because the table's indexes are updated from the mutated
+    /// values once `f` returns.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn with_iter_mut<F, T>(&self, f: F) -> T
+    where
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_iter_mut(f).unwrap()
     }
 
     /// Iterate over all values in the table, with mutable access.
-    pub fn with_values_mut<F, T>(&self, f: F) -> Result<T>
+    ///
+    /// Returns `Error::NonUniqueIndexKey` if `f` makes a unique index key non-unique, in which
+    /// case none of the mutations are applied.
+    pub fn try_with_values_mut<F, T>(&self, f: F) -> Result<T>
     where
         F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a mut D::Value>) -> T,
         D::Value: Clone + PartialEq,
     {
-        self.inner.with_values_mut(self.owner, f)
+        self.inner.try_with_values_mut(self.owner, f)
+    }
+
+    /// Iterate over all values in the table, with mutable access.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn with_values_mut<F, T>(&self, f: F) -> T
+    where
+        F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a mut D::Value>) -> T,
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_values_mut(f).unwrap()
     }
 
     /// Subscribe to the whole table.
-    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> Result<crate::Subscription>
+    pub fn subscribe(&self, subscriber: impl Into<crate::Subscriber>) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -596,7 +693,7 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
     }
 
     /// Unsubscribe from the table (whole table or single key).
-    pub fn unsubscribe(&self, subscription: crate::Subscription) {
+    pub fn unsubscribe(&self, subscription: Subscription) {
         self.inner.unsubscribe(subscription)
     }
 
@@ -605,7 +702,7 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         &self,
         subscriber: impl Into<crate::Subscriber>,
         key: D::Key,
-    ) -> Result<crate::Subscription>
+    ) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -617,7 +714,7 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         &self,
         subscriber: impl Into<crate::Subscriber>,
         key: D::Key,
-    ) -> Result<crate::Subscription>
+    ) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -648,7 +745,7 @@ impl<D: schema::Indexable> TableWithOwner<D> {
 mod test {
     use alloc::sync::Arc;
 
-    use crate::{KvErrorExt, Owner, store};
+    use crate::{Owner, store};
 
     store!(
         kvs: {
@@ -1004,9 +1101,7 @@ mod test {
         let store = KvStore::new();
         let table = &store.Items;
         table.insert(OWNER, "k", "hello".to_owned());
-        table
-            .with_iter_mut(OWNER, |i| i.next().unwrap().1.push('!'))
-            .unwrap();
+        table.with_iter_mut(OWNER, |i| i.next().unwrap().1.push('!'));
         assert_eq!(table.get(OWNER, "k"), Some("hello!".to_owned()));
     }
 
@@ -1014,7 +1109,7 @@ mod test {
     fn table_with_iter_mut_empty_yields_none() {
         let store = KvStore::new();
         let table = &store.Items;
-        let count = table.with_iter_mut(OWNER, |i| i.count()).unwrap();
+        let count = table.with_iter_mut(OWNER, |i| i.count());
         assert_eq!(count, 0);
     }
 
@@ -1025,13 +1120,11 @@ mod test {
         table.insert(OWNER, "a", "x".to_owned());
         table.insert(OWNER, "b", "y".to_owned());
         table.insert(OWNER, "c", "z".to_owned());
-        table
-            .with_iter_mut(OWNER, |i| {
-                for (_, v) in i {
-                    v.push('!');
-                }
-            })
-            .unwrap();
+        table.with_iter_mut(OWNER, |i| {
+            for (_, v) in i {
+                v.push('!');
+            }
+        });
         assert_eq!(table.get(OWNER, "a"), Some("x!".to_owned()));
         assert_eq!(table.get(OWNER, "b"), Some("y!".to_owned()));
         assert_eq!(table.get(OWNER, "c"), Some("z!".to_owned()));
@@ -1086,7 +1179,7 @@ mod test {
     #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn table_mutate_wrong_owner_panics() {
         let store = KvStore::new();
-        store.Items.with_mut(OTHER, &"k", |v| v.len()).unwrap_err();
+        store.Items.with_mut(OTHER, &"k", |v| v.len());
     }
 
     #[test]
@@ -1139,14 +1232,11 @@ mod test {
         assert_eq!(owned.Items.with_iter(|i| i.count()), 2);
         assert_eq!(owned.Items.with_values(|i| i.count()), 2);
 
-        owned
-            .Items
-            .with_iter_mut(|i| {
-                for (_, v) in i {
-                    v.push('?');
-                }
-            })
-            .unwrap();
+        owned.Items.with_iter_mut(|i| {
+            for (_, v) in i {
+                v.push('?');
+            }
+        });
         assert_eq!(owned.Items.get("b"), Some("beta?".to_owned()));
 
         owned.Items.remove(&"a");

@@ -27,7 +27,7 @@ use std::{
 };
 
 use crate::{
-    Error, Owner, Result,
+    Owner, SubscriptionResult,
     schema::{Desc, GeneratedStorage, PrimaryDesc, SingletonDesc},
     storage::Storage,
 };
@@ -49,6 +49,19 @@ impl Subscription {
     pub fn subscriber(&self) -> Subscriber {
         self.1
     }
+}
+
+/// An error from subscribing to a store.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubscriptionError {
+    /// The specified subscriber is not known to the store (either removed or never registered).
+    #[error("Unknown subscriber")]
+    UnknownSubscriber,
+    /// An attempt was made to subscribe to the store, but the store has no notifier, so notifications
+    /// would not be sent. This is likely because there is a reference to the store but not the notifier,
+    /// so the notifier has been dropped.
+    #[error("Store has no registered notifier")]
+    MissingNotifier,
 }
 
 /// A collection of notifications (mapped from a [`Subscription`]) for a notifier to distribute to
@@ -387,13 +400,13 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         &self,
         subscriber: Subscriber,
         f: impl FnOnce(Subscription),
-    ) -> Result<Subscription> {
+    ) -> SubscriptionResult {
         let Some(_notifier) = self.notifier.upgrade() else {
-            return Err(Error::MissingNotifier);
+            return Err(SubscriptionError::MissingNotifier);
         };
         let subscribers = self.subscribers.lock().unwrap();
         if !subscribers.contains_key(&subscriber) {
-            return Err(Error::UnknownSubscriber);
+            return Err(SubscriptionError::UnknownSubscriber);
         }
 
         let id = self
@@ -410,7 +423,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     pub(crate) fn create_singleton_subscription<S: SingletonDesc>(
         &self,
         subscriber: Subscriber,
-    ) -> Result<Subscription> {
+    ) -> SubscriptionResult {
         self.register_subscription(subscriber, |subscription| {
             self.singletons
                 .lock()
@@ -435,10 +448,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Associate a subscription ID with a global watch, i.e., subscribed to all keys and tables in the store.
-    pub(crate) fn create_global_subscription(
-        &self,
-        subscriber: Subscriber,
-    ) -> Result<Subscription> {
+    pub(crate) fn create_global_subscription(&self, subscriber: Subscriber) -> SubscriptionResult {
         self.register_subscription(subscriber, |subscription| {
             self.all.lock().unwrap().insert(subscription);
         })
@@ -455,7 +465,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         &self,
         key: D::Key,
         subscriber: Subscriber,
-    ) -> Result<Subscription>
+    ) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -474,7 +484,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     pub(crate) fn create_table_subscription_all<D: PrimaryDesc>(
         &self,
         subscriber: Subscriber,
-    ) -> Result<Subscription>
+    ) -> SubscriptionResult
     where
         D::Key: Send,
     {
@@ -813,7 +823,7 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
     use super::*;
-    use crate::{Error, GeneratedStore, Owner, store};
+    use crate::{GeneratedStore, Owner, store};
 
     store!(
         kvs: {
@@ -1116,7 +1126,7 @@ mod tests {
         let bogus = Subscriber(NonZeroUsize::new(1).unwrap());
         assert_eq!(
             subs.register_subscription(bogus, |_| {}),
-            Err(Error::UnknownSubscriber)
+            Err(SubscriptionError::UnknownSubscriber)
         );
     }
 
@@ -1337,19 +1347,19 @@ mod tests {
 
         assert_eq!(
             subs.create_global_subscription(subscriber),
-            Err(Error::UnknownSubscriber)
+            Err(SubscriptionError::UnknownSubscriber)
         );
         assert_eq!(
             subs.create_singleton_subscription::<Count>(subscriber),
-            Err(Error::UnknownSubscriber)
+            Err(SubscriptionError::UnknownSubscriber)
         );
         assert_eq!(
             subs.create_table_subscription_all::<Items>(subscriber),
-            Err(Error::UnknownSubscriber)
+            Err(SubscriptionError::UnknownSubscriber)
         );
         assert_eq!(
             subs.create_table_subscription::<Items>(1, subscriber),
-            Err(Error::UnknownSubscriber)
+            Err(SubscriptionError::UnknownSubscriber)
         );
     }
 
@@ -2685,7 +2695,7 @@ mod tests {
         rec.reset();
 
         // The closure only reads through its mutable reference.
-        assert_eq!(store.Items.with_mut(OWNER, &1, |v| v.len()), Ok(2));
+        assert_eq!(store.Items.with_mut(OWNER, &1, |v| v.len()), Some(2));
 
         assert!(rec.notifications_for(sub).is_empty());
         // A transaction with nothing to report doesn't reach the notifier at all.

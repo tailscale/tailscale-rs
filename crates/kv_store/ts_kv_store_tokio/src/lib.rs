@@ -230,12 +230,11 @@ pub enum Error {
     ChannelDisconnected,
 }
 
-impl From<ts_kv_store::Error> for Error {
-    fn from(e: ts_kv_store::Error) -> Self {
+impl From<ts_kv_store::SubscriptionError> for Error {
+    fn from(e: ts_kv_store::SubscriptionError) -> Self {
         match e {
-            ts_kv_store::Error::UnknownSubscriber => Error::UnknownSubscriber,
-            ts_kv_store::Error::MissingNotifier => Error::MissingNotifier,
-            _ => unreachable!(),
+            ts_kv_store::SubscriptionError::UnknownSubscriber => Error::UnknownSubscriber,
+            ts_kv_store::SubscriptionError::MissingNotifier => Error::MissingNotifier,
         }
     }
 }
@@ -512,7 +511,7 @@ mod tests {
         // Regression for the previously-panicking case: subscribing on a given-up subscriber errors.
         assert_eq!(
             notifier.store().subscribe_global(&sub),
-            Err(ts_kv_store::Error::UnknownSubscriber)
+            Err(ts_kv_store::SubscriptionError::UnknownSubscriber)
         );
 
         // Its channel is closed: the already-buffered notifications drain, then it reports closure.

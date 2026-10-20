@@ -690,7 +690,7 @@ macro_rules! store {
             /// Create a new, empty KV store as described by the schema macros.
             ///
             /// The store has no notifier, so it does not support subscriptions: subscribing returns
-            /// `ts_kv_store::Error::MissingNotifier`.
+            /// `ts_kv_store::SubscriptionError::MissingNotifier`.
             #[allow(dead_code, clippy::new_without_default)]
             pub fn new() -> Self {
                 // The store only holds a weak reference to its notifier, so downgrading a
@@ -789,8 +789,8 @@ macro_rules! store {
             ///
             /// The subscriber receives no further notifications and cannot subscribe again
             /// (subscribing with a removed subscriber gives
-            /// `ts_kv_store::Error::UnknownSubscriber`). Unsubscribing any of its subscriptions is
-            /// harmless but pointless.
+            /// `ts_kv_store::SubscriptionError::UnknownSubscriber`). Unsubscribing any of its
+            /// subscriptions is harmless but pointless.
             ///
             /// Does nothing if the subscriber is unknown (e.g., because it has already been
             /// removed).
@@ -802,7 +802,7 @@ macro_rules! store {
             pub fn subscribe_global(
                 &self,
                 subscriber: impl ::core::convert::Into<$crate::Subscriber>,
-            ) -> $crate::Result<$crate::Subscription> {
+            ) -> $crate::SubscriptionResult {
                 self.__store.subscribe_global(subscriber)
             }
 

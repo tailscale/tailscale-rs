@@ -11,7 +11,7 @@
 use core::{borrow::Borrow, hash::Hash, ops::Deref};
 
 use crate::{
-    Error, Owner, Result, iter,
+    Error, GeneratedStorage, Owner, Result, iter,
     schema::{self, Desc, IndexDesc, IndexStorage, PrimaryDesc, SingletonDesc, TableDesc},
     storage::{Storage, Table, VersionedValue},
     transactions::{TransactionRef, TxnId},
@@ -21,7 +21,7 @@ use crate::{
 ///
 /// Operations only access the table or singleton they operate on (and, for an index, its base
 /// table), never the whole store.
-pub trait StorageGuard<TableStorage: schema::GeneratedStorage>: Sized {
+pub trait StorageGuard<TableStorage: GeneratedStorage>: Sized {
     /// The id of the current transaction.
     fn txn_id(&self) -> TxnId;
 
@@ -44,7 +44,7 @@ pub trait StorageGuard<TableStorage: schema::GeneratedStorage>: Sized {
     ) -> &VersionedValue<Option<S::Value>>;
 }
 
-impl<TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage> for Storage<TableStorage> {
+impl<TableStorage: GeneratedStorage> StorageGuard<TableStorage> for Storage<TableStorage> {
     fn txn_id(&self) -> TxnId {
         Storage::txn_id(self)
     }
@@ -60,7 +60,7 @@ impl<TableStorage: schema::GeneratedStorage> StorageGuard<TableStorage> for Stor
     }
 }
 
-pub(crate) trait Ops<TableStorage: schema::GeneratedStorage>: Sized {
+pub(crate) trait Ops<TableStorage: GeneratedStorage>: Sized {
     type ReadLock: Deref<Target: StorageGuard<TableStorage>>;
 
     fn read_lock(self) -> Self::ReadLock;
@@ -72,7 +72,7 @@ pub(crate) trait Ops<TableStorage: schema::GeneratedStorage>: Sized {
 ///
 /// While a guard returned by `Ops::read_lock` is live, there must be no live mutable reference to the
 /// singleton described by `Self::Desc`.
-pub(crate) unsafe trait SingletonOps<TableStorage: schema::GeneratedStorage>:
+pub(crate) unsafe trait SingletonOps<TableStorage: GeneratedStorage>:
     Ops<TableStorage>
 {
     type Desc: SingletonDesc<Storage = TableStorage>;
@@ -105,7 +105,7 @@ pub(crate) unsafe trait SingletonOps<TableStorage: schema::GeneratedStorage>:
 ///
 /// While a guard returned by `read_lock` is live, there must be no live mutable reference to the
 /// table described by `Self::Desc`.
-pub(crate) unsafe trait TabularOps<TableStorage: schema::GeneratedStorage>:
+pub(crate) unsafe trait TabularOps<TableStorage: GeneratedStorage>:
     Ops<TableStorage>
 {
     type Desc: TableDesc<Storage = TableStorage>;
@@ -194,7 +194,7 @@ pub(crate) type IndexValue<T> = <T as TableDesc>::Value;
 ///
 /// While a guard returned by `Ops::read_lock` is live, there must be no live mutable reference to the
 /// table described by `Self::IndexDesc`, or to its base table.
-pub(crate) unsafe trait IndexedOps<TableStorage: schema::GeneratedStorage>:
+pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
     Ops<TableStorage>
 {
     type IndexDesc: IndexDesc<Storage = TableStorage>;
@@ -209,7 +209,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         self,
         key: &Q,
         owner: Owner,
-    ) -> Result<(BaseKey<Self::IndexDesc>, BaseValue<Self::IndexDesc>)>
+    ) -> Result<Option<(BaseKey<Self::IndexDesc>, BaseValue<Self::IndexDesc>)>>
     where
         BaseKey<Self::IndexDesc>: Clone,
         BaseValue<Self::IndexDesc>: Clone,
@@ -225,7 +225,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         key: &Q,
         f: impl FnOnce(&BaseKey<Self::IndexDesc>, &BaseValue<Self::IndexDesc>) -> T,
         _owner: Owner,
-    ) -> Result<T>
+    ) -> Result<Option<T>>
     where
         IndexKey<Self::IndexDesc>: Borrow<Q>,
         IndexValue<Self::IndexDesc>: Hash + Eq,
@@ -236,14 +236,16 @@ pub(crate) unsafe trait IndexedOps<TableStorage: schema::GeneratedStorage>:
         // contract).
         unsafe { check_consistent::<Self::IndexDesc>(&*guard) }?;
         let txn_id = guard.txn_id();
-        let base_key = unsafe { guard.table::<Self::IndexDesc>() }
-            .get(key, txn_id)
-            .ok_or(Error::NotPresent)?;
-        let value = unsafe { guard.table::<<Self::IndexDesc as IndexDesc>::BaseTable>() }
+        let Some(base_key) = unsafe { guard.table::<Self::IndexDesc>() }.get(key, txn_id) else {
+            return Ok(None);
+        };
+        let Some(value) = unsafe { guard.table::<<Self::IndexDesc as IndexDesc>::BaseTable>() }
             .get(base_key, txn_id)
-            .ok_or(Error::NotPresent)?;
+        else {
+            return Ok(None);
+        };
 
-        Ok(f(base_key, value))
+        Ok(Some(f(base_key, value)))
     }
 
     #[allow(clippy::type_complexity)]

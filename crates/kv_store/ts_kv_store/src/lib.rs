@@ -204,6 +204,7 @@ pub use index::{Index, IndexGuard, IndexTransaction, IndexWithOwner, RoIndexTran
 #[doc(inline)]
 pub use pub_sub::{
     Event, NoOpNotifier, Notifications, Notifier, SingletonEvent, Subscriber, Subscription,
+    SubscriptionError,
 };
 #[doc(inline)]
 pub use raw::{Singleton, SingletonWithOwner, Table, TableWithOwner};
@@ -245,8 +246,8 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     /// Remove a subscriber from the store, along with all of its subscriptions.
     ///
     /// The subscriber receives no further notifications and cannot subscribe again (subscribing
-    /// with a removed subscriber gives [`Error::UnknownSubscriber`]). Unsubscribing any of its
-    /// subscriptions is harmless but pointless.
+    /// with a removed subscriber gives [`SubscriptionError::UnknownSubscriber`]). Unsubscribing
+    /// any of its subscriptions is harmless but pointless.
     ///
     /// Does nothing if the subscriber is unknown (e.g., because it has already been removed).
     pub fn remove_subscriber(&self, subscriber: impl Into<Subscriber>) {
@@ -256,7 +257,7 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
     }
 
     /// Subscribe to the whole store.
-    pub fn subscribe_global(&self, subscriber: impl Into<Subscriber>) -> Result<Subscription> {
+    pub fn subscribe_global(&self, subscriber: impl Into<Subscriber>) -> SubscriptionResult {
         let subs = &self.get_read_lock().subscriptions;
         let id = subs.create_global_subscription(subscriber.into())?;
 
@@ -324,9 +325,6 @@ impl fmt::Display for Owner {
 /// An error from a [`KvStore`].
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum Error {
-    /// The requested key (or table) is not present in the store.
-    #[error("Key not found")]
-    NotPresent,
     /// An inconsistency caused a transaction to fail. It has not been committed and can be re-tried.
     ///
     /// Also returned when committing a transaction in which an operation was interrupted by a
@@ -337,76 +335,9 @@ pub enum Error {
     /// transaction, the transaction will not have been committed.
     #[error("An attempt to store a non-unique index key in `{0}`")]
     NonUniqueIndexKey(&'static str),
-    /// The specified subscriber is not known to the store (either removed or never registered).
-    #[error("Unknown subscriber")]
-    UnknownSubscriber,
-    /// An attempt was made to subscribe to the store, but the store has no notifier, so notifications
-    /// would not be sent. This is likely because there is a reference to the store but not the notifier,
-    /// so the notifier has been dropped.
-    #[error("Store has no registered notifier")]
-    MissingNotifier,
 }
 
 /// `Result` alias for a KvStore [`Error`].
 pub type Result<T> = core::result::Result<T, Error>;
-
-/// Helper trait for making it easier for [`Error`] and `Option` to interoperate.
-///
-/// `Err(Error::NotPresent)` for `Result<T, Error>` has the same meaning as `None` for `Option<T>`
-/// for most map operations. This trait allows treating `Result<T, Error>` a bit more like
-/// an `Option` in various ways so that using functions which return `Result<T, Error>` can be
-/// more ergonomic. (Annoyingly we can't implement helpers directly on `Result` or make conversion
-/// via `From` work).
-pub trait KvErrorExt<T> {
-    /// Convert a `Result<T, Error>` into `Result<Option<T>, Error>`.
-    fn try_opt(self) -> Result<Option<T>>;
-    /// Convert a `Result<T, Error>` into `Option<T>`, panicking if the `Error` is anything
-    /// other than `NotPresent`.
-    fn unwrap_opt(self) -> Option<T>;
-    /// Convert a `&Result<T, Error>` into `Option<&T>`, panicking if the `Error` is anything
-    /// other than `NotPresent`.
-    fn unwrap_opt_ref(&self) -> Option<&T>;
-    /// True if self is `Ok`, i.e., there was no error and the requested key was present.
-    fn is_some(&self) -> bool;
-    /// True if self is `Err(Error::NotPresent)`, i.e., there was no other error and the requested
-    /// key was not present.
-    fn is_none(&self) -> bool;
-}
-
-impl<T> KvErrorExt<T> for Result<T> {
-    fn try_opt(self) -> Result<Option<T>> {
-        match self {
-            Ok(t) => Ok(Some(t)),
-            Err(Error::NotPresent) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    fn unwrap_opt(self) -> Option<T> {
-        match self {
-            Ok(t) => Some(t),
-            Err(Error::NotPresent) => None,
-            Err(e) => {
-                panic!("Expected `Ok` or not present, found: {e}")
-            }
-        }
-    }
-
-    fn unwrap_opt_ref(&self) -> Option<&T> {
-        match self {
-            Ok(t) => Some(t),
-            Err(Error::NotPresent) => None,
-            Err(e) => {
-                panic!("Expected `Ok` or not present, found: {e}")
-            }
-        }
-    }
-
-    fn is_some(&self) -> bool {
-        self.is_ok()
-    }
-
-    fn is_none(&self) -> bool {
-        matches!(self, Err(Error::NotPresent))
-    }
-}
+/// `Result` alias for subscription operations.
+pub type SubscriptionResult = core::result::Result<Subscription, SubscriptionError>;
