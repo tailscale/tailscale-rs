@@ -778,6 +778,38 @@ impl<D: schema::TableDesc> Table<D> {
             })
     }
 
+    /// Remove every row for which `f` returns `false`.
+    pub(crate) fn retain(
+        &mut self,
+        mut f: impl FnMut(&D::Key, &mut D::Value) -> bool,
+        txn_id: TxnId,
+    ) where
+        D::Value: Clone + PartialEq,
+    {
+        let mut retained = Vec::new();
+        let mut removed = Vec::new();
+        for (k, v) in self.iter_mut(txn_id) {
+            if f(k, v) {
+                if <D::IndexStorage as IndexStorage<_, _>>::HAS_INDEXES {
+                    retained.push(k.clone());
+                }
+            } else {
+                removed.push(k.clone());
+            }
+        }
+
+        // `iter_mut` has removed the index entries of every row, so only retained rows need their
+        // entries rebuilt. Removed rows must not go through `Table::remove`, which would remove
+        // their (possibly mutated) index keys a second time, and those might now belong to
+        // another row.
+        for k in &retained {
+            self.rebuild_indexes_for_key(k, txn_id);
+        }
+        for k in &removed {
+            self.delete_mask.remove(k, txn_id, &self.data);
+        }
+    }
+
     pub fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
     where
         D::Key: Borrow<Q>,

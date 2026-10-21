@@ -214,6 +214,37 @@ impl<D: PrimaryDesc> Table<D> {
         self.in_txn(owner, |txn| txn.remove(key)).unwrap()
     }
 
+    /// Retains only the rows of the table specified by `f`.
+    ///
+    /// In other words, remove all key/value pairs `(k, v)` for which `f(&k, &mut v)` returns `false`.
+    /// The rows are visited in unsorted (and unspecified) order.
+    ///
+    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) if `f` makes a unique
+    /// index key non-unique, in which case none of the mutations or removals are applied.
+    pub fn try_retain(
+        &self,
+        owner: Owner,
+        f: impl FnMut(&D::Key, &mut D::Value) -> bool,
+    ) -> Result<()>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.in_txn(owner, |txn| txn.retain(f))
+    }
+
+    /// Retains only the rows of the table specified by `f`.
+    ///
+    /// In other words, remove all key/value pairs `(k, v)` for which `f(&k, &mut v)` returns `false`.
+    /// The rows are visited in unsorted (and unspecified) order.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn retain(&self, owner: Owner, f: impl FnMut(&D::Key, &mut D::Value) -> bool)
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.try_retain(owner, f).unwrap()
+    }
+
     /// Iterate over all key/value pairs in the table.
     ///
     /// Access is scoped by a closure (rather than returning an iterator) because the store is
@@ -532,6 +563,33 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
         self.inner.remove(self.owner, key)
+    }
+
+    /// Retains only the rows of the table specified by `f`.
+    ///
+    /// In other words, remove all key/value pairs `(k, v)` for which `f(&k, &mut v)` returns `false`.
+    /// The rows are visited in unsorted (and unspecified) order.
+    ///
+    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) if `f` makes a unique
+    /// index key non-unique, in which case none of the mutations or removals are applied.
+    pub fn try_retain(&self, f: impl FnMut(&D::Key, &mut D::Value) -> bool) -> Result<()>
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.inner.try_retain(self.owner, f)
+    }
+
+    /// Retains only the rows of the table specified by `f`.
+    ///
+    /// In other words, remove all key/value pairs `(k, v)` for which `f(&k, &mut v)` returns `false`.
+    /// The rows are visited in unsorted (and unspecified) order.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn retain(&self, f: impl FnMut(&D::Key, &mut D::Value) -> bool)
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.try_retain(f).unwrap()
     }
 
     /// Iterate over all key/value pairs in the table.
@@ -923,6 +981,71 @@ mod test {
     }
 
     #[test]
+    fn table_retain_removes_rejected_rows() {
+        let store = KvStore::new();
+        let table = &store.Counters;
+        for k in 0..6 {
+            table.insert(OWNER, k, u64::from(k) * 10);
+        }
+        table.retain(OWNER, |k, _| k % 2 == 0);
+
+        let mut items: Vec<_> = table.with_iter(OWNER, |i| i.map(|(k, v)| (*k, *v)).collect());
+        items.sort();
+        assert_eq!(items, vec![(0, 0), (2, 20), (4, 40)]);
+    }
+
+    #[test]
+    fn table_retain_mutates_retained_rows() {
+        let store = KvStore::new();
+        let table = &store.Items;
+        table.insert(OWNER, "a", "x".to_owned());
+        table.insert(OWNER, "b", "y".to_owned());
+        table.retain(OWNER, |k, v| {
+            v.push('!');
+            *k == "a"
+        });
+
+        assert_eq!(table.get(OWNER, "a"), Some("x!".to_owned()));
+        assert!(table.get(OWNER, "b").is_none());
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn table_retain_visits_every_row_once() {
+        let store = KvStore::new();
+        let table = &store.Counters;
+        for k in 0..4 {
+            table.insert(OWNER, k, 0);
+        }
+        let mut visited = Vec::new();
+        table.retain(OWNER, |k, _| {
+            visited.push(*k);
+            true
+        });
+        visited.sort();
+        assert_eq!(visited, vec![0, 1, 2, 3]);
+        assert_eq!(table.len(), 4);
+    }
+
+    #[test]
+    fn table_retain_on_empty_table_does_not_call_f() {
+        let store = KvStore::new();
+        let mut called = false;
+        store.Items.retain(OWNER, |_, _| {
+            called = true;
+            true
+        });
+        assert!(!called);
+    }
+
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
+    fn table_retain_wrong_owner_panics() {
+        let store = KvStore::new();
+        store.Items.retain(OTHER, |_, _| true);
+    }
+
+    #[test]
     fn table_is_empty_on_fresh_store() {
         let store = KvStore::new();
         assert!(store.Items.is_empty());
@@ -1153,6 +1276,19 @@ mod test {
         assert_eq!(owned.Items.len(), 1);
         owned.Items.clear();
         assert!(owned.Items.is_empty());
+    }
+
+    #[test]
+    fn with_owner_table_retain() {
+        let store = KvStore::new();
+        let owned = store.with_owner(OWNER);
+
+        owned.Items.insert("a", "alpha".to_owned());
+        owned.Items.insert("b", "beta".to_owned());
+        owned.Items.retain(|k, _| *k == "b");
+
+        assert!(owned.Items.get("a").is_none());
+        assert_eq!(owned.Items.get("b"), Some("beta".to_owned()));
     }
 
     #[test]

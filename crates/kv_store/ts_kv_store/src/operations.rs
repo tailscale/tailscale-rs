@@ -317,16 +317,16 @@ pub(crate) trait SingletonOpsMut<'txn, D: schema::SingletonDesc>: OpsMut<'txn, D
     fn insert(self, value: D::Value, owner: Owner) {
         let mut guard = self.write_lock();
         assert_owner(D::OWNER, owner);
-
         let txn_id = guard.txn_id();
+
         guard.singleton_mut().set(Some(value), txn_id);
     }
 
     fn remove(self, owner: Owner) {
         let mut guard = self.write_lock();
         assert_owner(D::OWNER, owner);
-
         let txn_id = guard.txn_id();
+
         guard.singleton_mut().set(None, txn_id);
     }
 
@@ -336,32 +336,39 @@ pub(crate) trait SingletonOpsMut<'txn, D: schema::SingletonDesc>: OpsMut<'txn, D
     {
         let mut guard = self.write_lock();
         assert_owner(D::OWNER, owner);
-
         let txn_id = guard.txn_id();
+
         guard.singleton_mut().with_mut_value(txn_id, f)
     }
 }
 
 pub(crate) trait TabularOpsMut<'txn, D: PrimaryDesc>: OpsMut<'txn, D> {
-    fn clear(self, owner: Owner) {
+    /// Run `f` on the underlying table, checking that `owner` owns it.
+    ///
+    /// The write lock is held while `f` runs.
+    #[track_caller]
+    fn with_table_mut<T>(self, owner: Owner, f: impl FnOnce(&mut Table<D>, TxnId) -> T) -> T {
         let mut guard = self.write_lock();
         let txn_id = guard.txn_id();
-
         let table = guard.table_mut();
         assert_owner(D::OWNER, owner);
-        table.clear(txn_id);
+
+        f(table, txn_id)
+    }
+
+    fn clear(self, owner: Owner) {
+        self.with_table_mut(owner, |table, txn_id| {
+            table.clear(txn_id);
+        })
     }
 
     fn insert(self, key: D::Key, value: D::Value, owner: Owner)
     where
         D::Key: Clone,
     {
-        let mut guard = self.write_lock();
-        let txn_id = guard.txn_id();
-        let table = guard.table_mut();
-        assert_owner(D::OWNER, owner);
-
-        table.insert(key, value, txn_id);
+        self.with_table_mut(owner, |table, txn_id| {
+            table.insert(key, value, txn_id);
+        })
     }
 
     fn with_mut<Q, T>(self, key: &Q, f: impl FnOnce(&mut D::Value) -> T, owner: Owner) -> Option<T>
@@ -370,12 +377,7 @@ pub(crate) trait TabularOpsMut<'txn, D: PrimaryDesc>: OpsMut<'txn, D> {
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
         D::Value: Clone + PartialEq,
     {
-        let mut guard = self.write_lock();
-        let txn_id = guard.txn_id();
-        let table = guard.table_mut();
-        assert_owner(D::OWNER, owner);
-
-        table.with_mut(key, f, txn_id)
+        self.with_table_mut(owner, |table, txn_id| table.with_mut(key, f, txn_id))
     }
 
     fn remove<Q>(self, key: &Q, owner: Owner)
@@ -383,11 +385,9 @@ pub(crate) trait TabularOpsMut<'txn, D: PrimaryDesc>: OpsMut<'txn, D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        let mut guard = self.write_lock();
-        let txn_id = guard.txn_id();
-        let table = guard.table_mut();
-        assert_owner(D::OWNER, owner);
-        table.remove(key, txn_id);
+        self.with_table_mut(owner, |table, txn_id| {
+            table.remove(key, txn_id);
+        })
     }
 
     fn with_iter_mut<T>(
@@ -398,24 +398,30 @@ pub(crate) trait TabularOpsMut<'txn, D: PrimaryDesc>: OpsMut<'txn, D> {
     where
         D::Value: Clone + PartialEq,
     {
-        let mut guard = self.write_lock();
-        let txn_id = guard.txn_id();
-        let table = guard.table_mut();
-        assert_owner(D::OWNER, owner);
+        self.with_table_mut(owner, |table, txn_id| {
+            if !<D::IndexStorage as IndexStorage<_, _>>::HAS_INDEXES {
+                return f(&mut table.iter_mut(txn_id));
+            }
 
-        if !<D::IndexStorage as IndexStorage<_, _>>::HAS_INDEXES {
-            return f(&mut table.iter_mut(txn_id));
-        }
+            let mut yielded = Vec::new();
+            let result = f(&mut table
+                .iter_mut(txn_id)
+                .inspect(|(k, _)| yielded.push((*k).clone())));
 
-        let mut yielded = Vec::new();
-        let result = f(&mut table
-            .iter_mut(txn_id)
-            .inspect(|(k, _)| yielded.push((*k).clone())));
+            for k in &yielded {
+                table.rebuild_indexes_for_key(k, txn_id);
+            }
+            result
+        })
+    }
 
-        for k in &yielded {
-            table.rebuild_indexes_for_key(k, txn_id);
-        }
-        result
+    fn retain(self, owner: Owner, f: impl FnMut(&D::Key, &mut D::Value) -> bool)
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.with_table_mut(owner, |table, txn_id| {
+            table.retain(f, txn_id);
+        })
     }
 
     fn with_values_mut<T>(

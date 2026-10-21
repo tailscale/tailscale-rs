@@ -2128,6 +2128,49 @@ mod tests {
     }
 
     #[test]
+    fn e2e_retain_notifies_removed_and_mutated_keys() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.Items.subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2, 3]);
+        rec.reset();
+
+        store.Items.retain(OWNER, |k, v| {
+            if *k == 1 {
+                v.push('!');
+            }
+            *k != 2
+        });
+
+        // Key 3 was visited but not changed, so is not notified.
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![
+                ItemsKind::KeyRemove(2),
+                ItemsKind::KeyUpsert(1, "v1!".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn e2e_retain_keeping_everything_notifies_nothing() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.Items.subscribe(subscriber).unwrap();
+        seed_items(&store, &[1, 2]);
+        rec.reset();
+
+        store.Items.retain(OWNER, |_, _| true);
+
+        assert!(rec.notifications_for(sub).is_empty());
+    }
+
+    #[test]
     fn e2e_iter_mut_on_empty_table_notifies_nothing() {
         let (notifier, rec) = RecordingNotifier::new();
         let store = KvStore::from_notifier(Arc::downgrade(&notifier));

@@ -346,6 +346,18 @@ impl<'guard, D: PrimaryDesc> TableTransaction<'guard, D> {
         <&mut Self as TabularOpsMut<D>>::remove(self, key, self.owner())
     }
 
+    /// Retains only the rows of the table specified by `f`.
+    ///
+    /// In other words, remove all key/value pairs `(k, v)` for which `f(&k, &mut v)` returns `false`.
+    /// The rows are visited in unsorted (and unspecified) order.
+    pub fn retain(&mut self, f: impl FnMut(&D::Key, &mut D::Value) -> bool)
+    where
+        D::Value: Clone + PartialEq,
+    {
+        let owner = self.owner();
+        TabularOpsMut::retain(self, owner, f)
+    }
+
     /// Iterate all key/value pairs in the table.
     pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &D::Value)> {
         // SAFETY: `self` is borrowed for as long as the iterator is live.
@@ -1176,6 +1188,116 @@ mod test {
 
         table.with_iter_mut(|i| i.next().unwrap().1.push('!'));
         assert_eq!(table.get("c"), Some("z!".to_owned()));
+    }
+
+    #[test]
+    fn txn_table_retain_removes_rejected_rows() {
+        let store = KvStore::new();
+        store.Items.insert(OWNER, "a", "x".to_owned());
+        store.Items.insert(OWNER, "b", "y".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Items.retain(|k, v| {
+            v.push('!');
+            *k == "a"
+        });
+        assert_eq!(txn.Items.get("a"), Some("x!".to_owned()));
+        assert!(txn.Items.get("b").is_none());
+        // Not visible outside the transaction until committed.
+        txn.commit().unwrap();
+
+        assert_eq!(store.Items.get(OWNER, "a"), Some("x!".to_owned()));
+        assert!(store.Items.get(OWNER, "b").is_none());
+        assert_eq!(store.Items.len(), 1);
+    }
+
+    #[test]
+    fn txn_table_retain_skips_removed_key() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        let table = &mut txn.Items;
+        table.insert("a", "x".to_owned());
+        table.insert("b", "y".to_owned());
+        table.remove(&"b");
+
+        let mut visited = Vec::new();
+        table.retain(|k, _| {
+            visited.push(*k);
+            true
+        });
+        assert_eq!(visited, vec!["a"]);
+        assert!(table.get("b").is_none());
+    }
+
+    #[test]
+    fn txn_table_retain_after_clear_sees_only_new_rows() {
+        let store = KvStore::new();
+        store.Items.insert(OWNER, "a", "x".to_owned());
+        store.Items.insert(OWNER, "b", "y".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Items.clear();
+        txn.Items.insert("c", "z".to_owned());
+        txn.Items.insert("d", "w".to_owned());
+
+        let mut visited = Vec::new();
+        txn.Items.retain(|k, _| {
+            visited.push(*k);
+            *k == "c"
+        });
+        visited.sort();
+        assert_eq!(visited, vec!["c", "d"]);
+        txn.commit().unwrap();
+
+        let mut keys: Vec<_> = store.Items.with_keys(OWNER, |i| i.copied().collect());
+        keys.sort();
+        assert_eq!(keys, vec!["c"]);
+    }
+
+    #[test]
+    fn txn_table_retain_then_insert_removed_key() {
+        let store = KvStore::new();
+        store.Items.insert(OWNER, "a", "x".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Items.retain(|_, _| false);
+        assert!(txn.Items.is_empty());
+        txn.Items.insert("a", "y".to_owned());
+        txn.commit().unwrap();
+
+        assert_eq!(store.Items.get(OWNER, "a"), Some("y".to_owned()));
+    }
+
+    #[test]
+    fn txn_table_retain_rollback_discards_changes() {
+        let store = KvStore::new();
+        store.Items.insert(OWNER, "a", "x".to_owned());
+        store.Items.insert(OWNER, "b", "y".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Items.retain(|k, v| {
+            v.push('!');
+            *k == "a"
+        });
+        txn.rollback();
+
+        assert_eq!(store.Items.get(OWNER, "a"), Some("x".to_owned()));
+        assert_eq!(store.Items.get(OWNER, "b"), Some("y".to_owned()));
+    }
+
+    #[test]
+    fn txn_table_retain_caught_panic_fails_commit() {
+        let store = KvStore::new();
+        store.Items.insert(OWNER, "a", "x".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            txn.Items.retain(|_, _| panic!("boom"));
+        }));
+        assert!(result.is_err());
+        assert_eq!(txn.commit(), Err(crate::Error::TransactionFailed));
+
+        assert_eq!(store.Items.get(OWNER, "a"), Some("x".to_owned()));
     }
 
     // Rolling back a transaction that mutated values via `with_iter_mut` must leave the committed

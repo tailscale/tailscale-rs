@@ -461,6 +461,78 @@ mod test {
     }
 
     #[test]
+    fn table_retain_updates_index() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        store.Users.retain(OWNER, |k, v| {
+            v.name.push('!');
+            *k == 1
+        });
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert!(index.get("Alice").is_none());
+        assert!(index.get("Bob").is_none());
+        assert!(index.get("Bob!").is_none());
+        assert_eq!(index.get("Alice!").unwrap(), (1, row("Alice!")));
+    }
+
+    // A removed row whose index key is mutated to that of a retained row must not remove the
+    // retained row's index entry.
+    #[test]
+    fn table_retain_removed_row_mutated_to_retained_rows_key_keeps_index_entry() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        store.Users.retain(OWNER, |k, v| {
+            if *k == 1 {
+                v.name = "Bob".to_owned();
+                false
+            } else {
+                true
+            }
+        });
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert!(index.get("Alice").is_none());
+        assert_eq!(index.get("Bob").unwrap(), (2, row("Bob")));
+    }
+
+    #[test]
+    fn table_retain_non_unique_index_key_rolls_back() {
+        let store = KvStore::new();
+        let users = store.with_owner(OWNER).Users;
+        users.insert(1, row("Alice"));
+        users.insert(2, row("Bob"));
+        users.insert(3, row("Charlie"));
+        let result = users.try_retain(|k, v| {
+            v.name = "Alice".to_owned();
+            *k != 3
+        });
+        assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
+        assert_eq!(users.get(&2), Some(row("Bob")));
+        assert_eq!(users.get(&3), Some(row("Charlie")));
+        assert_eq!(
+            users.indexes().name.get("Charlie").unwrap(),
+            (3, row("Charlie"))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "NonUniqueIndexKey")]
+    fn table_retain_non_unique_index_key_panics() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+        store.Users.retain(OWNER, |_, v| {
+            v.name = "Alice".to_owned();
+            true
+        });
+    }
+
+    #[test]
     fn table_with_iter_mut_updates_index() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
@@ -811,6 +883,29 @@ mod test_transactional_index {
                 }
             )
         );
+    }
+
+    #[test]
+    fn txn_base_retain_after_clear_keeps_index_consistent() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.clear();
+        txn.Users.insert(2, row("Alice"));
+        txn.Users.insert(3, row("Bob"));
+        txn.Users.retain(|k, _| *k == 2);
+        assert_eq!(
+            txn.Users.indexes().name.get("Alice").unwrap(),
+            (2, row("Alice"))
+        );
+        assert!(txn.Users.indexes().name.get("Bob").is_none());
+        txn.commit().unwrap();
+
+        let index = store.with_owner(OWNER).Users.indexes().name;
+        assert!(index.check_consistent().is_ok());
+        assert_eq!(index.get("Alice").unwrap(), (2, row("Alice")));
+        assert!(index.get("Bob").is_none());
     }
 
     // Rows inserted after a `clear()` in the same transaction live in the delete
