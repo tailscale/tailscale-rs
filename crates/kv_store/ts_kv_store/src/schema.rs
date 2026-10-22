@@ -668,7 +668,7 @@ macro_rules! store {
                 fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId) {
                     $({
                         for value in index::$name::Storage::$field(_value) {
-                            self.$field.remove(&value, _txn_id);
+                            self.$field.delete(&value, _txn_id);
                         }
                     })*
                 }

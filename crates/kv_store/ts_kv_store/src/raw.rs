@@ -86,8 +86,18 @@ impl<S: SingletonDesc> Singleton<S> {
         self.in_txn(owner, |txn| txn.insert(value))
     }
 
-    /// Remove a single value from the store.
-    pub fn remove(&self, owner: Owner) {
+    /// Delete a single value from the store.
+    pub fn delete(&self, owner: Owner) {
+        self.in_txn(owner, |txn| txn.delete())
+    }
+
+    /// Remove a single value from the store, returning it by cloning the value.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn remove(&self, owner: Owner) -> Option<S::Value>
+    where
+        S::Value: Clone,
+    {
         self.in_txn(owner, |txn| txn.remove())
     }
 
@@ -225,9 +235,21 @@ impl<D: PrimaryDesc> Table<D> {
         self.try_with_mut(owner, key, f).unwrap()
     }
 
-    /// Remove a row from the table.
-    pub fn remove<Q>(&self, owner: Owner, key: &Q)
+    /// Delete a row from the table.
+    pub fn delete<Q>(&self, owner: Owner, key: &Q)
     where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+    {
+        self.in_txn(owner, |txn| txn.delete(key)).unwrap()
+    }
+
+    /// Remove a row from the table, returning its value by cloning it.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn remove<Q>(&self, owner: Owner, key: &Q) -> Option<D::Value>
+    where
+        D::Value: Clone,
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
@@ -513,8 +535,18 @@ impl<S: SingletonDesc> SingletonWithOwner<S> {
         self.inner.insert(self.owner, value)
     }
 
-    /// Remove a single value from the store.
-    pub fn remove(&self) {
+    /// Delete a single value from the store.
+    pub fn delete(&self) {
+        self.inner.delete(self.owner)
+    }
+
+    /// Remove a single value from the store, returning it by cloning the value.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn remove(&self) -> Option<S::Value>
+    where
+        S::Value: Clone,
+    {
         self.inner.remove(self.owner)
     }
 }
@@ -624,9 +656,21 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         self.try_with_mut(key, f).unwrap()
     }
 
-    /// Remove a row from the table.
-    pub fn remove<Q>(&self, key: &Q)
+    /// Delete a row from the table.
+    pub fn delete<Q>(&self, key: &Q)
     where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+    {
+        self.inner.delete(self.owner, key)
+    }
+
+    /// Remove a row from the table, returning its value by cloning it.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn remove<Q>(&self, key: &Q) -> Option<D::Value>
+    where
+        D::Value: Clone,
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
@@ -927,7 +971,7 @@ mod test {
     fn with_mut_returns_none_after_remove() {
         let store = KvStore::new();
         store.Count.insert(OWNER, 5);
-        store.Count.remove(OWNER);
+        store.Count.delete(OWNER);
         let mut called = false;
         let result = store.Count.with_mut(OWNER, |_| called = true);
         assert!(result.is_none());
@@ -981,8 +1025,18 @@ mod test {
     fn remove_makes_entry_absent() {
         let store = KvStore::new();
         store.Count.insert(OWNER, 1);
-        store.Count.remove(OWNER);
+        store.Count.delete(OWNER);
         assert!(store.Count.get(OWNER).is_none());
+    }
+
+    #[test]
+    fn remove_returns_value_and_makes_entry_absent() {
+        let store = KvStore::new();
+        assert_eq!(store.Count.remove(OWNER), None);
+        store.Count.insert(OWNER, 1);
+        assert_eq!(store.Count.remove(OWNER), Some(1));
+        assert!(store.Count.get(OWNER).is_none());
+        assert_eq!(store.Count.remove(OWNER), None);
     }
 
     #[test]
@@ -998,7 +1052,7 @@ mod test {
     fn singleton_remove_wrong_owner_panics() {
         let store = KvStore::new();
         store.Count.insert(OWNER, 1);
-        store.Count.remove(OTHER);
+        store.Count.delete(OTHER);
     }
 
     #[test]
@@ -1062,8 +1116,18 @@ mod test {
     fn table_remove_makes_get_return_none() {
         let store = KvStore::new();
         store.Items.insert(OWNER, "k", "v".to_owned());
-        store.Items.remove(OWNER, &"k");
+        store.Items.delete(OWNER, &"k");
         assert!(store.Items.get(OWNER, "k").is_none());
+    }
+
+    #[test]
+    fn table_remove_returns_value() {
+        let store = KvStore::new();
+        assert_eq!(store.Items.remove(OWNER, &"k"), None);
+        store.Items.insert(OWNER, "k", "v".to_owned());
+        assert_eq!(store.Items.remove(OWNER, &"k"), Some("v".to_owned()));
+        assert!(store.Items.get(OWNER, "k").is_none());
+        assert_eq!(store.Items.remove(OWNER, &"k"), None);
     }
 
     #[test]
@@ -1170,7 +1234,7 @@ mod test {
         let table = &store.Items;
         table.insert(OWNER, "a", "alpha".to_owned());
         table.insert(OWNER, "b", "beta".to_owned());
-        table.remove(OWNER, &"a");
+        table.delete(OWNER, &"a");
         assert_eq!(table.len(), 1);
     }
 
@@ -1309,7 +1373,7 @@ mod test {
     #[cfg_attr(debug_assertions, should_panic(expected = "Ownership violation"))]
     fn table_remove_wrong_owner_panics() {
         let store = KvStore::new();
-        store.Items.remove(OTHER, &"k");
+        store.Items.delete(OTHER, &"k");
     }
 
     #[test]
@@ -1330,8 +1394,12 @@ mod test {
         assert_eq!(owned.Count.with_mut(|v| *v += 1), Some(()));
         assert_eq!(owned.Count.get(), Some(6));
 
-        owned.Count.remove();
+        owned.Count.delete();
         assert!(owned.Count.get().is_none());
+
+        owned.Count.insert(7);
+        assert_eq!(owned.Count.remove(), Some(7));
+        assert_eq!(owned.Count.remove(), None);
     }
 
     #[test]
@@ -1362,8 +1430,12 @@ mod test {
         });
         assert_eq!(owned.Items.get("b"), Some("beta?".to_owned()));
 
-        owned.Items.remove(&"a");
+        owned.Items.delete(&"a");
         assert_eq!(owned.Items.len(), 1);
+        assert_eq!(owned.Items.remove(&"b"), Some("beta?".to_owned()));
+        assert_eq!(owned.Items.remove(&"b"), None);
+        assert!(owned.Items.is_empty());
+        owned.Items.insert("c", "gamma".to_owned());
         owned.Items.clear();
         assert!(owned.Items.is_empty());
     }

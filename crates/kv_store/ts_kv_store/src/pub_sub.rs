@@ -1557,7 +1557,7 @@ mod tests {
 
         owned.Items.insert(1, "one".to_owned());
         owned.Items.insert(2, "two".to_owned());
-        owned.Items.remove(&1);
+        owned.Items.delete(&1);
 
         let got = rec.notifications_for(sub);
         // The insert of key 2 is filtered out; only key 1's upsert and removal remain.
@@ -1624,7 +1624,7 @@ mod tests {
         rec.reset();
 
         store.Count.insert(OWNER, 7);
-        store.Count.remove(OWNER);
+        store.Count.delete(OWNER);
 
         assert_eq!(
             rec.notifications_for(sub)
@@ -1671,7 +1671,7 @@ mod tests {
         rec.reset();
 
         store.Count.insert(OWNER, 42);
-        store.Count.remove(OWNER);
+        store.Count.delete(OWNER);
 
         let got = rec.notifications_for(sub);
         assert_eq!(
@@ -1690,7 +1690,7 @@ mod tests {
         rec.reset();
 
         owned.Quiet.insert(42);
-        owned.Quiet.remove();
+        owned.Quiet.delete();
 
         // Without `notify(Clone)` the value is not sent, but a removal must still arrive as a
         // removal rather than as an upsert of nothing.
@@ -1710,7 +1710,7 @@ mod tests {
         rec.reset();
 
         store.Shared.insert(OWNER, Arc::new("hello".to_owned()));
-        store.Shared.remove(OWNER);
+        store.Shared.delete(OWNER);
 
         let got = rec.notifications_for(sub);
         assert_eq!(got.len(), 2);
@@ -1807,7 +1807,7 @@ mod tests {
         let subscriber = owned.register_subscriber();
         let sub = owned.Count.subscribe(subscriber).unwrap();
         owned.Count.insert(7);
-        owned.Count.remove();
+        owned.Count.delete();
         rec.reset();
 
         assert!(owned.Count.with_mut(|_| panic!()).is_none());
@@ -1822,7 +1822,7 @@ mod tests {
         let subscriber = store.register_subscriber(OWNER);
         let sub = store.Count.subscribe(subscriber).unwrap();
         store.Count.insert(OWNER, 7);
-        store.Count.remove(OWNER);
+        store.Count.delete(OWNER);
         rec.reset();
 
         // As above, but in a transaction which goes on to commit real work elsewhere.
@@ -2118,7 +2118,7 @@ mod tests {
         let mut txn = owned.begin_transaction();
         {
             let table = &mut txn.Items;
-            table.remove(&2);
+            table.delete(&2);
             // `with_iter_mut` skips the removed key, so key 2 is only reported as a removal.
             table.with_iter_mut(|i| {
                 for (_, v) in i {
@@ -2259,7 +2259,7 @@ mod tests {
         {
             let t = &mut txn.Items;
             t.insert(1, "a".to_owned());
-            t.remove(&1);
+            t.delete(&1);
         }
         txn.commit().unwrap();
 
@@ -2279,7 +2279,7 @@ mod tests {
         let mut txn = store.begin_transaction(OWNER);
         {
             let t = &mut txn.Items;
-            t.remove(&1);
+            t.delete(&1);
             t.insert(1, "new".to_owned());
         }
         txn.commit().unwrap();
@@ -2307,9 +2307,9 @@ mod tests {
         {
             let t = &mut txn.Items;
             t.insert(1, "a".to_owned());
-            t.remove(&1);
+            t.delete(&1);
             // A key which did exist before the transaction is still reported as removed.
-            t.remove(&9);
+            t.delete(&9);
         }
         txn.commit().unwrap();
 
@@ -2420,7 +2420,7 @@ mod tests {
         let owned = store.with_owner(OWNER);
         let subscriber = owned.register_subscriber();
         owned.Quiet.insert(7);
-        owned.Quiet.remove();
+        owned.Quiet.delete();
         rec.reset();
 
         let sub = owned.Quiet.subscribe_and_notify(subscriber).unwrap();
@@ -2455,7 +2455,7 @@ mod tests {
 
         let sub = owned.Count.subscribe_and_notify(subscriber).unwrap();
         owned.Count.insert(8);
-        owned.Count.remove();
+        owned.Count.delete();
 
         // The initial value is followed by the ordinary stream of subsequent updates.
         assert_eq!(
@@ -2542,7 +2542,7 @@ mod tests {
         owned.Items.insert(1, "a".to_owned());
         owned.Items.insert(2, "b".to_owned());
         owned.Items.insert(2, "b2".to_owned());
-        owned.Items.remove(&1);
+        owned.Items.delete(&1);
 
         assert_eq!(items_snapshot(&store), vec![(2, "b2".to_owned())]);
         assert_eq!(owned.Items.get(&1), None);
@@ -2557,7 +2557,7 @@ mod tests {
         let mut txn = store.begin_transaction(OWNER);
         {
             let t = &mut txn.Items;
-            t.remove(&2);
+            t.delete(&2);
             t.insert(4, "v4".to_owned());
             t.with_mut(&1, |v| v.push('!'));
         }
@@ -2640,7 +2640,7 @@ mod tests {
         // rather than an empty -> non-empty table upsert.
         owned.Items.insert(2, "b".to_owned());
         // Likewise, removing the key inserted while unwatched is still a notifiable removal.
-        owned.Items.remove(&1);
+        owned.Items.delete(&1);
 
         assert_eq!(
             rec.notifications_for(sub)
@@ -2926,7 +2926,7 @@ mod tests {
         {
             let t = &mut txn.Items;
             t.with_mut(&1, |v| v.len());
-            t.remove(&2);
+            t.delete(&2);
         }
         txn.commit().unwrap();
 
@@ -2954,7 +2954,7 @@ mod tests {
         {
             let t = &mut txn.Items;
             t.with_mut(&1, |v| v.push('!'));
-            t.remove(&1);
+            t.delete(&1);
         }
         txn.commit().unwrap();
 

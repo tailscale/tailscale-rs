@@ -856,7 +856,7 @@ impl<D: schema::TableDesc> Table<D> {
         }
     }
 
-    pub fn remove<Q>(&mut self, key: &Q, txn_id: TxnId)
+    pub fn delete<Q>(&mut self, key: &Q, txn_id: TxnId)
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,

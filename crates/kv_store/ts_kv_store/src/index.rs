@@ -478,7 +478,7 @@ mod test {
     fn base_remove_makes_index_absent() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
-        store.Users.remove(OWNER, &1);
+        store.Users.delete(OWNER, &1);
         assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
     }
 
@@ -761,7 +761,7 @@ mod test_two_indexes {
         store
             .People
             .insert(OWNER, 1, person("a@example.com", b"alice"));
-        store.People.remove(OWNER, &1);
+        store.People.delete(OWNER, &1);
         assert!(
             store
                 .People
@@ -914,7 +914,7 @@ mod test_transactional_index {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         txn.Users.insert(1, row("Alice"));
-        txn.Users.remove(&1);
+        txn.Users.delete(&1);
         assert!(txn.Users.indexes().name.get("Alice").is_none());
     }
 
@@ -935,10 +935,10 @@ mod test_transactional_index {
         store.Users.insert(OWNER, 1, row("Alice"));
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Users.remove(&1);
+        txn.Users.delete(&1);
         txn.Users.insert(2, row("Alice"));
         // A no-op, but row 1's stale value shares an index key with row 2.
-        txn.Users.remove(&1);
+        txn.Users.delete(&1);
         assert_eq!(
             txn.Users.indexes().name.get("Alice").unwrap(),
             (2, row("Alice"))
@@ -960,7 +960,7 @@ mod test_transactional_index {
         txn.Users.clear();
         txn.Users.insert(2, row("Alice"));
         // A no-op, but row 1's cleared value shares an index key with row 2.
-        txn.Users.remove(&1);
+        txn.Users.delete(&1);
         assert_eq!(
             txn.Users.indexes().name.get("Alice").unwrap(),
             (2, row("Alice"))
@@ -1060,7 +1060,7 @@ mod test_transactional_index {
         let mut txn = store.begin_transaction(OWNER);
         txn.Users.insert(1, row("Alice"));
         txn.Users.insert(2, row("Bob"));
-        txn.Users.remove(&1);
+        txn.Users.delete(&1);
         txn.Users.with_iter_mut(|i| {
             for (_, v) in i {
                 v.name.push('!');
@@ -1149,7 +1149,7 @@ mod test_transactional_index {
 
         let mut txn = store.begin_transaction(OWNER);
         txn.Users.insert(2, row("Bob"));
-        txn.Users.remove(&1);
+        txn.Users.delete(&1);
         txn.Users.insert(3, row("Carol"));
 
         let index = txn.Users.indexes().name;
@@ -1179,7 +1179,7 @@ mod test_transactional_index {
         {
             let mut txn = store.begin_transaction(OWNER);
             txn.Users.insert(3, row("Carol"));
-            txn.Users.remove(&1);
+            txn.Users.delete(&1);
             txn.Users.with_mut(&2, |r| r.name = "Robert".to_owned());
         }
 
@@ -1700,7 +1700,7 @@ mod test_computed_index {
     fn remove_removes_every_index_key() {
         let store = KvStore::new();
         store.Posts.insert(OWNER, 1, post(&["a", "b"]));
-        store.Posts.remove(OWNER, &1);
+        store.Posts.delete(OWNER, &1);
 
         let index = store.with_owner(OWNER).Posts.indexes().tag;
         assert_eq!(index.with_keys(|i| i.count()), 0);

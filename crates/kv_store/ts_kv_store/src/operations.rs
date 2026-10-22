@@ -324,7 +324,7 @@ pub(crate) trait SingletonOpsMut<'txn, D: schema::SingletonDesc>: OpsMut<'txn, D
         guard.singleton_mut().set(Some(value), txn_id);
     }
 
-    fn remove(self, owner: Owner) {
+    fn delete(self, owner: Owner) {
         let mut guard = self.write_lock();
         assert_owner(D::OWNER, owner);
         let txn_id = guard.txn_id();
@@ -382,13 +382,13 @@ pub(crate) trait TabularOpsMut<'txn, D: PrimaryDesc>: OpsMut<'txn, D> {
         self.with_table_mut(owner, |table, txn_id| table.with_mut(key, f, txn_id))
     }
 
-    fn remove<Q>(self, key: &Q, owner: Owner)
+    fn delete<Q>(self, key: &Q, owner: Owner)
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
         self.with_table_mut(owner, |table, txn_id| {
-            table.remove(key, txn_id);
+            table.delete(key, txn_id);
         })
     }
 

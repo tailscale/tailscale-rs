@@ -176,9 +176,21 @@ impl<'guard, S: schema::SingletonDesc> SingletonTransaction<'guard, S> {
         <&mut Self as SingletonOpsMut<S>>::insert(self, value, self.owner())
     }
 
-    /// Remove a single value from the store.
-    pub fn remove(&mut self) {
-        <&mut Self as SingletonOpsMut<S>>::remove(self, self.owner())
+    /// Delete a single value from the store.
+    pub fn delete(&mut self) {
+        <&mut Self as SingletonOpsMut<S>>::delete(self, self.owner())
+    }
+
+    /// Remove a single value from the store, returning it by cloning the value.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn remove(&mut self) -> Option<S::Value>
+    where
+        S::Value: Clone,
+    {
+        let result = self.get()?;
+        self.delete();
+        Some(result)
     }
 }
 
@@ -337,13 +349,27 @@ impl<'guard, D: PrimaryDesc> TableTransaction<'guard, D> {
         <&mut Self as TabularOpsMut<D>>::with_mut(self, key, f, self.owner())
     }
 
-    /// Remove a row from the table.
-    pub fn remove<Q>(&mut self, key: &Q)
+    /// Delete a row from the table.
+    pub fn delete<Q>(&mut self, key: &Q)
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
-        <&mut Self as TabularOpsMut<D>>::remove(self, key, self.owner())
+        <&mut Self as TabularOpsMut<D>>::delete(self, key, self.owner())
+    }
+
+    /// Remove a row from the table, returning its value by cloning it.
+    ///
+    /// Returns `None` if there is no value for the specified key.
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<D::Value>
+    where
+        D::Value: Clone,
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
+    {
+        let result = self.get(key)?;
+        self.delete(key);
+        Some(result)
     }
 
     /// Retains only the rows of the table specified by `f`.
@@ -874,8 +900,19 @@ mod test {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OWNER);
         txn.Count.insert(1);
-        txn.Count.remove();
+        txn.Count.delete();
         assert!(txn.Count.get().is_none());
+    }
+
+    #[test]
+    fn txn_remove_returns_value() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        assert_eq!(txn.Count.remove(), None);
+        txn.Count.insert(1);
+        assert_eq!(txn.Count.remove(), Some(1));
+        assert!(txn.Count.get().is_none());
+        assert_eq!(txn.Count.remove(), None);
     }
 
     #[test]
@@ -930,7 +967,7 @@ mod test {
         let store = KvStore::new();
         store.Count.insert(OWNER, 5);
         let mut txn = store.begin_transaction(OWNER);
-        txn.Count.remove();
+        txn.Count.delete();
         let mut called = false;
         let result = txn.Count.with_mut(|_| called = true);
         assert!(result.is_none());
@@ -982,7 +1019,7 @@ mod test {
         let store = KvStore::new();
         store.Count.insert(OWNER, 1);
         let mut txn = store.begin_transaction(OTHER);
-        txn.Count.remove();
+        txn.Count.delete();
     }
 
     #[test]
@@ -1048,8 +1085,20 @@ mod test {
         let mut txn = store.begin_transaction(OWNER);
         let table = &mut txn.Items;
         table.insert("k", "v".to_owned());
-        table.remove(&"k");
+        table.delete(&"k");
         assert!(table.get("k").is_none());
+    }
+
+    #[test]
+    fn txn_table_remove_returns_value() {
+        let store = KvStore::new();
+        let mut txn = store.begin_transaction(OWNER);
+        let table = &mut txn.Items;
+        assert_eq!(table.remove(&"k"), None);
+        table.insert("k", "v".to_owned());
+        assert_eq!(table.remove(&"k"), Some("v".to_owned()));
+        assert!(table.get("k").is_none());
+        assert_eq!(table.remove(&"k"), None);
     }
 
     #[test]
@@ -1152,7 +1201,7 @@ mod test {
         table.insert("a", "x".to_owned());
         table.insert("b", "y".to_owned());
         table.insert("c", "z".to_owned());
-        table.remove(&"b");
+        table.delete(&"b");
 
         let mut keys: Vec<_> = table.with_iter_mut(|i| i.map(|(k, _)| *k).collect());
         keys.sort();
@@ -1218,7 +1267,7 @@ mod test {
         let table = &mut txn.Items;
         table.insert("a", "x".to_owned());
         table.insert("b", "y".to_owned());
-        table.remove(&"b");
+        table.delete(&"b");
 
         let mut visited = Vec::new();
         table.retain(|k, _| {
@@ -1444,7 +1493,7 @@ mod test {
     fn txn_table_remove_wrong_owner_panics() {
         let store = KvStore::new();
         let mut txn = store.begin_transaction(OTHER);
-        txn.Items.remove(&"k");
+        txn.Items.delete(&"k");
     }
 
     #[test]
@@ -1627,7 +1676,19 @@ mod test {
         store.Items.insert(OWNER, "k", "v".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Items.remove(&"k");
+        txn.Items.delete(&"k");
+        txn.commit().unwrap();
+
+        assert_eq!(store.Items.get(OWNER, "k"), None);
+    }
+
+    #[test]
+    fn txn_table_remove_committed_row_then_commit_absent() {
+        let store = KvStore::new();
+        store.Items.insert(OWNER, "k", "v".to_owned());
+
+        let mut txn = store.begin_transaction(OWNER);
+        assert_eq!(txn.Items.remove(&"k"), Some("v".to_owned()));
         txn.commit().unwrap();
 
         assert_eq!(store.Items.get(OWNER, "k"), None);
@@ -1652,7 +1713,19 @@ mod test {
         store.Count.insert(OWNER, 7);
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Count.remove();
+        txn.Count.delete();
+        txn.commit().unwrap();
+
+        assert_eq!(store.Count.get(OWNER), None);
+    }
+
+    #[test]
+    fn txn_singleton_remove_committed_value_then_commit_absent() {
+        let store = KvStore::new();
+        store.Count.insert(OWNER, 7);
+
+        let mut txn = store.begin_transaction(OWNER);
+        assert_eq!(txn.Count.remove(), Some(7));
         txn.commit().unwrap();
 
         assert_eq!(store.Count.get(OWNER), None);
@@ -1762,7 +1835,7 @@ mod test {
         store.Count.insert(OWNER, 7);
         {
             let mut txn = store.begin_transaction(OWNER);
-            txn.Count.remove();
+            txn.Count.delete();
         }
         assert_eq!(store.Count.get(OWNER), Some(7));
     }
@@ -1805,7 +1878,7 @@ mod test {
         store.Items.insert(OWNER, "k", "v".to_owned());
         {
             let mut txn = store.begin_transaction(OWNER);
-            txn.Items.remove(&"k");
+            txn.Items.delete(&"k");
         }
         assert_eq!(store.Items.get(OWNER, "k"), Some("v".to_owned()));
     }
@@ -1858,7 +1931,7 @@ mod test {
 
         let mut txn = store.begin_transaction(OWNER);
         txn.Items.insert("keep", "new".to_owned());
-        txn.Items.remove(&"drop");
+        txn.Items.delete(&"drop");
         txn.Items.insert("add", "hi".to_owned());
         txn.commit().unwrap();
 
@@ -2003,7 +2076,7 @@ mod test {
         let mut txn = store.begin_transaction(OWNER);
         // Puts the delete mask of `Items` into a state which is stored inline in the store (rather
         // than on the heap), and which the iterator reads.
-        txn.Items.remove(&"b");
+        txn.Items.delete(&"b");
         let mut iter = txn.Items.iter();
         txn.Counters.insert(1, 1);
         txn.Count.insert(1);
@@ -2024,7 +2097,7 @@ mod test {
         store.Count.insert(OWNER, 0);
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Items.remove(&"b");
+        txn.Items.delete(&"b");
         txn.Items.with_iter_mut(|i| {
             for (_, v) in i {
                 txn.Counters.insert(1, v.len() as u64);
@@ -2168,7 +2241,7 @@ mod test {
     fn raw_table_remove_then_txn_reinsert_commit() {
         let store = KvStore::new();
         store.Items.insert(OWNER, "k", "v".to_owned());
-        store.Items.remove(OWNER, &"k");
+        store.Items.delete(OWNER, &"k");
         assert_eq!(store.Items.get(OWNER, "k"), None);
 
         let mut txn = store.begin_transaction(OWNER);
@@ -2191,7 +2264,7 @@ mod test {
         // A rolled-back transaction touching both keys leaves them as they were.
         {
             let mut txn = store.begin_transaction(OWNER);
-            txn.Items.remove(&"a");
+            txn.Items.delete(&"a");
             txn.Items.insert("c", "C".to_owned());
         }
         assert_eq!(store.Items.get(OWNER, "a"), Some("A".to_owned()));
@@ -2205,9 +2278,9 @@ mod test {
         store.Items.insert(OWNER, "b", "2".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Items.remove(&"x");
-        txn.Items.remove(&"y");
-        txn.Items.remove(&"z");
+        txn.Items.delete(&"x");
+        txn.Items.delete(&"y");
+        txn.Items.delete(&"z");
         assert_eq!(txn.Items.len(), 2);
         assert!(!txn.Items.is_empty());
     }
@@ -2220,7 +2293,7 @@ mod test {
         store.Items.insert(OWNER, "c", "3".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Items.remove(&"b");
+        txn.Items.delete(&"b");
         txn.Items.insert("d", "4".to_owned());
         assert_eq!(txn.Items.len(), 3);
     }
@@ -2233,7 +2306,7 @@ mod test {
         store.Items.insert(OWNER, "c", "3".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Items.remove(&"b");
+        txn.Items.delete(&"b");
         txn.Items.insert("d", "4".to_owned());
 
         let table = &txn.Items;
@@ -2277,9 +2350,9 @@ mod test {
         store.Items.insert(OWNER, "b", "b".to_owned());
 
         let mut txn = store.begin_transaction(OWNER);
-        txn.Items.remove(&"a");
+        txn.Items.delete(&"a");
         // `b` stays removed, so re-inserting `a` must only take `a` out of the set of removed keys.
-        txn.Items.remove(&"b");
+        txn.Items.delete(&"b");
         txn.Items.insert("a", "new".to_owned());
         assert_eq!(txn.Items.get("a"), Some("new".to_owned()));
         assert_eq!(txn.Items.keys().copied().collect::<Vec<_>>(), vec!["a"]);
@@ -2298,7 +2371,7 @@ mod test {
         txn.Items.clear();
         txn.Items.insert("b", "2".to_owned());
         txn.Items.insert("c", "3".to_owned());
-        txn.Items.remove(&"b");
+        txn.Items.delete(&"b");
         assert_eq!(txn.Items.get("b"), None);
         assert_eq!(txn.Items.keys().copied().collect::<Vec<_>>(), vec!["c"]);
         txn.commit().unwrap();
@@ -2321,7 +2394,7 @@ mod test {
         txn.Items.clear();
         txn.Items.insert("b", "new".to_owned());
         // `a` was cleared and not re-inserted, so removing it is a no-op.
-        txn.Items.remove(&"a");
+        txn.Items.delete(&"a");
         assert_eq!(txn.Items.get("a"), None);
         assert_eq!(txn.Items.keys().copied().collect::<Vec<_>>(), vec!["b"]);
         txn.commit().unwrap();
