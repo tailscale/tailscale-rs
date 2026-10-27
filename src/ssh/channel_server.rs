@@ -2,7 +2,7 @@ use std::{collections::HashMap, marker::PhantomData, net::SocketAddr, sync::Arc}
 
 use russh::{
     Channel, ChannelId, Pty, Sig,
-    server::{Auth, Handle, Msg, Session},
+    server::{Auth, ChannelOpenHandle, Handle, Msg, Session},
 };
 use tokio::{
     sync::{mpsc, mpsc::UnboundedSender},
@@ -137,8 +137,9 @@ where
     async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
         session: &mut Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         tracing::debug!(channel = ?channel.id(), "new session");
 
         let (tx, mut rx) = mpsc::unbounded_channel::<Request>();
@@ -193,7 +194,8 @@ where
 
         session.channel_success(channel.id())?;
 
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn channel_close(

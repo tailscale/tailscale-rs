@@ -216,7 +216,7 @@ bytes = { workspace = true, optional = true }
 rand.workspace = true
 ratatui = { version = "0.30", optional = true }
 # exclude rsa to avoid https://rustsec.org/advisories/RUSTSEC-2023-0071
-russh = { version = "0.60", optional = true, default-features = false, features = ["flate2", "aws-lc-rs"] }
+russh = { version = "0.65", optional = true, default-features = false, features = ["flate2", "aws-lc-rs"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
