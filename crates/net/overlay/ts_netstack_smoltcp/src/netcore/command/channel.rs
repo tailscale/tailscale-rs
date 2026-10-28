@@ -54,6 +54,10 @@ pub trait HasChannel {
 
     /// Send a nonblocking request, discarding any response.
     ///
+    /// Unlike [`HasChannel::request`] and [`HasChannel::request_blocking`], this will
+    /// always be driven to completion by the netstack polling logic even though the sender
+    /// end of the request channel is dropped.
+    ///
     /// This is mainly intended for use in [`Drop`] implementations, as they can't be `async`
     /// and it would be frequently be surprising if they blocked the calling thread.
     ///

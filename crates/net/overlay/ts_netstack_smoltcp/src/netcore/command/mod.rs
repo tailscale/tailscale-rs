@@ -29,6 +29,14 @@ pub struct Request {
     pub command: Command,
     /// Oneshot response channel.
     pub resp: Sender<Response>,
+    /// Whether to complete the request if the response channel drops.
+    ///
+    /// Most requests will want to set this flag to `false`; this will produce desirable
+    /// behavior for cancellation of higher-layer async functions (or on panic).
+    ///
+    /// Socket `Drop` handlers in [`netsock`][crate::netsock] will generally set it to
+    /// `true` so they can issue close requests without waiting for the response.
+    pub complete_if_channel_dropped: bool,
 }
 
 /// Command that a netstack should execute.

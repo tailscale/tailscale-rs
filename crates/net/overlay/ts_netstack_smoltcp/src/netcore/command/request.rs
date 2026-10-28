@@ -78,6 +78,7 @@ pub fn request_blocking(
                 handle,
                 command,
                 resp: resp_tx,
+                complete_if_channel_dropped: false,
             })
             .map_err(|_| ChannelClosedError)?;
 
@@ -111,6 +112,7 @@ pub fn request(
                 handle,
                 command,
                 resp: resp_tx,
+                complete_if_channel_dropped: false,
             })
             .await?;
 
@@ -129,6 +131,10 @@ pub fn request(
 }
 
 /// Send a request without blocking on the response.
+///
+/// Unlike [`request`] and [`request_blocking`], this will always be driven to completion
+/// by the netstack polling logic even though the sender end of the request channel is
+/// dropped.
 ///
 /// Returns an error only if the request can't be sent.
 ///
@@ -151,6 +157,7 @@ pub fn request_nonblocking(
             handle,
             command,
             resp: resp_tx,
+            complete_if_channel_dropped: true,
         }) {
             Ok(_) | Err(flume::TrySendError::Full(_)) => Ok(()),
             Err(flume::TrySendError::Disconnected(_)) => Err(ChannelClosedError),

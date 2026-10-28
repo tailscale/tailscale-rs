@@ -195,8 +195,14 @@ impl Netstack {
             command,
             handle,
             resp,
+            complete_if_channel_dropped,
         }: Request,
     ) {
+        if resp.is_disconnected() && !complete_if_channel_dropped {
+            tracing::trace!("caller channel dropped, bail");
+            return;
+        }
+
         let cmd_resp = match command {
             Command::StackControl(cmd) => self.process_stack_control(cmd),
             Command::Udp(udp) => self.process_udp(udp, handle),
@@ -212,6 +218,7 @@ impl Netstack {
                     command,
                     handle,
                     resp,
+                    complete_if_channel_dropped,
                 });
             }
             otherwise => {
