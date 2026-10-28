@@ -6015,6 +6015,7 @@ dependencies = [
  "async-io",
  "atomic-waker",
  "cfg-if",
+ "divan",
  "futures-util",
  "lock_api",
  "parking_lot",

@@ -34,6 +34,8 @@ ts_util = { workspace = true, features = ["futures"] }
 # self-dep: enable all features
 ts_actor = { path = ".", features = ["tokio", "smol", "async-executor"] }
 
+divan.workspace = true
+tokio = { workspace = true, features = ["time", "sync"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 tracing-subscriber = { version = "0.3" }
 
@@ -59,6 +61,14 @@ required-features = ["tokio"]
 [[test]]
 name = "reg_count"
 required-features = ["tokio"]
+
+[[bench]]
+name = "actor"
+harness = false
+
+[[bench]]
+name = "mailbox"
+harness = false
 
 [lints]
 workspace = true
