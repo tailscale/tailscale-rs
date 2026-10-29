@@ -5386,6 +5386,7 @@ version = "0.7.1"
 dependencies = [
  "axum",
  "bytes",
+ "cfg-if",
  "chrono",
  "clap",
  "include_dir",
@@ -5396,6 +5397,7 @@ dependencies = [
  "russh",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

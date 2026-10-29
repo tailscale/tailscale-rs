@@ -225,6 +225,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 url.workspace = true
+cfg-if.workspace = true
 
 [dev-dependencies]
 # Dependencies for examples
@@ -237,6 +238,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-test = "0.2"
+tempfile = "3.27"
 
 ts_keys.workspace = true
 ts_test_util.workspace = true

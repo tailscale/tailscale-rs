@@ -2,7 +2,11 @@
 
 use std::path::Path;
 
+use tokio::io::AsyncReadExt;
 use ts_keys::PersistState;
+
+#[cfg(unix)]
+mod unix;
 
 const CONTROL_URL_VAR: &str = "TS_CONTROL_URL";
 const HOSTNAME_VAR: &str = "TS_HOSTNAME";
@@ -176,7 +180,7 @@ where
             crate::Error::KeyFileWrite
         })?;
 
-    match tokio::fs::read(path).await {
+    match read_file(path).await {
         Ok(contents) => match serde_json::from_slice::<KeyState>(&contents) {
             Ok(state) => return Ok(state),
             Err(e) => match bad_format_behavior {
@@ -205,22 +209,106 @@ where
     Ok(value)
 }
 
+/// Comparable to [`tokio::fs::read`], but also checks file permissions.
+#[tracing::instrument(level = "debug", skip_all, fields(path = %path.as_ref().display()))]
+async fn read_file(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+    let path = path.as_ref();
+    let mut f = tokio::fs::File::open(path).await?;
+
+    cfg_if::cfg_if! {
+        if #[cfg(unix)] {
+            if !unix::check_perms(&mut f).await? {
+                tracing::warn!(
+                    "tailscale-rs keyfile has dangerous permissions (expected 0600): fixing"
+                );
+
+                if let Err(e) = unix::fix_perms(&mut f).await {
+                    // TODO(npry): bail with std::io::Error::other
+                    tracing::error!(error = %e, "failed to fix permissions for key file, this will become a hard error in the future");
+                }
+            }
+        } else {
+            tracing::warn!("protection of key state file permissions is not implemented on this platform");
+        }
+    }
+
+    let mut contents = vec![];
+    f.read_to_end(&mut contents).await?;
+
+    Ok(contents)
+}
+
 async fn try_write(
     path: impl AsRef<Path>,
     value: &impl serde::Serialize,
 ) -> Result<(), crate::Error> {
-    tokio::fs::write(
-        path,
-        serde_json::to_vec(value).map_err(|e| {
-            tracing::error!(error = %e, "serializing key state");
-            crate::Error::KeyFileWrite
-        })?,
-    )
-    .await
-    .map_err(|e| {
+    use tokio::io::AsyncWriteExt;
+
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+
+    #[cfg(unix)]
+    {
+        opts.mode(0o600);
+    }
+
+    #[cfg(not(unix))]
+    {
+        tracing::warn!(
+            "protection of key state file permissions is not implemented on this platform"
+        );
+    }
+
+    let f = opts.open(path.as_ref()).await;
+
+    let mut f = f.map_err(|e| {
+        tracing::error!(error = %e, "opening key file for write");
+        crate::Error::KeyFileWrite
+    })?;
+
+    let contents = serde_json::to_vec(value).map_err(|e| {
+        tracing::error!(error = %e, "serializing key state");
+        crate::Error::KeyFileWrite
+    })?;
+
+    f.write_all(&contents).await.map_err(|e| {
         tracing::error!(error = %e, "saving key state");
         crate::Error::KeyFileWrite
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test]
+    async fn roundtrip() {
+        let state = KeyFile::default();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tokio::fs::create_dir_all(tmp.path().parent().unwrap())
+            .await
+            .unwrap();
+
+        try_write(tmp.path(), &state).await.unwrap();
+
+        let loaded = load_or_init::<KeyFile>(tmp.path(), BadFormatBehavior::Error)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            loaded.key_state.machine_key.as_bytes(),
+            state.key_state.machine_key.as_bytes()
+        );
+        assert_eq!(
+            loaded.key_state.node_key.as_bytes(),
+            state.key_state.node_key.as_bytes()
+        );
+        assert_eq!(
+            loaded.key_state.network_lock_key.as_bytes(),
+            state.key_state.network_lock_key.as_bytes()
+        );
+    }
 }
