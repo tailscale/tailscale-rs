@@ -30,8 +30,7 @@ use ts_netstack_smoltcp::netcore;
 
 #[test]
 fn udp_by_steps() -> ts_cli_util::Result<()> {
-    ts_cli_util::init_tracing();
-    std::panic::set_hook(Box::new(tracing_panic::panic_hook));
+    init_trace_panic();
 
     let mut stack = Netstack::new(
         netcore::Config {
@@ -127,6 +126,96 @@ fn udp_by_steps() -> ts_cli_util::Result<()> {
     jh.join().unwrap()?;
 
     Ok(())
+}
+
+#[test]
+fn cancel_safety() -> ts_cli_util::Result<()> {
+    init_trace_panic();
+
+    let mut stack = Netstack::new(
+        netcore::Config {
+            loopback: true,
+            ..Default::default()
+        },
+        Instant::ZERO,
+    );
+
+    let channel = stack.command_channel();
+    let handle = std::thread::spawn(move || {
+        let ep = SocketAddr::from(([127, 0, 0, 1], 1000));
+
+        let Response::Udp(udp::Response::Bound { handle, .. }) = channel
+            .request_blocking(None, udp::Command::Bind { endpoint: ep })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+
+        handle
+    });
+
+    wait_and_process_cmd(&mut stack)?; // bind
+    let sock = handle.join().unwrap();
+
+    // poll a request once to get it into the command channel
+    {
+        use core::task::{Context, Waker};
+
+        let fut = core::pin::pin![stack.request(Some(sock), udp::Command::Recv { max_len: None })];
+
+        let mut ctx = Context::from_waker(Waker::noop());
+        assert!(fut.poll(&mut ctx).is_pending());
+
+        // then drop it here. since we only send one packet below, if this request eats it, the
+        // below request will never complete
+    }
+
+    let (net, phy) = Pipe::unbounded();
+    let mut net = PipeDev {
+        pipe: net,
+        medium: Medium::Ip,
+        mtu: 1536,
+    };
+
+    // ipv4 from 127.0.0.1:1001 to 127.0.0.1:1000 with udp payload "hi"
+    phy.tx.try_send(Bytes::copy_from_slice(&[
+        0x45, 0x00, 0x00, 0x1e, 0x12, 0x34, 0x40, 0x00, 0x40, 0x11, 0x2a, 0x99, 0x7f, 0x00, 0x00,
+        0x01, 0x7f, 0x00, 0x00, 0x01, 0x03, 0xe9, 0x03, 0xe8, 0x00, 0x0a, 0x00, 0x00, 0x68, 0x69,
+    ]))?;
+    stack.poll_device_io(Instant::ZERO, &mut net);
+
+    wait_and_process_cmd(&mut stack)?;
+
+    let channel = stack.command_channel();
+    let handle = std::thread::spawn(move || {
+        let Response::Udp(resp) = channel
+            .request_blocking(Some(sock), udp::Command::Recv { max_len: None })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+
+        resp
+    });
+
+    wait_and_process_cmd(&mut stack)?;
+    let udp::Response::RecvFrom { remote, buf, .. } = handle.join().unwrap() else {
+        unreachable!()
+    };
+
+    assert_eq!(remote, SocketAddr::from(([127, 0, 0, 1], 1001)));
+    assert_eq!(buf.as_ref(), b"hi");
+
+    Ok(())
+}
+
+fn init_trace_panic() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+
+    ONCE.call_once(|| {
+        ts_cli_util::init_tracing();
+        std::panic::set_hook(Box::new(tracing_panic::panic_hook));
+    });
 }
 
 fn wait_and_process_cmd(stack: &mut Netstack) -> ts_cli_util::Result<()> {

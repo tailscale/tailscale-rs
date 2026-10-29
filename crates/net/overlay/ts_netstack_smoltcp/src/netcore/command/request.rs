@@ -78,6 +78,7 @@ pub fn request_blocking(
                 handle,
                 command,
                 resp: resp_tx,
+                complete_if_channel_dropped: false,
             })
             .map_err(|_| ChannelClosedError)?;
 
@@ -111,6 +112,7 @@ pub fn request(
                 handle,
                 command,
                 resp: resp_tx,
+                complete_if_channel_dropped: false,
             })
             .await?;
 
@@ -151,6 +153,7 @@ pub fn request_nonblocking(
             handle,
             command,
             resp: resp_tx,
+            complete_if_channel_dropped: true,
         }) {
             Ok(_) | Err(flume::TrySendError::Full(_)) => Ok(()),
             Err(flume::TrySendError::Disconnected(_)) => Err(ChannelClosedError),
