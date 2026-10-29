@@ -35,7 +35,7 @@ ts_util = { workspace = true, features = ["futures"] }
 ts_actor = { path = ".", features = ["tokio", "smol", "async-executor"] }
 
 divan.workspace = true
-tokio = { workspace = true, features = ["time", "sync"] }
+tokio = { workspace = true, features = ["time", "sync", "test-util"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 tracing-subscriber = { version = "0.3" }
 
