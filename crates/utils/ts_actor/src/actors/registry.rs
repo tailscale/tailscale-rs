@@ -164,7 +164,7 @@ impl gen_server::TypedInfo<protocol::registry::Lookup> for Registry {
             pid: state.registrations.get(&name).copied(),
         };
 
-        if let Err(e) = ctx.try_send(&reply, crate::message![resp]).await {
+        if let Err(e) = ctx.try_send(&reply, Message::new(resp)).await {
             tracing::warn!(err = %e, "failed to reply to reg lookup");
         }
 

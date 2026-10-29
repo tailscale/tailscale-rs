@@ -110,11 +110,11 @@ impl ProcContext {
         let rf = rt.new_ref();
         rt.send(
             reg,
-            crate::message![protocol::registry::Lookup {
+            Message::new(protocol::registry::Lookup {
                 reply: self.pid(),
                 rf,
                 name: name.clone(),
-            }],
+            }),
         )
         .await?;
 
@@ -235,13 +235,14 @@ impl ProcContext {
     ///
     /// ```no_run
     /// # use ts_actor::runtime::{Tokio, self};
+    /// # use ts_actor::Message;
     /// # let rt = runtime::new(Tokio::current());
     /// # struct MyRequest(ts_actor::Ref);
     /// # struct MyResponse(ts_actor::Ref);
     /// # rt.run(async |ctx| {
     /// let rf = ctx.new_ref()?;
     ///
-    /// ctx.send(&"target_pid", ts_actor::message![MyRequest(rf)]).await?;
+    /// ctx.send(&"target_pid", Message::new(MyRequest(rf))).await?;
     /// let rep = ctx.recv_where(|msg| {
     ///     if let Some(msg) = msg.downcast_ref::<MyResponse>() && msg.0 == rf {
     ///         true

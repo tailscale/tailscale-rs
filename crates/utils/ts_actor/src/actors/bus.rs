@@ -16,7 +16,7 @@ type Map<K, V> = BTreeMap<K, V>;
 
 use crate::{
     Error, Message, ProcContext, ProcFut, StaticStorage, ToProcName, actors::forward_stream,
-    gen_server, gen_server::GenServer, message, pid::Pid,
+    gen_server, gen_server::GenServer, pid::Pid,
 };
 
 /// Default name for the bus actor.
@@ -283,7 +283,7 @@ where
     T: Clone + Any + Send,
 {
     fn clone_to_msg(&self) -> Message {
-        message![self.0.clone()]
+        Message::new(self.0.clone())
     }
 }
 
@@ -293,7 +293,7 @@ where
     T: Any + Send,
 {
     fn clone_to_msg(&self) -> Message {
-        message![self.0()]
+        Message::new(self.0())
     }
 }
 

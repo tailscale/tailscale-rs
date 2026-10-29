@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use ts_actor::{runtime, runtime::Tokio};
+use ts_actor::{Message, runtime, runtime::Tokio};
 
 #[tokio::test]
 async fn count() -> Result<(), ts_actor::Error> {
@@ -44,9 +44,9 @@ async fn count() -> Result<(), ts_actor::Error> {
 
         for i in 0u32..=COUNT_TO {
             let msg = if i.is_multiple_of(2) {
-                ts_actor::message![i]
+                Message::new(i)
             } else {
-                ts_actor::message![i as i32]
+                Message::new(i as i32)
             };
 
             ctx.send(&pid, msg).await?;

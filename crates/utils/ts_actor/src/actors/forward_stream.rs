@@ -3,7 +3,7 @@ use core::any::Any;
 
 use futures_util::{FutureExt, Stream, StreamExt};
 
-use crate::{ProcContext, ProcFut, StaticStorage, ToProcName};
+use crate::{Message, ProcContext, ProcFut, StaticStorage, ToProcName};
 
 /// Forward elements from the stream `s` to process `name` as messages.
 pub fn forward_stream<S>(
@@ -30,7 +30,7 @@ where
                     item = s.next() => {
                         match item {
                             Some(t) => {
-                                ctx.send(&name, crate::message![t]).await?;
+                                ctx.send(&name, Message::new(t)).await?;
                             },
                             None => {
                                 return Ok(())

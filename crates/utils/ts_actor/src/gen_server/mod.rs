@@ -70,7 +70,7 @@ where
                     },
                     _ = crate::util::option_timeout(rt.executor(), timeout).fuse() => {
                         tracing::debug!("genserver timed out");
-                        ctx.try_send(&ctx.pid(), crate::message![Timeout(())]).await?;
+                        ctx.try_send(&ctx.pid(), Message::new(Timeout(()))).await?;
                         continue;
                     }
                 };
@@ -111,11 +111,11 @@ pub async fn call(
 
     ctx.send(
         server,
-        crate::message![Call {
+        Message::new(Call {
             rf,
             msg,
             sender: ctx.this_pid,
-        }],
+        }),
     )
     .await?;
 
@@ -142,7 +142,7 @@ pub async fn call(
 /// simply ignored. This function waits for space in them mailbox and reports if the target
 /// genserver doesn't exist.
 pub async fn cast(ctx: &ProcContext, server: &dyn ToProcName, msg: Message) -> Result<(), Error> {
-    ctx.send(server, crate::message![Cast(msg)]).await
+    ctx.send(server, Message::new(Cast(msg))).await
 }
 
 /// Try to send a message to the server identified by `server` without waiting for space in
@@ -156,7 +156,7 @@ pub async fn try_cast(
     server: &dyn ToProcName,
     msg: Message,
 ) -> Result<(), Error> {
-    ctx.try_send(server, crate::message![Cast(msg)])
+    ctx.try_send(server, Message::new(Cast(msg)))
         .await
         .map(|_| ())
 }
@@ -373,7 +373,7 @@ impl Reply {
         let Reply(ReplyHandle { pid, rf }, msg) = self;
 
         if let Err(e) = ctx
-            .try_send(&pid, crate::message![CallReply { rf, msg }])
+            .try_send(&pid, Message::new(CallReply { rf, msg }))
             .await
         {
             tracing::error!(error = %e, "replying to call");

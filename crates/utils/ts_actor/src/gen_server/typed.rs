@@ -41,7 +41,7 @@ where
     M: Any + Send,
     GS: TypedCall<M>,
 {
-    let result = crate::gen_server::call(ctx, server, crate::message![msg]).await?;
+    let result = crate::gen_server::call(ctx, server, Message::new(msg)).await?;
     result.downcast().map_err(|_| Error::BadArg)
 }
 
@@ -56,7 +56,7 @@ where
     M: Any + Send,
     GS: TypedCast<M>,
 {
-    crate::gen_server::cast(ctx, server, crate::message![msg]).await
+    crate::gen_server::cast(ctx, server, Message::new(msg)).await
 }
 
 /// Try to send a cast to the [`GenServer`] identified by `server` without waiting for space
@@ -71,7 +71,7 @@ where
     M: Any + Send,
     GS: TypedCast<M>,
 {
-    crate::gen_server::try_cast(ctx, server, crate::message![msg]).await
+    crate::gen_server::try_cast(ctx, server, Message::new(msg)).await
 }
 
 /// Lightweight handle to a caller which the implementer of [`GenServer::handle_call`] can
@@ -107,10 +107,10 @@ impl<Reply> TypedReplyHandle<Reply> {
         if let Err(e) = ctx
             .try_send(
                 &self.pid,
-                crate::message![CallReply {
+                Message::new(CallReply {
                     rf: self.rf,
-                    msg: crate::message![reply]
-                }],
+                    msg: Message::new(reply),
+                }),
             )
             .await
         {
@@ -157,7 +157,7 @@ impl<Reply> TypedReply<Reply> {
     {
         let TypedReply(handle, reply) = self;
 
-        super::Reply::new(handle.into_untyped(), crate::message![reply])
+        super::Reply::new(handle.into_untyped(), Message::new(reply))
     }
 }
 
@@ -334,7 +334,7 @@ pub trait TypedCast<M>: GenServer {
 /// #   let count_pid = rt.spawn(gen_server::start(CountServer, ()))?;
 /// #
 /// #   rt.run(async move |ctx| {
-/// ctx.send(&count_pid, ts_actor::message![Inc]).await;
+/// ctx.send(&count_pid, ts_actor::Message::new(Inc)).await;
 /// #       Ok(())
 /// #   }).await?;
 /// #   Ok(())
@@ -403,7 +403,7 @@ macro_rules! typed_call {
                 )*
                 else _msg => {
                     (Some(handle.commit(
-                        $crate::message![$crate::Error::BadArg]
+                        $crate::Message::new($crate::Error::BadArg)
                     )), None)
                 }
             }

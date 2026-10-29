@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use divan::counter::ItemsCount;
+use ts_actor::Message;
 
 fn main() {
     divan::main();
@@ -39,7 +40,7 @@ fn async_mailbox(bencher: divan::Bencher, n: u16) {
             let mut v = Vec::with_capacity(msg_count);
 
             for _ in 0..v.capacity() {
-                v.push(ts_actor::message![()]);
+                v.push(Message::default());
             }
 
             (tx.clone(), done.clone(), v)
