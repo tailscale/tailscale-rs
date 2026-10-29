@@ -11,7 +11,7 @@ use core::{
 use lock_api::{Mutex, RawMutex, RawRwLock, RawRwLockUpgrade, RwLock};
 
 use crate::{
-    AtomicPid, Error, Handle, LinkExitReason, Message, MkProc, Pid, ProcContext, ProcFut,
+    AtomicPid, Error, Handle, LinkExitReason, MakeProc, Message, Pid, ProcContext, ProcFuture,
     StaticStorage, SystemMessage,
     mailbox::async_mailbox,
     runtime::{Executor, ProcessInitState, ProcessState, RtHandle},
@@ -148,7 +148,7 @@ pub trait RtInner: Send + Sync {
     fn spawn_direct(
         &self,
         get_handle: &dyn Fn() -> RtHandle,
-        mk_proc_fut: &mut MkProc<StaticStorage<ProcFut>>,
+        mk_proc_fut: &mut MakeProc<StaticStorage<ProcFuture>>,
         links: &mut dyn Iterator<Item = Pid>,
         monitors: &mut dyn Iterator<Item = Pid>,
     ) -> Pid;
@@ -248,7 +248,7 @@ where
     fn spawn_direct(
         &self,
         get_handle: &dyn Fn() -> RtHandle,
-        f: &mut MkProc<StaticStorage<ProcFut>>,
+        f: &mut MakeProc<StaticStorage<ProcFuture>>,
         init_links: &mut dyn Iterator<Item = Pid>,
         init_monitors: &mut dyn Iterator<Item = Pid>,
     ) -> Pid {
@@ -338,7 +338,7 @@ where
             }
 
             result
-        }) as Box<ProcFut>));
+        }) as Box<ProcFuture>));
 
         // Finally, insert the task.
         {

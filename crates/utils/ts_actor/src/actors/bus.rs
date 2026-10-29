@@ -15,7 +15,7 @@ use smol_str::SmolStr;
 type Map<K, V> = BTreeMap<K, V>;
 
 use crate::{
-    Error, Message, ProcContext, ProcFut, StaticStorage, ToProcName, actors::forward_stream,
+    Error, Message, ProcContext, ProcFuture, StaticStorage, ToProcName, actors::forward_stream,
     gen_server, gen_server::GenServer, pid::Pid,
 };
 
@@ -82,7 +82,7 @@ pub async fn start_default(ctx: ProcContext) -> Result<(), Error> {
 }
 
 /// Start a bus registered with the given `name`.
-pub fn start_named(name: SmolStr) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut> {
+pub fn start_named(name: SmolStr) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture> {
     move |ctx| {
         StaticStorage::Box(Box::new(async move {
             ctx.register(name).await?;
@@ -171,7 +171,7 @@ pub async fn publish_named(
 pub fn publish_stream<S>(
     stream: S,
     retained: bool,
-) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut> + use<S>
+) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture> + use<S>
 where
     S: Stream + Send + 'static,
     S::Item: Send + Any + Clone,
@@ -186,7 +186,7 @@ pub fn publish_stream_named<S>(
     name: &dyn ToProcName,
     stream: S,
     retained: bool,
-) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut> + use<S>
+) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture> + use<S>
 where
     S: Stream + Send + 'static,
     S::Item: Send + Any + Clone,
@@ -211,7 +211,7 @@ pub fn filter_map<T, U, S, F>(
     state: S,
     retain: bool,
     f: F,
-) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut> + use<T, S, U, F>
+) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture> + use<T, S, U, F>
 where
     T: Send + 'static,
     U: Any + Send + Clone + 'static,
@@ -232,7 +232,7 @@ pub fn filter_map_named<T, U, S, F>(
     mut state: S,
     retain: bool,
     mut f: F,
-) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut> + use<T, S, U, F>
+) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture> + use<T, S, U, F>
 where
     T: Send + 'static,
     U: Any + Send + Clone + 'static,

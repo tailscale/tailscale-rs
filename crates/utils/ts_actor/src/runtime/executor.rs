@@ -1,9 +1,9 @@
-use crate::{ProcFut, StaticStorage};
+use crate::{ProcFuture, StaticStorage};
 
 /// Abstraction around an async executor.
 pub trait Executor: Send + Sync + 'static {
     /// Spawn a future onto the executor.
-    fn spawn(&self, fut: StaticStorage<ProcFut>) -> StaticStorage<dyn TaskHandle>;
+    fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle>;
     /// Return a future that sleeps for the given duration.
     fn sleep(
         &self,
@@ -76,7 +76,7 @@ mod _tokio {
     }
 
     impl Executor for Tokio {
-        fn spawn(&self, fut: StaticStorage<ProcFut>) -> StaticStorage<dyn TaskHandle> {
+        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle> {
             StaticStorage::Box(Box::new(TaskBridge {
                 fut: Some(self.0.spawn(fut)),
             }))
@@ -138,7 +138,7 @@ mod _smol {
     use core::time::Duration;
 
     use crate::{
-        ProcFut, StaticStorage,
+        ProcFuture, StaticStorage,
         runtime::{Executor, TaskHandle, executor::TaskBridge},
     };
 
@@ -149,7 +149,7 @@ mod _smol {
     pub struct Smol;
 
     impl Executor for Smol {
-        fn spawn(&self, fut: StaticStorage<ProcFut>) -> StaticStorage<dyn TaskHandle> {
+        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle> {
             let task = smol::spawn(fut);
 
             // NB: smol uses async-executor under the hood, hence this reuses the TaskHandle impl
@@ -202,7 +202,7 @@ mod _async_exec {
     where
         B: Borrow<async_executor::Executor<'static>> + Send + Sync + 'static,
     {
-        fn spawn(&self, fut: StaticStorage<ProcFut>) -> StaticStorage<dyn TaskHandle> {
+        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle> {
             let task = self.0.borrow().spawn(fut);
 
             StaticStorage::Box(Box::new(TaskBridge { fut: Some(task) }))

@@ -4,7 +4,7 @@ use core::any::Any;
 use smol_str::SmolStr;
 
 use crate::{
-    Error, Handle, Message, ProcFut, ProcName, StaticStorage, ToProcName,
+    Error, Handle, Message, ProcFuture, ProcName, StaticStorage, ToProcName,
     actors::registry,
     mailbox::{Receiver, TryRecvError},
     pid::Pid,
@@ -54,7 +54,7 @@ impl ProcContext {
         self.rt()?.spawn_ss(
             &mut move |ctx| {
                 let proc_fut = proc.take().unwrap()(ctx);
-                StaticStorage::Box(Box::new(proc_fut) as Box<ProcFut>)
+                StaticStorage::Box(Box::new(proc_fut) as Box<ProcFuture>)
             },
             [self.this_pid],
             [],
@@ -74,7 +74,7 @@ impl ProcContext {
     {
         self.rt()?.spawn_ss(
             &mut ts_util::fn_::fn_mut1(move |ctx| {
-                StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFut>)
+                StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFuture>)
             }),
             [],
             [self.this_pid],
