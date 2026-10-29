@@ -22,8 +22,12 @@ pub struct Inner<RW, M> {
     pub next_pid: AtomicUsize,
     pub next_ref: AtomicU64,
     pub process_table: RwLock<RW, BTreeMap<Pid, RwLock<RW, ProcessState>>>,
-    pub process_complete_wakers: Mutex<M, Vec<Waker>>,
+    pub ptable_empty_wakers: Mutex<M, Vec<Waker>>,
     pub global_registry: AtomicPid,
+}
+
+fn ptable_is_empty<V>(global_reg: Pid, table: &BTreeMap<Pid, V>) -> bool {
+    table.is_empty() || table.iter().all(|(pid, _)| global_reg == *pid)
 }
 
 impl<RW, M> Inner<RW, M> {
@@ -58,6 +62,8 @@ impl<RW, M> Inner<RW, M> {
         RW: RawRwLock,
         M: RawMutex,
     {
+        let global_reg = self.global_registry.load(Ordering::Acquire);
+
         let proc = {
             let mut ptable = self.process_table.write();
 
@@ -74,8 +80,8 @@ impl<RW, M> Inner<RW, M> {
 
             let proc = ptable.remove(&pid);
 
-            if ptable.is_empty() {
-                for waker in self.process_complete_wakers.lock().drain(..) {
+            if ptable_is_empty(global_reg, &ptable) {
+                for waker in self.ptable_empty_wakers.lock().drain(..) {
                     waker.wake();
                 }
             }
@@ -502,11 +508,11 @@ where
         let reg_pid = self.global_registry.load(Ordering::Acquire);
         let proc_table = self.process_table.read();
 
-        if proc_table.is_empty() || proc_table.iter().all(|(&x, _)| x == reg_pid) {
+        if ptable_is_empty(reg_pid, &proc_table) {
             return Poll::Ready(());
-        };
+        }
 
-        self.process_complete_wakers.lock().push(cx.waker().clone());
+        self.ptable_empty_wakers.lock().push(cx.waker().clone());
 
         Poll::Pending
     }

@@ -59,7 +59,7 @@ where
         next_pid: AtomicUsize::new(0),
         next_ref: AtomicU64::new(0),
         process_table: RwLock::new(BTreeMap::new()),
-        process_complete_wakers: Mutex::new(vec![]),
+        ptable_empty_wakers: Mutex::new(vec![]),
         global_registry: Pid(0).into(),
     });
 
