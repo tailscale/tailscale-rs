@@ -1,3 +1,7 @@
 # ts_actor
 
-Actor system aiming to adapt Erlang to Rust idioms.
+Experimental actor system built as an adaptation of Erlang into Rust idioms.
+
+`ts_actor` intentionally diverges from existing Rust ecosystem actor systems by adopting highly
+dynamic message processing capabilities, rather than traits enforcing static message and reply
+typing.
