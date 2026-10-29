@@ -7,9 +7,9 @@ use crate::{error::Error, runtime::Rt};
 ///
 /// This doesn't keep it alive.
 #[derive(Clone)]
-pub struct Handle(pub(in crate::runtime) Weak<dyn Rt>);
+pub struct RtHandle(pub(in crate::runtime) Weak<dyn Rt>);
 
-impl Debug for Handle {
+impl Debug for RtHandle {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -23,15 +23,15 @@ impl Debug for Handle {
     }
 }
 
-impl PartialEq for Handle {
+impl PartialEq for RtHandle {
     fn eq(&self, other: &Self) -> bool {
         self.0.ptr_eq(&other.0)
     }
 }
 
-impl Eq for Handle {}
+impl Eq for RtHandle {}
 
-impl Handle {
+impl RtHandle {
     /// Try to upgrade this handle to an `Arc<dyn RuntimeT>`.
     ///
     /// Returns `Error::RuntimeStopped` if the runtime has been dropped.
@@ -40,7 +40,7 @@ impl Handle {
     }
 }
 
-impl<RT> From<Arc<RT>> for Handle
+impl<RT> From<Arc<RT>> for RtHandle
 where
     RT: Rt + 'static,
 {
@@ -49,29 +49,29 @@ where
     }
 }
 
-impl<RT> From<&Arc<RT>> for Handle
+impl<RT> From<&Arc<RT>> for RtHandle
 where
     RT: Rt + 'static,
 {
     fn from(value: &Arc<RT>) -> Self {
-        Handle(Arc::downgrade(value) as _)
+        RtHandle(Arc::downgrade(value) as _)
     }
 }
 
-impl<RT> From<Weak<RT>> for Handle
+impl<RT> From<Weak<RT>> for RtHandle
 where
     RT: Rt + 'static,
 {
     fn from(value: Weak<RT>) -> Self {
-        Handle(value as _)
+        RtHandle(value as _)
     }
 }
 
-impl<RT> From<&Weak<RT>> for Handle
+impl<RT> From<&Weak<RT>> for RtHandle
 where
     RT: Rt + 'static,
 {
     fn from(value: &Weak<RT>) -> Self {
-        Handle(value.clone() as _)
+        RtHandle(value.clone() as _)
     }
 }

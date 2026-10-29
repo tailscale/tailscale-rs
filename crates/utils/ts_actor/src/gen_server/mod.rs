@@ -26,7 +26,7 @@ use core::time::Duration;
 
 use futures_util::FutureExt;
 
-use crate::{Error, Message, ProcContext, ProcFut, Ref, StaticStorage, ToProcName, msg_match};
+use crate::{Error, Handle, Message, ProcContext, ProcFut, StaticStorage, ToProcName, msg_match};
 
 mod handle;
 mod typed;
@@ -313,7 +313,7 @@ where
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ReplyHandle {
     pid: Pid,
-    rf: Ref,
+    rf: Handle,
 }
 
 impl ReplyHandle {
@@ -388,13 +388,13 @@ impl From<Reply> for CallResult {
 }
 
 struct Call {
-    rf: Ref,
+    rf: Handle,
     msg: Message,
     sender: Pid,
 }
 
 struct CallReply {
-    rf: Ref,
+    rf: Handle,
     msg: Message,
 }
 

@@ -177,7 +177,7 @@ where
 {
     fn spawn_direct(
         &self,
-        get_handle: &dyn Fn() -> Handle,
+        get_handle: &dyn Fn() -> RtHandle,
         f: &mut MkProc<StaticStorage<ProcFut>>,
         init_links: &mut dyn Iterator<Item = Pid>,
         init_monitors: &mut dyn Iterator<Item = Pid>,
@@ -405,8 +405,8 @@ where
         self.global_registry.load(Ordering::Acquire)
     }
 
-    fn new_ref(&self) -> Ref {
-        Ref(self.next_ref.fetch_add(1, Ordering::Relaxed))
+    fn new_handle(&self) -> Handle {
+        Handle(self.next_ref.fetch_add(1, Ordering::Relaxed))
     }
 
     fn executor(&self) -> &dyn Executor {

@@ -3,7 +3,7 @@
 
 use smol_str::SmolStr;
 
-use crate::{Pid, Ref};
+use crate::{Handle, Pid};
 
 /// Request to look up a process by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,15 +12,15 @@ pub struct Lookup {
     pub reply: Pid,
     /// The name to look up.
     pub name: SmolStr,
-    /// [`Ref`] for correlation.
-    pub rf: Ref,
+    /// [`Handle`] for correlation.
+    pub rf: Handle,
 }
 
 /// Response to a [`Lookup`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
-    /// The same [`Ref`] as in the original [`Lookup`].
-    pub rf: Ref,
+    /// The same [`Handle`] as in the original [`Lookup`].
+    pub rf: Handle,
     /// The lookup result, if found.
     pub pid: Option<Pid>,
 }
