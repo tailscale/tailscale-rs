@@ -302,7 +302,7 @@ crate::impl_cast!(TypedBus, Register, ctx, state, Register { pid, tid }, {
 
     if let Some(retained) = &sub_state.retained
         && !sub_state.recipients.contains(&pid)
-        && let Err(e) = ctx.try_send(&pid, retained.clone_to_msg()).await
+        && let Err(e) = ctx.send(&pid, retained.clone_to_msg()).await
     {
         tracing::error!(error = %e);
     }
@@ -351,7 +351,7 @@ crate::impl_cast!(
 
         for recip in sub_state.recipients.iter() {
             // actor is dead (this is an expected case)
-            if ctx.try_send(recip, message.clone_to_msg()).await.is_err() {
+            if ctx.send(recip, message.clone_to_msg()).await.is_err() {
                 any_missing = true;
             }
         }

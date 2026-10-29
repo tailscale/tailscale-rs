@@ -9,10 +9,9 @@ fn main() {
     divan::main();
 }
 
-#[divan::bench(args = [16, 32, 128, 1024])]
-fn async_mailbox(bencher: divan::Bencher, n: u16) {
-    let mbox = ts_actor::mailbox::Mailbox::new(n);
-    let (tx, rx) = ts_actor::mailbox::async_mailbox::<parking_lot::RawMutex>(mbox);
+#[divan::bench(args = [16 * 1024, 32 * 1024, 128 * 1024, 1024 * 1024])]
+fn async_mailbox(bencher: divan::Bencher, n: usize) {
+    let (tx, rx) = ts_actor::mailbox::async_mailbox::<parking_lot::RawMutex>();
 
     let tokio = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -21,12 +20,10 @@ fn async_mailbox(bencher: divan::Bencher, n: u16) {
 
     let done = Arc::new(tokio::sync::Notify::new());
 
-    let msg_count = (n as usize) * 1024;
-
     let done_tx = done.clone();
     tokio.spawn(async move {
         loop {
-            for _ in 0..msg_count {
+            for _ in 0..n {
                 rx.recv().await.unwrap();
             }
 
@@ -37,7 +34,7 @@ fn async_mailbox(bencher: divan::Bencher, n: u16) {
     let tx = Arc::new(tx);
     bencher
         .with_inputs(|| {
-            let mut v = Vec::with_capacity(msg_count);
+            let mut v = Vec::with_capacity(n);
 
             for _ in 0..v.capacity() {
                 v.push(Message::default());
@@ -49,7 +46,7 @@ fn async_mailbox(bencher: divan::Bencher, n: u16) {
         .bench_local_values(|(tx, done, v)| {
             tokio.block_on(async move {
                 for msg in v {
-                    tx.send(msg).await.unwrap();
+                    tx.send(msg).unwrap();
                 }
 
                 done.notified().await;

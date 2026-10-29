@@ -10,7 +10,7 @@ use lock_api::{Mutex, RawMutex, RawRwLockUpgrade, RwLock};
 
 use crate::{
     Error, Message, MkProc, Pid, ProcContext, ProcFut, StaticStorage, actors::registry, gen_server,
-    mailbox::TrySendError, oneshot,
+    oneshot,
 };
 
 mod executor;
@@ -80,40 +80,9 @@ impl dyn Rt {
     /// Send a message to `pid`.
     ///
     /// Returns [`Error::NoProc`] if the process doesn't exist.
-    pub async fn send(&self, pid: Pid, message: Message) -> Result<(), Error> {
-        let mut fut = None;
-        let mut msg = Some(message);
-
-        self.with_proc_mut_dyn(pid, &mut |p| {
-            fut = Some(p.mailbox.send(msg.take().unwrap()));
-        })?;
-
-        fut.unwrap().await.map_err(|_| Error::NoProc)
-    }
-
-    /// Try to send the message to the given `pid` synchronously.
-    ///
-    /// The return value is unconventional: if the receiver's mailbox was full,
-    /// `Ok(Some(msg))` is returned (the message bounces). If the message was accepted,
-    /// returns `Ok(None)`. This isn't treated as an error because it's not a sender-side
-    /// error for the message to not make it into the receiver's queue; semantically, the
-    /// receiver dropped it.
-    ///
-    /// This function is only async for the resolution of `name`: the actual `try_send` does
-    /// not wait.
-    pub fn try_send(&self, pid: Pid, message: Message) -> Result<Option<Message>, Error> {
-        let mut result = None;
-        let mut message = Some(message);
-
-        self.with_proc_mut_dyn(pid, &mut |p| {
-            result = Some(p.mailbox.try_send(message.take().unwrap()));
-        })?;
-
-        match result.unwrap() {
-            Ok(_) => Ok(None),
-            Err(TrySendError::Full(msg)) => Ok(Some(msg)),
-            Err(TrySendError::Closed(_)) => Err(Error::NoProc),
-        }
+    pub fn send(&self, pid: Pid, message: Message) -> Result<(), Error> {
+        <dyn RtInner>::with_proc_mut(self, pid, move |p| p.mailbox.send(message))?
+            .map_err(|_| Error::NoProc)
     }
 
     /// Spawn a process with the given process constructor, links, and monitors.

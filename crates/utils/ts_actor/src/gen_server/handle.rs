@@ -56,16 +56,4 @@ where
     {
         gen_server::cast_typed::<M, GS>(self.ctx, &self.name, msg).await
     }
-
-    /// Try to send a typed cast with a message of type `M`. Doesn't wait for capacity in
-    /// the receiver's mailbox.
-    ///
-    /// See [`gen_server::try_cast_typed`].
-    pub async fn try_cast_typed<M>(&self, msg: M) -> Result<(), Error>
-    where
-        GS: TypedCast<M>,
-        M: Send + 'static,
-    {
-        gen_server::try_cast_typed::<M, GS>(self.ctx, &self.name, msg).await
-    }
 }

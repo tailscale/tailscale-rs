@@ -34,7 +34,7 @@ mod typed;
 pub use handle::GenServerHandle;
 pub use typed::{
     TypedCall, TypedCallResult, TypedCast, TypedInfo, TypedReply, TypedReplyHandle, call_typed,
-    cast_typed, try_cast_typed,
+    cast_typed,
 };
 
 use crate::pid::Pid;
@@ -70,7 +70,7 @@ where
                     },
                     _ = crate::util::option_timeout(rt.executor(), timeout).fuse() => {
                         tracing::debug!("genserver timed out");
-                        ctx.try_send(&ctx.pid(), Message::new(Timeout(()))).await?;
+                        ctx.send(&ctx.pid(), Message::new(Timeout(()))).await?;
                         continue;
                     }
                 };
@@ -138,27 +138,10 @@ pub async fn call(
 
 /// Send a message to the server identified by `server`.
 ///
-/// Unlike Erlang, error conditions from a full mailbox or the pid not existing are not
-/// simply ignored. This function waits for space in them mailbox and reports if the target
-/// genserver doesn't exist.
+/// Unlike Erlang, error conditions from the pid not existing are not simply ignored. This
+/// function reports if the target genserver doesn't exist.
 pub async fn cast(ctx: &ProcContext, server: &dyn ToProcName, msg: Message) -> Result<(), Error> {
     ctx.send(server, Message::new(Cast(msg))).await
-}
-
-/// Try to send a message to the server identified by `server` without waiting for space in
-/// the target process's mailbox.
-///
-/// Unlike Erlang, error conditions from the pid not existing are not simply ignored: this
-/// function returns [`Error::NoProc`] in that case. Simply drop the result if you're not interested
-/// in this condition.
-pub async fn try_cast(
-    ctx: &ProcContext,
-    server: &dyn ToProcName,
-    msg: Message,
-) -> Result<(), Error> {
-    ctx.try_send(server, Message::new(Cast(msg)))
-        .await
-        .map(|_| ())
 }
 
 /// Result alias for the return type of [`GenServer::handle_call`].
@@ -372,10 +355,7 @@ impl Reply {
     pub async fn send(self, ctx: &ProcContext) {
         let Reply(ReplyHandle { pid, rf }, msg) = self;
 
-        if let Err(e) = ctx
-            .try_send(&pid, Message::new(CallReply { rf, msg }))
-            .await
-        {
+        if let Err(e) = ctx.send(&pid, Message::new(CallReply { rf, msg })).await {
             tracing::error!(error = %e, "replying to call");
         }
     }
