@@ -138,7 +138,7 @@ impl gen_server::TypedCall<Forward> for Registry {
             return caller_handle.commit(Err(Error::NoProc)).into();
         };
 
-        let result = ctx.try_send(&id, message).await;
+        let result = ctx.send(&id, message).await;
         if let Err(Error::NoProc) = &result {
             state.registrations.remove(&name);
         }
@@ -164,7 +164,7 @@ impl gen_server::TypedInfo<protocol::registry::Lookup> for Registry {
             pid: state.registrations.get(&name).copied(),
         };
 
-        if let Err(e) = ctx.try_send(&reply, Message::new(resp)).await {
+        if let Err(e) = ctx.send(&reply, Message::new(resp)).await {
             tracing::warn!(err = %e, "failed to reply to reg lookup");
         }
 

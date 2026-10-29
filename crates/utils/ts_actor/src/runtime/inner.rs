@@ -7,14 +7,13 @@ use core::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     task::{Context, Poll, Waker},
 };
-use std::sync::Arc;
 
 use lock_api::{Mutex, RawMutex, RawRwLock, RawRwLockUpgrade, RwLock};
 
 use crate::{
     AtomicPid, Error, Handle, LinkExitReason, Message, MkProc, Pid, ProcContext, ProcFut,
     StaticStorage, SystemMessage,
-    mailbox::{Mailbox, TrySendError, async_mailbox},
+    mailbox::async_mailbox,
     runtime::{Executor, ProcessInitState, ProcessState, RtHandle},
 };
 
@@ -100,11 +99,8 @@ impl<RW, M> Inner<RW, M> {
             };
 
             let mut mon = mon.write();
-            if let Err(e) = mon.mailbox.try_send(Message::new(SystemMessage::Down(pid)))
-                && matches!(e, TrySendError::Full(_))
-            {
-                tracing::warn!(%monitor_pid, "failed to deliver DOWN");
-            }
+            // If the monitoring pid has died, this is fine, ignore.
+            let _result = mon.mailbox.send(Message::new(SystemMessage::Down(pid)));
 
             mon.monitors.remove(&pid);
         }
@@ -128,13 +124,11 @@ impl<RW, M> Inner<RW, M> {
             link.links.remove(&pid);
 
             if link.trap_exit {
-                if let Err(e) = link.mailbox.try_send(Message::new(SystemMessage::LinkExit {
+                // If the linked process is also dead, this is fine, ignore.
+                let _result = link.mailbox.send(Message::new(SystemMessage::LinkExit {
                     linked_process: pid,
                     reason: reason.clone(),
-                })) && matches!(e, TrySendError::Full(_))
-                {
-                    tracing::warn!(%link_pid, "failed to deliver link exit (mailbox full)");
-                }
+                }));
             } else {
                 pids_to_remove.insert(*link_pid);
                 continue;
@@ -285,7 +279,7 @@ where
             }
         }
 
-        let (tx, rx) = async_mailbox::<M>(Mailbox::new(32));
+        let (tx, rx) = async_mailbox::<M>();
 
         // Insert the process state block first, with task in initializing state.
         {

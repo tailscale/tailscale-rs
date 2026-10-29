@@ -115,8 +115,7 @@ impl ProcContext {
                 rf,
                 name: name.clone(),
             }),
-        )
-        .await?;
+        )?;
 
         let resp = self
             .recv_where_downcast::<protocol::registry::Reply>(|reply| reply.rf == rf)
@@ -320,31 +319,10 @@ impl ProcContext {
     }
 
     /// Send `message` to the process specified by `pid`.
-    ///
-    /// Waits until there is capacity in the process's mailbox.
     pub async fn send(&self, name: &dyn ToProcName, message: Message) -> Result<(), Error> {
         let pid = self.whereis(name).await?;
 
-        self.rt()?.send(pid, message).await
-    }
-
-    /// Try to send the message to the given process synchronously.
-    ///
-    /// The return value is unconventional: if the receiver's mailbox was full,
-    /// `Ok(Some(msg))` is returned (the message bounces). If the message was accepted,
-    /// returns `Ok(None)`. This isn't treated as an error because it's not a sender-side
-    /// error for the message to not make it into the receiver's queue; semantically, the
-    /// receiver dropped it.
-    ///
-    /// This function is only async for the resolution of `name`: the actual `try_send` does
-    /// not wait.
-    pub async fn try_send(
-        &self,
-        name: &dyn ToProcName,
-        message: Message,
-    ) -> Result<Option<Message>, Error> {
-        let pid = self.whereis(name).await?;
-        self.rt()?.try_send(pid, message)
+        self.rt()?.send(pid, message)
     }
 
     /// Register this actor as `name` with the global registry.

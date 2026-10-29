@@ -59,21 +59,6 @@ where
     crate::gen_server::cast(ctx, server, Message::new(msg)).await
 }
 
-/// Try to send a cast to the [`GenServer`] identified by `server` without waiting for space
-/// in its mailbox.
-#[allow(clippy::extra_unused_type_parameters)]
-pub async fn try_cast_typed<M, GS>(
-    ctx: &ProcContext,
-    server: &dyn ToProcName,
-    msg: M,
-) -> Result<(), Error>
-where
-    M: Any + Send,
-    GS: TypedCast<M>,
-{
-    crate::gen_server::try_cast(ctx, server, Message::new(msg)).await
-}
-
 /// Lightweight handle to a caller which the implementer of [`GenServer::handle_call`] can
 /// hold in order to reply later.
 ///
@@ -105,7 +90,7 @@ impl<Reply> TypedReplyHandle<Reply> {
         Reply: Send + Any,
     {
         if let Err(e) = ctx
-            .try_send(
+            .send(
                 &self.pid,
                 Message::new(CallReply {
                     rf: self.rf,
