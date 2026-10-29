@@ -69,7 +69,7 @@ impl gen_server::TypedCast<Register> for Registry {
         state.registrations.insert(name, id);
 
         for waiter in waiters.into_iter().flatten() {
-            waiter.reply(ctx, id).await;
+            waiter.send_reply(ctx, id).await;
         }
 
         None

@@ -65,7 +65,7 @@ where
 /// The intended semantics of [`TypedCall::handle_call`] are that each call gets exactly
 /// one reply; hence, you may either [`TypedReplyHandle::commit`] a response message and
 /// return the [`TypedReply`] or store the [`TypedReplyHandle`] to return a deferred reply
-/// later via [`TypedReplyHandle::reply`].
+/// later via [`TypedReplyHandle::send_reply`].
 #[must_use = "not consuming a TypedReplyHandle will cause the call to hang"]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypedReplyHandle<Reply> {
@@ -85,7 +85,7 @@ impl<Reply> TypedReplyHandle<Reply> {
     }
 
     /// Send a reply to the caller.
-    pub async fn reply(self, ctx: &ProcContext, reply: Reply)
+    pub async fn send_reply(self, ctx: &ProcContext, reply: Reply)
     where
         Reply: Send + Any,
     {

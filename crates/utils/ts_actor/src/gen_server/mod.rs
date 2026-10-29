@@ -190,7 +190,7 @@ pub trait GenServer: Send {
     ///
     /// A reply is expected; `handle` expresses this. If you [`ReplyHandle::commit`] it and
     /// return it, the `gen_server` logic handles sending it for you. If you need to defer
-    /// your reply, you can store the handle and call [`ReplyHandle::reply`] to respond
+    /// your reply, you can store the handle and call [`ReplyHandle::send_reply`] to respond
     /// later.
     fn handle_call(
         &self,
@@ -313,7 +313,7 @@ where
 /// hold in order to reply later.
 ///
 /// The intended semantics of [`GenServer::handle_call`] are that each call gets exactly
-/// one reply; hence, [`ReplyHandle::reply`] and [`ReplyHandle::commit`] both consume
+/// one reply; hence, [`ReplyHandle::send_reply`] and [`ReplyHandle::commit`] both consume
 /// `self` (you must pick one behavior).
 #[must_use = "not consuming a caller handle will cause the call to hang"]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -324,11 +324,11 @@ pub struct ReplyHandle {
 
 impl ReplyHandle {
     /// Send a reply to the caller.
-    pub async fn reply(self, ctx: &ProcContext, msg: Message) {
+    pub async fn send_reply(self, ctx: &ProcContext, msg: Message) {
         self.commit(msg).send(ctx).await
     }
 
-    /// Commit this handle to a [`Reply`].
+    /// Commit this handle to a [`Reply`] which will be sent by the gen_server logic.
     pub const fn commit(self, message: Message) -> Reply {
         Reply::new(self, message)
     }
