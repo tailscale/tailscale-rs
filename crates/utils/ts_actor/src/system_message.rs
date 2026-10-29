@@ -1,10 +1,10 @@
-use crate::{Error, Pid};
+use crate::{Error, Handle, Pid};
 
 /// Messages the system may send to a process.
 #[derive(Debug, Clone)]
 pub enum SystemMessage {
-    /// Monitored process died.
-    Down(Pid),
+    /// Monitored process died (with the given monitor handle).
+    Down(Handle, Pid),
 
     /// Linked process died.
     ///

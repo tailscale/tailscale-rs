@@ -1,6 +1,6 @@
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 
-use crate::{StaticStorage, mailbox::Sender, pid::Pid, runtime::TaskHandle};
+use crate::{Handle, StaticStorage, mailbox::Sender, pid::Pid, runtime::TaskHandle};
 
 /// State of a process in the system.
 pub struct ProcessState {
@@ -8,10 +8,10 @@ pub struct ProcessState {
     pub init_state: ProcessInitState,
     /// Processes this task is linked to.
     pub links: BTreeSet<Pid>,
-    /// The processes this one monitors.
-    pub monitors: BTreeSet<Pid>,
+    /// The monitors this process has.
+    pub monitors: BTreeMap<Handle, Pid>,
     /// Processes that monitor this one.
-    pub monitored_by: BTreeSet<Pid>,
+    pub monitored_by: BTreeMap<Handle, Pid>,
     /// Sender end of the process mailbox.
     pub mailbox: Sender,
     /// Whether this process traps exit messages.
