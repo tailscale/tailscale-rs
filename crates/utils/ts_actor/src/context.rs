@@ -4,12 +4,12 @@ use core::any::Any;
 use smol_str::SmolStr;
 
 use crate::{
-    Error, Message, ProcFut, ProcName, Ref, StaticStorage, ToProcName,
+    Error, Handle, Message, ProcFut, ProcName, StaticStorage, ToProcName,
     actors::registry,
     mailbox::{Receiver, TryRecvError},
     pid::Pid,
     protocol,
-    runtime::{Handle as RuntimeHandle, Rt},
+    runtime::{Rt, RtHandle},
 };
 
 /// Execution context of a process.
@@ -18,16 +18,16 @@ use crate::{
 /// within a process context. Notably: receiving messages requires a mailbox to be available
 /// and therefore must run within a process.
 pub struct ProcContext {
-    pub(crate) handle: RuntimeHandle,
+    pub(crate) handle: RtHandle,
     pub(crate) this_pid: Pid,
     pub(crate) mbox_rx: Receiver,
 }
 
 impl ProcContext {
-    /// Generate a new [`Ref`], which is completely unique compared to any [`Ref`] generated
+    /// Generate a new [`Handle`], which is completely unique compared to any [`Handle`] generated
     /// before.
-    pub fn new_ref(&self) -> Result<Ref, Error> {
-        Ok(self.rt()?.new_ref())
+    pub fn new_ref(&self) -> Result<Handle, Error> {
+        Ok(self.rt()?.new_handle())
     }
 
     /// Spawn a new process.
@@ -107,7 +107,7 @@ impl ProcContext {
             }
         };
 
-        let rf = rt.new_ref();
+        let rf = rt.new_handle();
         rt.send(
             reg,
             Message::new(protocol::registry::Lookup {
@@ -237,8 +237,8 @@ impl ProcContext {
     /// # use ts_actor::runtime::{Tokio, self};
     /// # use ts_actor::Message;
     /// # let rt = runtime::new(Tokio::current());
-    /// # struct MyRequest(ts_actor::Ref);
-    /// # struct MyResponse(ts_actor::Ref);
+    /// # struct MyRequest(ts_actor::Handle);
+    /// # struct MyResponse(ts_actor::Handle);
     /// # rt.run(async |ctx| {
     /// let rf = ctx.new_ref()?;
     ///

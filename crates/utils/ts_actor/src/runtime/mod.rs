@@ -16,7 +16,7 @@ pub use executor::Smol;
 #[cfg(feature = "tokio")]
 pub use executor::Tokio;
 pub use executor::{Executor, TaskError, TaskHandle};
-pub use handle::Handle;
+pub use handle::RtHandle;
 use inner::Inner;
 use lock_api::{Mutex, RawMutex, RawRwLockUpgrade, RwLock};
 pub(crate) use process::{ProcessInitState, ProcessState};

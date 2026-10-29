@@ -23,7 +23,7 @@
 use core::{any::Any, marker::PhantomData};
 
 use crate::{
-    Error, ProcContext, Ref, ToProcName,
+    Error, Handle, Message, ProcContext, ToProcName,
     gen_server::{Action, CallReply, GenServer, ReplyHandle},
     pid::Pid,
 };
@@ -85,7 +85,7 @@ where
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypedReplyHandle<Reply> {
     pid: Pid,
-    rf: Ref,
+    rf: Handle,
     reply: PhantomData<Reply>,
 }
 

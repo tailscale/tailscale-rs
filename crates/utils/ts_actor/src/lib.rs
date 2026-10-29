@@ -35,7 +35,7 @@ pub use message::Message;
 pub use pid::{AtomicPid, Pid};
 pub use proc_name::{ProcName, ToProcName};
 #[doc(inline)]
-pub use runtime::Handle as RtHandle;
+pub use runtime::RtHandle;
 pub use staticstorage::StaticStorage;
 pub use system_message::{LinkExitReason, SystemMessage};
 
@@ -49,7 +49,10 @@ pub type StaticProcFut = dyn Future<Output = Result<(), Error>> + Send + 'static
 
 /// Unique, opaque type.
 ///
-/// Refs are commonly used as correlation ids between requests and responses.
+/// Commonly used as correlation ids between requests and responses.
+///
+/// Erlang calls this type `ref`, but we renamed to avoid colliding conceptually with Rust
+/// references.
 // TODO(npry): better repr? runtime-unique?
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Ref(u64);
+pub struct Handle(u64);
