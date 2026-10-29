@@ -27,7 +27,8 @@ use core::time::Duration;
 use futures_util::FutureExt;
 
 use crate::{
-    Error, Handle, Message, ProcContext, ProcFuture, StaticStorage, ToProcName, msg_match,
+    Error, Handle, Message, MonitorGuard, ProcContext, ProcFuture, StaticStorage, SystemMessage,
+    ToProcName, msg_match,
 };
 
 mod handle;
@@ -104,13 +105,17 @@ where
 }
 
 /// Send a request to the [`GenServer`] identified by `server`, waiting for its reply.
+///
+/// If the [`GenServer`] process dies while the call is in progress, it returns
+/// automatically with [`Error::NoProc`].
 pub async fn call(
     ctx: &ProcContext,
     server: &dyn ToProcName,
     msg: Message,
 ) -> Result<Message, Error> {
-    let rf = ctx.new_ref()?;
+    let mon = MonitorGuard::new(ctx, server).await?;
 
+    let rf = ctx.new_ref()?;
     ctx.send(
         server,
         Message::new(Call {
@@ -123,6 +128,13 @@ pub async fn call(
 
     let msg = ctx
         .recv_where(|msg| {
+            if let Some(msg) = msg.downcast_ref::<SystemMessage>()
+                && let SystemMessage::Down(m, _) = msg
+                && *m == mon.handle()
+            {
+                return true;
+            }
+
             let Some(rep) = msg.downcast_ref::<CallReply>() else {
                 tracing::trace!("msg no match");
                 return false;
@@ -132,10 +144,19 @@ pub async fn call(
         })
         .await?;
 
-    // unwrap: established above that this is indeed a `CallReply`
-    let reply = msg.downcast::<CallReply>().unwrap();
-
-    Ok(reply.msg)
+    msg_match! {
+        msg,
+        CallReply: reply => {
+            Ok(reply.msg)
+        },
+        SystemMessage: _ => {
+            // The genserver died while we were waiting for the reply, bail with noproc.
+            Err(Error::NoProc)
+        },
+        else _msg => {
+            unreachable!()
+        }
+    }
 }
 
 /// Send a message to the server identified by `server`.
