@@ -24,7 +24,7 @@ mod pid;
 mod proc_name;
 pub mod protocol;
 pub mod runtime;
-mod staticstorage;
+mod static_storage;
 pub mod supervisor;
 mod system_message;
 pub(crate) mod util;
@@ -36,7 +36,7 @@ pub use pid::{AtomicPid, Pid};
 pub use proc_name::{ProcName, ToProcName};
 #[doc(inline)]
 pub use runtime::RtHandle;
-pub use staticstorage::StaticStorage;
+pub use static_storage::StaticStorage;
 pub use system_message::{LinkExitReason, SystemMessage};
 
 /// Convenience alias for a function that makes a process future.
