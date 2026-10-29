@@ -1,6 +1,6 @@
 use alloc::collections::BTreeSet;
 
-use crate::{mailbox::Sender, pid::Pid, runtime::TaskHandle, staticstorage::StaticStorage};
+use crate::{StaticStorage, mailbox::Sender, pid::Pid, runtime::TaskHandle};
 
 /// State of a process in the system.
 pub struct ProcessState {
