@@ -262,7 +262,7 @@ where
 /// Subscription state for the bus.
 #[derive(Default)]
 pub struct SubState {
-    retained: Option<Box<dyn PubMsg>>,
+    retained: Option<Box<dyn PublishMsg>>,
     recipients: BTreeSet<Pid>,
 }
 
@@ -271,14 +271,14 @@ pub struct SubState {
 ///
 /// Lets you either provide a value which is [`Clone`] (wrapped in [`CloneMsg`]), or a
 /// factory closure to produce the value ([`FnMsg`]).
-trait PubMsg: Send {
+trait PublishMsg: Send {
     fn clone_to_msg(&self) -> Message;
 }
 
 struct CloneMsg<T>(T);
 struct FnMsg<F, T>(F, PhantomData<T>);
 
-impl<T> PubMsg for CloneMsg<T>
+impl<T> PublishMsg for CloneMsg<T>
 where
     T: Clone + Any + Send,
 {
@@ -287,7 +287,7 @@ where
     }
 }
 
-impl<F, T> PubMsg for FnMsg<F, T>
+impl<F, T> PublishMsg for FnMsg<F, T>
 where
     F: Fn() -> T + Send + 'static,
     T: Any + Send,
@@ -416,7 +416,7 @@ impl GenServer for TypedBus {
 /// Publish a message.
 pub struct Publish {
     tid: TypeId,
-    message: Box<dyn PubMsg>,
+    message: Box<dyn PublishMsg>,
     retained: bool,
 }
 
