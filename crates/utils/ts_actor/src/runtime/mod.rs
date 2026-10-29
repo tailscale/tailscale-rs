@@ -1,13 +1,22 @@
 //! Actor runtime.
 
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec};
+use core::{
+    future::poll_fn,
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+};
+
+use lock_api::{Mutex, RawMutex, RawRwLockUpgrade, RwLock};
+
+use crate::{
+    Error, Message, MkProc, Pid, ProcContext, ProcFut, StaticStorage, actors::registry, gen_server,
+    mailbox::TrySendError, oneshot,
+};
+
 mod executor;
 mod handle;
 mod inner;
 mod process;
-mod rt;
-
-use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec};
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[cfg(feature = "async-executor")]
 pub use executor::AsyncExecutor;
@@ -18,12 +27,8 @@ pub use executor::Tokio;
 pub use executor::{Executor, TaskError, TaskHandle};
 pub use handle::RtHandle;
 use inner::Inner;
-use lock_api::{Mutex, RawMutex, RawRwLockUpgrade, RwLock};
+pub(crate) use inner::RtInner;
 pub(crate) use process::{ProcessInitState, ProcessState};
-pub use rt::Rt;
-pub(crate) use rt::RtInternal;
-
-use crate::{Pid, StaticStorage, actors::registry, gen_server};
 
 /// Construct a new runtime around the given executor.
 ///
@@ -64,4 +69,118 @@ where
     inner.global_registry.store(global_pid, Ordering::Release);
 
     inner as _
+}
+
+/// Public-facing representation of a runtime.
+pub trait Rt: RtInner {}
+
+impl<T> Rt for T where T: RtInner {}
+
+impl dyn Rt {
+    /// Send a message to `pid`.
+    ///
+    /// Returns [`Error::NoProc`] if the process doesn't exist.
+    pub async fn send(&self, pid: Pid, message: Message) -> Result<(), Error> {
+        let mut fut = None;
+        let mut msg = Some(message);
+
+        self.with_proc_mut_dyn(pid, &mut |p| {
+            fut = Some(p.mailbox.send(msg.take().unwrap()));
+        })?;
+
+        fut.unwrap().await.map_err(|_| Error::NoProc)
+    }
+
+    /// Try to send the message to the given `pid` synchronously.
+    ///
+    /// The return value is unconventional: if the receiver's mailbox was full,
+    /// `Ok(Some(msg))` is returned (the message bounces). If the message was accepted,
+    /// returns `Ok(None)`. This isn't treated as an error because it's not a sender-side
+    /// error for the message to not make it into the receiver's queue; semantically, the
+    /// receiver dropped it.
+    ///
+    /// This function is only async for the resolution of `name`: the actual `try_send` does
+    /// not wait.
+    pub fn try_send(&self, pid: Pid, message: Message) -> Result<Option<Message>, Error> {
+        let mut result = None;
+        let mut message = Some(message);
+
+        self.with_proc_mut_dyn(pid, &mut |p| {
+            result = Some(p.mailbox.try_send(message.take().unwrap()));
+        })?;
+
+        match result.unwrap() {
+            Ok(_) => Ok(None),
+            Err(TrySendError::Full(msg)) => Ok(Some(msg)),
+            Err(TrySendError::Closed(_)) => Err(Error::NoProc),
+        }
+    }
+
+    /// Spawn a process with the given process constructor, links, and monitors.
+    pub fn spawn_ss(
+        self: &Arc<Self>,
+        mk_proc: &mut MkProc<StaticStorage<ProcFut>>,
+        links: impl IntoIterator<Item = Pid>,
+        monitors: impl IntoIterator<Item = Pid>,
+    ) -> Result<Pid, Error> {
+        let handle = RtHandle(Arc::downgrade(self));
+
+        let mut links = links.into_iter();
+        let mut mons = monitors.into_iter();
+
+        let pid = self.spawn_direct(&move || handle.clone(), mk_proc, &mut links, &mut mons);
+
+        Ok(pid)
+    }
+
+    /// Spawn a process.
+    pub fn spawn<Fut>(
+        self: &Arc<Self>,
+        proc: impl FnOnce(ProcContext) -> Fut + 'static,
+    ) -> Result<Pid, Error>
+    where
+        Fut: Future<Output = Result<(), Error>> + Send + 'static,
+    {
+        self.spawn_ss(
+            &mut ts_util::fn_::fn_mut1(move |ctx| {
+                StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFut>)
+            }),
+            [],
+            [],
+        )
+    }
+
+    /// Check that the process corresponding to `pid` is alive.
+    ///
+    /// If not, returns `Err(Error::NoProc)`.
+    pub fn check_proc(&self, pid: Pid) -> Result<(), Error> {
+        <dyn RtInner>::with_proc(self, pid, |_| {})
+    }
+
+    /// Helper: run a process to completion, waiting for the result.
+    pub async fn run<Fut, T>(
+        self: &Arc<Self>,
+        proc: impl FnOnce(ProcContext) -> Fut + Send + 'static,
+    ) -> Result<T, Error>
+    where
+        Fut: Future<Output = Result<T, Error>> + Send,
+        T: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+
+        self.spawn(async move |ctx| {
+            tx.send_unchecked(proc(ctx).await);
+            Ok(())
+        })?;
+
+        rx.await.ok_or(Error::Other).flatten()
+    }
+
+    /// Wait for all processes to complete.
+    ///
+    /// This does not shut down the runtime or abort processes proactively, it just waits
+    /// for a state where there are no processes running.
+    pub async fn wait_all_proc(&self) {
+        poll_fn(|cx| self.poll_wait_all_proc(cx)).await
+    }
 }
