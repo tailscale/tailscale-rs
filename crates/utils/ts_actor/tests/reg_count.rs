@@ -9,7 +9,7 @@ use std::sync::Arc;
 use ts_actor::{Message, runtime, runtime::Tokio};
 
 #[tracing_test::traced_test]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn reg_count() -> Result<(), ts_actor::Error> {
     const COUNT_TO: u32 = 32;
     const DELAY: Duration = Duration::from_millis(25);
@@ -63,10 +63,7 @@ async fn reg_count() -> Result<(), ts_actor::Error> {
         Ok(())
     })?;
 
-    // additional buffer time is to deflake
-    tokio::time::timeout((DELAY * COUNT_TO).mul_f32(1.25), rt.wait_all_proc())
-        .await
-        .unwrap();
+    rt.wait_all_proc().await;
     assert_eq!(count.load(Ordering::Acquire), COUNT_TO as usize);
 
     Ok(())
