@@ -101,7 +101,7 @@ pub async fn load_key_file(
 
     tracing::trace!(key_file = %p.display(), "loading key file");
 
-    let key_file = load_or_init::<KeyFile>(&p, Default::default, bad_format).await?;
+    let key_file = load_or_init::<KeyFile>(&p, bad_format).await?;
     Ok(key_file.key_state)
 }
 
@@ -118,6 +118,15 @@ impl From<&Config> for ts_control::Config {
             server_url: value.control_server_url.clone(),
             tags: value.requested_tags.clone(),
             ephemeral: value.ephemeral,
+        }
+    }
+}
+
+impl From<PersistState> for Config {
+    fn from(key_state: PersistState) -> Config {
+        Config {
+            key_state,
+            ..Default::default()
         }
     }
 }
@@ -153,11 +162,10 @@ pub enum BadFormatBehavior {
 #[tracing::instrument(skip_all, fields(?bad_format_behavior, path = %path.as_ref().display()))]
 async fn load_or_init<KeyState>(
     path: impl AsRef<Path>,
-    default: impl FnOnce() -> KeyState,
     bad_format_behavior: BadFormatBehavior,
 ) -> Result<KeyState, crate::Error>
 where
-    KeyState: serde::Serialize + serde::de::DeserializeOwned,
+    KeyState: Default + serde::Serialize + serde::de::DeserializeOwned,
 {
     let path = path.as_ref();
 
@@ -192,7 +200,7 @@ where
         }
     }
 
-    let value = default();
+    let value = KeyState::default();
     try_write(path, &value).await?;
     Ok(value)
 }

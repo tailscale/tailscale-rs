@@ -1,0 +1,37 @@
+[package]
+name = "ts_nodejs"
+version.workspace = true
+description = "Node.js bindings for tailscale"
+categories = ["api-bindings", "network-programming"]
+keywords = ["tailscale", "nodejs", "typescript", "javascript", "bindings", "napi"]
+
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+# To be changed when we are ready to publish.
+# publish.workspace = true
+
+[dependencies]
+tailscale.workspace = true
+
+bytes.workspace = true
+hex.workspace = true
+napi = { version = "3", features = ["napi6", "async", "tokio_rt"] }
+napi-derive = "3"
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+tokio-util.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zerocopy.workspace = true
+
+[build-dependencies]
+napi-build = "2"
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["napi-build"]

@@ -60,7 +60,12 @@ pub mod _internal {
         });
 
         future_into_py(py, async move {
-            let mut config = if let Some(key_file_path) = key_file_path {
+            let mut config = if let Some(keys) = keys {
+                let state: ts::keys::PersistState = (&keys)
+                    .try_into()
+                    .map_err(|_| py_value_err("invalid keys"))?;
+                state.into()
+            } else if let Some(key_file_path) = key_file_path {
                 ts::Config::default_with_key_file(key_file_path)
                     .await
                     .map_err(py_value_err)?
@@ -79,10 +84,6 @@ pub mod _internal {
 
             if let Some(tags) = tags {
                 config.requested_tags = tags;
-            }
-
-            if let Some(keys) = &keys {
-                config.key_state = keys.try_into().map_err(|_| py_value_err("invalid keys"))?;
             }
 
             config.ephemeral = ephemeral;

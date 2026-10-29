@@ -14,9 +14,10 @@ https://tailscale.com
 
 The following instructions are for Rust! For other languages, see the language-specific README:
 
-- [C](ts_ffi/README.md)
-- [Elixir](ts_elixir/README.md)
-- [Python](ts_python/README.md)
+- [C](crates/bindings/ts_ffi/README.md)
+- [Elixir](crates/bindings/ts_elixir/README.md)
+- [Node.js / TypeScript](crates/bindings/ts_nodejs/README.md)
+- [Python](crates/bindings/ts_python/README.md)
 
 Add this dependency line to your `Cargo.toml`:
 
@@ -117,7 +118,7 @@ These are features that we currently implement:
     - Communicate with the Tailscale Go client, `tsnet`, and `libtailscale`
 - Language support
     - Rust API
-    - C, Elixir, and Python bindings
+    - C, Elixir, Typescript/Javascript (node.js), and Python bindings
 
 ### Coming Soon
 

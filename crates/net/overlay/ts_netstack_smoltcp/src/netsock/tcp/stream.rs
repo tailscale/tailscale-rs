@@ -95,11 +95,17 @@ impl TcpStream {
     /// Blocks until at least one byte can be queued. The return value is the number of
     /// bytes actually sent.
     pub async fn send(&self, b: &[u8]) -> Result<usize, netcore::Error> {
-        let resp = self
-            .request(tcp::stream::Command::Send {
-                buf: Bytes::copy_from_slice(b),
-            })
-            .await?;
+        self.send_bytes(Bytes::copy_from_slice(b)).await
+    }
+
+    /// Send bytes to the remote.
+    ///
+    /// Blocks until at least one byte can be queued. The return value is the number of
+    /// bytes actually sent.
+    ///
+    /// Unlike [`send`](Self::send), this doesn't copy `b`, so this function is more efficient.
+    pub async fn send_bytes(&self, b: Bytes) -> Result<usize, netcore::Error> {
+        let resp = self.request(tcp::stream::Command::Send { buf: b }).await?;
 
         self._send(resp)
     }
@@ -149,6 +155,23 @@ impl TcpStream {
             .await?;
 
         self._recv_bytes(resp)
+    }
+
+    /// Close the sending half of the connection.
+    ///
+    /// The remote receives end-of-stream once all data already sent has been delivered. Data
+    /// can still be received until the remote closes its half of the connection.
+    pub fn shutdown_blocking(&self) -> Result<(), netcore::Error> {
+        self.request_blocking(tcp::stream::Command::Shutdown)?
+            .to_ok()
+    }
+
+    /// Close the sending half of the connection.
+    ///
+    /// The remote receives end-of-stream once all data already sent has been delivered. Data
+    /// can still be received until the remote closes its half of the connection.
+    pub async fn shutdown(&self) -> Result<(), netcore::Error> {
+        self.request(tcp::stream::Command::Shutdown).await?.to_ok()
     }
 
     fn _recv(&self, resp: Response, b: &mut [u8]) -> Result<usize, netcore::Error> {

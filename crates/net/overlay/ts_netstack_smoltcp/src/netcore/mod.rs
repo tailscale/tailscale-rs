@@ -221,8 +221,30 @@ impl Netstack {
 
                 if let Err(resp) = resp.send(otherwise) {
                     tracing::debug!(resp = ?resp.0, "response channel closed");
+                    self.release_undelivered(resp.0);
                 }
             }
+        }
+    }
+
+    /// Release any socket created for a response which couldn't be delivered because the
+    /// requester has gone away (e.g., its future was cancelled), as nothing else will close it.
+    fn release_undelivered(&mut self, resp: Response) {
+        match resp {
+            Response::TcpListen(tcp::listen::Response::Accepted { handle, .. })
+            | Response::TcpStream(tcp::stream::Response::Connected { handle }) => {
+                self.process_tcp_stream(tcp::stream::Command::Close, Some(handle));
+            }
+            Response::TcpListen(tcp::listen::Response::Listening { handle }) => {
+                self.process_tcp_listen(tcp::listen::Command::Close { handle }, None);
+            }
+            Response::Udp(udp::Response::Bound { handle, .. }) => {
+                self.process_udp(udp::Command::Close, Some(handle));
+            }
+            Response::Raw(raw::Response::Opened { handle }) => {
+                self.process_raw(raw::Command::Close, Some(handle));
+            }
+            _ => {}
         }
     }
 
@@ -459,7 +481,26 @@ impl Netstack {
         // how many of them end up still blocked and pushed onto the back.
         for _ in 0..self.blocked_commands.len() {
             let cmd = self.blocked_commands.pop_front().unwrap();
-            self.process_one_cmd(cmd);
+
+            // Completing a command whose requester has gone away would discard its result, e.g.
+            // losing received data or an accepted connection, so drop the command instead.
+            if cmd.resp.is_disconnected() {
+                tracing::debug!(command = ?cmd.command, "requester gone, dropping blocked command");
+                self.release_abandoned(cmd);
+            } else {
+                self.process_one_cmd(cmd);
+            }
+        }
+    }
+
+    /// Release any socket created by a blocked command whose requester has gone away.
+    fn release_abandoned(&mut self, req: Request) {
+        // A blocked connect owns the socket it is connecting; other commands use a socket owned
+        // by their requester.
+        if let Command::TcpStream(tcp::stream::Command::Connect { .. }) = req.command
+            && req.handle.is_some()
+        {
+            self.process_tcp_stream(tcp::stream::Command::Close, req.handle);
         }
     }
 

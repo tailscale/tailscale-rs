@@ -137,3 +137,7 @@ harness = false
 [[test]]
 name = "wrong_ip_version"
 required-features = ["tokio"]
+
+[[test]]
+name = "tcp"
+required-features = ["tokio"]

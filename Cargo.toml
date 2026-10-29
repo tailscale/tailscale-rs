@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/bindings/ts_elixir/native/ts_elixir",
     "crates/bindings/ts_ffi",
+    "crates/bindings/ts_nodejs",
     "crates/bindings/ts_python",
     "crates/control_plane/ts_control",
     "crates/control_plane/ts_control_noise",
