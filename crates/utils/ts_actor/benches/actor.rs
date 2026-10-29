@@ -1,5 +1,7 @@
 //! Actor communication benchmarks.
 
+use ts_actor::Message;
+
 fn main() {
     divan::main();
 }
@@ -26,7 +28,7 @@ fn echo(bencher: divan::Bencher, n: usize) {
             let mut v = Vec::with_capacity(n);
 
             for _ in 0..v.capacity() {
-                v.push(ts_actor::message![()]);
+                v.push(Message::default());
             }
 
             v

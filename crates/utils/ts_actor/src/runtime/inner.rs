@@ -115,7 +115,7 @@ impl<RW, M> Inner<RW, M> {
             };
 
             let mut mon = mon.write();
-            if let Err(e) = mon.mailbox.try_send(message![SystemMessage::Down(pid)])
+            if let Err(e) = mon.mailbox.try_send(Message::new(SystemMessage::Down(pid)))
                 && matches!(e, TrySendError::Full(_))
             {
                 tracing::warn!(%monitor_pid, "failed to deliver DOWN");
@@ -143,10 +143,10 @@ impl<RW, M> Inner<RW, M> {
             link.links.remove(&pid);
 
             if link.trap_exit {
-                if let Err(e) = link.mailbox.try_send(message![SystemMessage::LinkExit {
+                if let Err(e) = link.mailbox.try_send(Message::new(SystemMessage::LinkExit {
                     linked_process: pid,
                     reason: reason.clone(),
-                }]) && matches!(e, TrySendError::Full(_))
+                })) && matches!(e, TrySendError::Full(_))
                 {
                     tracing::warn!(%link_pid, "failed to deliver link exit (mailbox full)");
                 }

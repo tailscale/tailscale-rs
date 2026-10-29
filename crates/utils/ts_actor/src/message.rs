@@ -7,27 +7,13 @@ use core::{
 
 type Space = smallbox::space::S4;
 
-/// Construct a [`Message`].
-///
-/// This macro is required to handle coercion of your message type `T` to `dyn Any + Send`
-/// (which is `?Sized`).
-#[macro_export]
-macro_rules! message {
-    ($t:expr) => {{
-        let sbox: $crate::smallbox::SmallBox<dyn ::core::any::Any + ::core::marker::Send, _> =
-            $crate::smallbox::smallbox!($t);
-        $crate::Message::from(sbox)
-    }};
-}
-
 /// Polymorphic match which attempts to serially downcast the message to each of the given
 /// types, invoking the corresponding handler expression.
 ///
 /// # Examples
 ///
 /// ```rust
-/// // `message!` upcasts to a type-erased representation.
-/// let msg = ts_actor::message!(1u8);
+/// let msg = ts_actor::Message::new(1u8);
 ///
 /// // To get the value back out, you can use `msg_match!`
 /// ts_actor::msg_match! {
@@ -42,7 +28,7 @@ macro_rules! message {
 /// no other arm matches:
 ///
 /// ```rust
-/// let msg = ts_actor::message!(true);
+/// let msg = ts_actor::Message::new(true);
 ///
 /// let val = ts_actor::msg_match! {
 ///     msg,
@@ -93,9 +79,16 @@ macro_rules! msg_match {
 /// (`smallbox` is reexported from the crate root).
 pub struct Message(smallbox::SmallBox<dyn Any + Send, Space>);
 
+impl Message {
+    /// Construct a new message.
+    pub fn new(msg: impl Any + Send) -> Self {
+        Self(smallbox::smallbox![msg])
+    }
+}
+
 impl Default for Message {
     fn default() -> Self {
-        message![()]
+        Self::new(())
     }
 }
 

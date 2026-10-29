@@ -414,7 +414,7 @@ mod test {
     use tracing_subscriber::util::SubscriberInitExt;
 
     use crate::{
-        Error, LinkExitReason, ProcContext, SystemMessage, gen_server,
+        Error, LinkExitReason, Message, ProcContext, SystemMessage, gen_server,
         gen_server::{Action, GenServer},
         msg_match,
         pid::Pid,
@@ -520,7 +520,7 @@ mod test {
                 ctx.trap_exit(true)?;
                 ctx.link(&"foo").await?;
 
-                ctx.send(&child_pid, crate::message![Die]).await?;
+                ctx.send(&child_pid, Message::new(Die)).await?;
 
                 tracing::trace!("notified child");
 
