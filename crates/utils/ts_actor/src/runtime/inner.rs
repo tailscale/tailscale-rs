@@ -7,31 +7,16 @@ use core::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     task::{Context, Poll, Waker},
 };
+use std::sync::Arc;
 
 use lock_api::{Mutex, RawMutex, RawRwLock, RawRwLockUpgrade, RwLock};
 
 use crate::{
-    AtomicPid, Error, LinkExitReason, MkProc, Pid, ProcContext, ProcFut, Ref, StaticStorage,
-    SystemMessage,
+    AtomicPid, Error, Handle, LinkExitReason, Message, MkProc, Pid, ProcContext, ProcFut,
+    StaticStorage, SystemMessage,
     mailbox::{Mailbox, TrySendError, async_mailbox},
-    message,
-    runtime::{Executor, Handle, ProcessInitState, ProcessState, RtInternal},
+    runtime::{Executor, ProcessInitState, ProcessState, RtHandle},
 };
-
-struct ProcDoneGuard {
-    pid: Pid,
-    handle: Handle,
-}
-
-impl Drop for ProcDoneGuard {
-    fn drop(&mut self) {
-        let Ok(handle) = self.handle.runtime() else {
-            return;
-        };
-
-        handle.notify_proc_done(self.pid);
-    }
-}
 
 pub struct Inner<RW, M> {
     pub executor: StaticStorage<dyn Executor>,
@@ -63,7 +48,7 @@ impl<RW, M> Inner<RW, M> {
     /// Remove a single process by pid.
     ///
     /// Adds any additional linked processes to remove to `pids_to_remove`. Done this way
-    /// for tracking in the [`RtInternal::kill`] impl for `Inner`.
+    /// for tracking in the [`RtInner::kill`] impl for `Inner`.
     fn remove_one(
         &self,
         pid: Pid,
@@ -160,6 +145,97 @@ impl<RW, M> Inner<RW, M> {
     }
 }
 
+/// Dynamically dispatched trait describing an actor runtime.
+pub trait RtInner: Send + Sync {
+    /// Low-level method to spawn a process.
+    ///
+    /// Invariant: `mk_proc_fut` is invoked at most once; the `&mut dyn FnMut` is for
+    /// object-safety.
+    fn spawn_direct(
+        &self,
+        get_handle: &dyn Fn() -> RtHandle,
+        mk_proc_fut: &mut MkProc<StaticStorage<ProcFut>>,
+        links: &mut dyn Iterator<Item = Pid>,
+        monitors: &mut dyn Iterator<Item = Pid>,
+    ) -> Pid;
+
+    /// Kill a process immediately.
+    fn kill(&self, pid: Pid) -> Result<(), Error>;
+
+    /// Link process `a` to process `b`. Order doesn't matter.
+    fn link(&self, a: Pid, b: Pid) -> Result<(), Error>;
+
+    /// Unlink process `a` from process `b`. Order doesn't matter.
+    fn unlink(&self, a: Pid, b: Pid) -> Result<(), Error>;
+
+    /// Establish a monitor from the `monitoring` process on the `monitored` process.
+    fn monitor(&self, monitoring: Pid, monitored: Pid) -> Result<(), Error>;
+
+    /// Remove the monitor from the `monitoring` process on the `monitored` process.
+    fn unmonitor(&self, monitoring: Pid, monitored: Pid) -> Result<(), Error>;
+
+    /// Get the process state for the given pid and invoke the closure with it.
+    ///
+    /// Invariant: either the closure will be called exactly once, or the return value is
+    /// an error.
+    fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), Error>;
+
+    /// Get mutable process state for the given pid and invoke the closure with it.
+    ///
+    /// Invariant: either the closure will be called exactly once, or the return value is
+    /// an error.
+    fn with_proc_mut_dyn(
+        &self,
+        pid: Pid,
+        f: &mut dyn FnMut(&mut ProcessState),
+    ) -> Result<(), Error>;
+
+    /// Internal: notify the runtime that the process corresponding to `pid` died.
+    fn notify_proc_done(&self, pid: Pid);
+
+    /// Get the pid of the global registry.
+    fn global_registry(&self) -> Pid;
+
+    /// Generate a new [`Handle`].
+    fn new_handle(&self) -> Handle;
+
+    /// Get a handle to the runtime's [`Executor`].
+    fn executor(&self) -> &dyn Executor;
+
+    /// Wait for all processes to complete.
+    ///
+    /// This does not shut down the runtime or abort processes proactively, it just waits
+    /// for a state where there are no processes running.
+    fn poll_wait_all_proc(&self, cx: &mut Context) -> Poll<()>;
+}
+
+impl dyn RtInner {
+    /// Execute the closure `f` on the [`ProcessState`] corresponding to `pid`.
+    pub fn with_proc<T>(&self, pid: Pid, f: impl FnOnce(&ProcessState) -> T) -> Result<T, Error> {
+        let mut f = Some(f);
+        let mut out = None;
+
+        self.with_proc_dyn(pid, &mut |state| out = Some(f.take().unwrap()(state)))?;
+
+        Ok(out.unwrap())
+    }
+
+    /// Execute the closure `f` on a mutable ref to the [`ProcessState`] corresponding to
+    /// `pid`.
+    pub fn with_proc_mut<T>(
+        &self,
+        pid: Pid,
+        f: impl FnOnce(&mut ProcessState) -> T,
+    ) -> Result<T, Error> {
+        let mut f = Some(f);
+        let mut out = None;
+
+        self.with_proc_mut_dyn(pid, &mut |state| out = Some(f.take().unwrap()(state)))?;
+
+        Ok(out.unwrap())
+    }
+}
+
 macro_rules! get_procs {
     ($process_table:expr $(, $name:ident => $pid:expr)* $(,)?) => {
         let ptab = $process_table.read();
@@ -170,7 +246,7 @@ macro_rules! get_procs {
     }
 }
 
-impl<RW, M> RtInternal for Inner<RW, M>
+impl<RW, M> RtInner for Inner<RW, M>
 where
     RW: RawRwLockUpgrade + Send + Sync + 'static,
     M: RawMutex + Send + Sync + 'static,
@@ -226,6 +302,21 @@ where
                 }),
             );
         };
+
+        struct ProcDoneGuard {
+            pid: Pid,
+            handle: RtHandle,
+        }
+
+        impl Drop for ProcDoneGuard {
+            fn drop(&mut self) {
+                let Ok(handle) = self.handle.runtime() else {
+                    return;
+                };
+
+                handle.notify_proc_done(self.pid);
+            }
+        }
 
         let drop_guard = ProcDoneGuard {
             pid,
