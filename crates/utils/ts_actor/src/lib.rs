@@ -33,6 +33,7 @@ pub use proc_name::{ProcName, ToProcName};
 pub use runtime::RtHandle;
 pub use static_storage::StaticStorage;
 pub use system_message::{LinkExitReason, SystemMessage};
+pub use util::MonitorGuard;
 
 /// Convenience alias for a function that makes a process future.
 pub type MakeProc<Fut> = dyn FnMut(ProcContext) -> Fut;
