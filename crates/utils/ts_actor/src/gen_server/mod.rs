@@ -26,7 +26,9 @@ use core::time::Duration;
 
 use futures_util::FutureExt;
 
-use crate::{Error, Handle, Message, ProcContext, ProcFut, StaticStorage, ToProcName, msg_match};
+use crate::{
+    Error, Handle, Message, ProcContext, ProcFuture, StaticStorage, ToProcName, msg_match,
+};
 
 mod handle;
 mod typed;
@@ -41,8 +43,8 @@ use crate::pid::Pid;
 
 /// Start a new [`GenServer`] defined by behavior `B` and with the given `args`.
 ///
-/// Returns a [`ProcFut`] to run the [`GenServer`].
-pub fn start<B>(behavior: B, args: B::Args) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut>
+/// Returns a [`ProcFuture`] to run the [`GenServer`].
+pub fn start<B>(behavior: B, args: B::Args) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture>
 where
     B: GenServer + 'static,
 {

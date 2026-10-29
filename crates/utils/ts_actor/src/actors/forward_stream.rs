@@ -3,13 +3,13 @@ use core::any::Any;
 
 use futures_util::{FutureExt, Stream, StreamExt};
 
-use crate::{Message, ProcContext, ProcFut, StaticStorage, ToProcName};
+use crate::{Message, ProcContext, ProcFuture, StaticStorage, ToProcName};
 
 /// Forward elements from the stream `s` to process `name` as messages.
 pub fn forward_stream<S>(
     name: &dyn ToProcName,
     s: S,
-) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFut> + use<S>
+) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture> + use<S>
 where
     S: Stream + Send + 'static,
     S::Item: Send + Any,

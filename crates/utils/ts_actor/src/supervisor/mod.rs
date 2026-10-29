@@ -6,7 +6,7 @@ use core::time::Duration;
 use smol_str::SmolStr;
 
 use crate::{
-    Error, LinkExitReason, ProcContext, ProcFut, StaticProcFut, StaticStorage, SystemMessage,
+    Error, LinkExitReason, ProcContext, ProcFuture, StaticProcFuture, StaticStorage, SystemMessage,
     ToProcName, gen_server, gen_server::GenServer, pid::Pid,
 };
 
@@ -166,7 +166,7 @@ impl GenServer for Supervisor {
 pub fn start(
     config: Config,
     children: impl IntoIterator<Item = ChildSpec>,
-) -> Result<impl FnOnce(ProcContext) -> StaticStorage<ProcFut>, Error> {
+) -> Result<impl FnOnce(ProcContext) -> StaticStorage<ProcFuture>, Error> {
     let mut state = State {
         config,
         child_ids: Default::default(),
@@ -323,7 +323,7 @@ pub struct ChildSpec {
     /// Must be unique within child specs for a given supervisor.
     pub id: SmolStr,
     /// Function to start the child process.
-    pub start: Arc<MkChildProc<StaticProcFut>>,
+    pub start: Arc<MkChildProc<StaticProcFuture>>,
     /// Restart behavior.
     pub restart: Restart,
     /// Shutdown behavior.
@@ -335,7 +335,7 @@ pub struct ChildSpec {
 /// Convenience helper to build a new child process function.
 pub fn child_proc<Fut>(
     start: impl Fn(ProcContext) -> Fut + Send + Sync + 'static,
-) -> impl Fn(ProcContext) -> StaticStorage<StaticProcFut> + Send + Sync
+) -> impl Fn(ProcContext) -> StaticStorage<StaticProcFuture> + Send + Sync
 where
     Fut: Future<Output = Result<(), Error>> + Send + 'static,
 {

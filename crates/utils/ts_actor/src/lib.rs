@@ -40,12 +40,12 @@ pub use static_storage::StaticStorage;
 pub use system_message::{LinkExitReason, SystemMessage};
 
 /// Convenience alias for a function that makes a process future.
-pub type MkProc<Fut> = dyn FnMut(ProcContext) -> Fut;
+pub type MakeProc<Fut> = dyn FnMut(ProcContext) -> Fut;
 /// Convenience alias for a process future.
-pub type ProcFut = dyn Future<Output = Result<(), Error>> + Send;
-/// Convenience alias for [`ProcFut`] with the additional constraint that the future is
+pub type ProcFuture = dyn Future<Output = Result<(), Error>> + Send;
+/// Convenience alias for [`ProcFuture`] with the additional constraint that the future is
 /// `'static`.
-pub type StaticProcFut = dyn Future<Output = Result<(), Error>> + Send + 'static;
+pub type StaticProcFuture = dyn Future<Output = Result<(), Error>> + Send + 'static;
 
 /// Unique, opaque type.
 ///

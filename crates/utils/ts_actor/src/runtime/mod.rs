@@ -9,8 +9,8 @@ use core::{
 use lock_api::{Mutex, RawMutex, RawRwLockUpgrade, RwLock};
 
 use crate::{
-    Error, Message, MkProc, Pid, ProcContext, ProcFut, StaticStorage, actors::registry, gen_server,
-    oneshot,
+    Error, MakeProc, Message, Pid, ProcContext, ProcFuture, StaticStorage, actors::registry,
+    gen_server, oneshot,
 };
 
 mod executor;
@@ -88,7 +88,7 @@ impl dyn Rt {
     /// Spawn a process with the given process constructor, links, and monitors.
     pub fn spawn_ss(
         self: &Arc<Self>,
-        mk_proc: &mut MkProc<StaticStorage<ProcFut>>,
+        mk_proc: &mut MakeProc<StaticStorage<ProcFuture>>,
         links: impl IntoIterator<Item = Pid>,
         monitors: impl IntoIterator<Item = Pid>,
     ) -> Result<Pid, Error> {
@@ -112,7 +112,7 @@ impl dyn Rt {
     {
         self.spawn_ss(
             &mut ts_util::fn_::fn_mut1(move |ctx| {
-                StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFut>)
+                StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFuture>)
             }),
             [],
             [],
