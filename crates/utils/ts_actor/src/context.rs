@@ -150,19 +150,17 @@ impl ProcContext {
     ///
     /// This causes the runtime to send [`SystemMessage::Down`][crate::SystemMessage::Down]
     /// messages when monitored processes die.
-    pub async fn monitor(&self, name: &dyn ToProcName) -> Result<(), Error> {
+    pub async fn monitor(&self, name: &dyn ToProcName) -> Result<Handle, Error> {
         let pid = self.whereis(name).await?;
 
-        self.rt()?.monitor(self.this_pid, pid)
+        self.rt()?.monitor(self.pid(), pid)
     }
 
     /// Unmonitor the specified process.
     ///
     /// Inverse of [`ProcContext::monitor`].
-    pub async fn unmonitor(&self, name: &dyn ToProcName) -> Result<(), Error> {
-        let pid = self.whereis(name).await?;
-
-        self.rt()?.unmonitor(self.this_pid, pid)
+    pub fn unmonitor(&self, monitor: Handle) -> Result<(), Error> {
+        self.rt()?.unmonitor(self.pid(), monitor)
     }
 
     /// Configure this process to trap exits from linked processes.

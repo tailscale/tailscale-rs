@@ -6,7 +6,7 @@ pub extern crate smallbox;
 #[cfg(feature = "std")]
 extern crate std;
 
-use core::fmt::Debug;
+use core::fmt::{Debug, Formatter};
 
 pub mod actors;
 mod context;
@@ -51,3 +51,9 @@ pub type StaticProcFuture = dyn Future<Output = Result<(), Error>> + Send + 'sta
 // TODO(npry): better repr? runtime-unique?
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Handle(u64);
+
+impl core::fmt::Display for Handle {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Handle").field(&self.0).finish()
+    }
+}

@@ -98,7 +98,7 @@ impl<RW, M> Inner<RW, M> {
         let proc = proc.into_inner();
         let ptable = self.process_table.read();
 
-        for monitor_pid in &proc.monitored_by {
+        for (monitor_handle, monitor_pid) in &proc.monitored_by {
             let Some(mon) = ptable.get(monitor_pid) else {
                 tracing::warn!(%monitor_pid, "skip monitor missing from proc table");
                 continue;
@@ -106,18 +106,20 @@ impl<RW, M> Inner<RW, M> {
 
             let mut mon = mon.write();
             // If the monitoring pid has died, this is fine, ignore.
-            let _result = mon.mailbox.send(Message::new(SystemMessage::Down(pid)));
+            let _result = mon
+                .mailbox
+                .send(Message::new(SystemMessage::Down(*monitor_handle, pid)));
 
-            mon.monitors.remove(&pid);
+            mon.monitors.remove(monitor_handle);
         }
 
-        for monitored_pid in &proc.monitors {
+        for (monitor_handle, monitored_pid) in &proc.monitors {
             let Some(target) = ptable.get(monitored_pid) else {
                 tracing::warn!(%monitored_pid, "skip monitored process missing from proc table");
                 continue;
             };
 
-            target.write().monitored_by.remove(&pid);
+            target.write().monitored_by.remove(monitor_handle);
         }
 
         for link_pid in &proc.links {
@@ -156,7 +158,7 @@ pub trait RtInner: Send + Sync {
         get_handle: &dyn Fn() -> RtHandle,
         mk_proc_fut: &mut MakeProc<StaticStorage<ProcFuture>>,
         links: &mut dyn Iterator<Item = Pid>,
-        monitors: &mut dyn Iterator<Item = Pid>,
+        monitors: &mut dyn Iterator<Item = (Handle, Pid)>,
     ) -> Pid;
 
     /// Kill a process immediately.
@@ -169,10 +171,13 @@ pub trait RtInner: Send + Sync {
     fn unlink(&self, a: Pid, b: Pid) -> Result<(), Error>;
 
     /// Establish a monitor from the `monitoring` process on the `monitored` process.
-    fn monitor(&self, monitoring: Pid, monitored: Pid) -> Result<(), Error>;
+    ///
+    /// The returned handle is the handle to this specific monitor.
+    fn monitor(&self, monitoring: Pid, monitored: Pid) -> Result<Handle, Error>;
 
     /// Remove the monitor from the `monitoring` process on the `monitored` process.
-    fn unmonitor(&self, monitoring: Pid, monitored: Pid) -> Result<(), Error>;
+    ///
+    fn unmonitor(&self, monitoring: Pid, monitor_handle: Handle) -> Result<(), Error>;
 
     /// Get the process state for the given pid and invoke the closure with it.
     ///
@@ -256,11 +261,11 @@ where
         get_handle: &dyn Fn() -> RtHandle,
         f: &mut MakeProc<StaticStorage<ProcFuture>>,
         init_links: &mut dyn Iterator<Item = Pid>,
-        init_monitors: &mut dyn Iterator<Item = Pid>,
+        init_monitors: &mut dyn Iterator<Item = (Handle, Pid)>,
     ) -> Pid {
         let pid = Pid(self.next_pid.fetch_add(1, Ordering::Relaxed));
         let mut my_links = BTreeSet::new();
-        let mut monitored_by = BTreeSet::new();
+        let mut monitored_by = BTreeMap::new();
 
         {
             let ptab = self.process_table.read();
@@ -274,14 +279,14 @@ where
                 my_links.insert(link_pid);
             }
 
-            for monitor_pid in init_monitors {
+            for (monitor_handle, monitor_pid) in init_monitors {
                 let Some(mon) = ptab.get(&monitor_pid) else {
                     tracing::warn!(%monitor_pid, "no monitor process");
                     continue;
                 };
 
-                mon.write().monitors.insert(pid);
-                monitored_by.insert(monitor_pid);
+                mon.write().monitors.insert(monitor_handle, pid);
+                monitored_by.insert(monitor_handle, monitor_pid);
             }
         }
 
@@ -412,12 +417,13 @@ where
     }
 
     #[tracing::instrument(skip_all, fields(%monitoring_pid, %monitored_pid))]
-    fn monitor(&self, monitoring_pid: Pid, monitored_pid: Pid) -> Result<(), Error> {
+    fn monitor(&self, monitoring_pid: Pid, monitored_pid: Pid) -> Result<Handle, Error> {
         if monitoring_pid == monitored_pid {
             tracing::error!("monitoring pid was the same as monitored pid");
             return Err(Error::BadArg);
         }
 
+        let mon_handle = self.new_handle();
         get_procs!(self.process_table, monitoring_proc => monitoring_pid, monitored_proc => monitored_pid);
 
         // Deadlock avoidance: always take simultaneous process locks in increasing-pid order.
@@ -433,20 +439,29 @@ where
             (m1, m2)
         };
 
-        monitoring_proc.monitors.insert(monitored_pid);
-        monitored_proc.monitored_by.insert(monitoring_pid);
+        monitoring_proc.monitors.insert(mon_handle, monitored_pid);
+        monitored_proc
+            .monitored_by
+            .insert(mon_handle, monitoring_pid);
 
-        Ok(())
+        Ok(mon_handle)
     }
 
-    #[tracing::instrument(skip_all, fields(%monitoring_pid, %monitored_pid))]
-    fn unmonitor(&self, monitoring_pid: Pid, monitored_pid: Pid) -> Result<(), Error> {
-        if monitoring_pid == monitored_pid {
-            tracing::error!("monitoring pid was the same as monitored pid");
-            return Err(Error::BadArg);
-        }
+    #[tracing::instrument(skip_all, fields(%monitoring_pid, %monitor_handle))]
+    fn unmonitor(&self, monitoring_pid: Pid, monitor_handle: Handle) -> Result<(), Error> {
+        get_procs!(self.process_table, monitoring_proc => monitoring_pid);
 
-        get_procs!(self.process_table, monitoring_proc => monitoring_pid, monitored_proc => monitored_pid);
+        let monitored_pid = {
+            let mon_proc = monitoring_proc.read();
+            let Some(&monitored_pid) = mon_proc.monitors.get(&monitor_handle) else {
+                tracing::error!("requested monitor doesn't exist");
+                return Err(Error::BadArg);
+            };
+
+            monitored_pid
+        };
+
+        get_procs!(self.process_table, monitored_proc => monitored_pid);
 
         // Deadlock avoidance: always take simultaneous process locks in increasing-pid order.
         let (mut monitoring_proc, mut monitored_proc) = if monitoring_pid < monitored_pid {
@@ -461,8 +476,8 @@ where
             (m1, m2)
         };
 
-        monitoring_proc.monitors.remove(&monitored_pid);
-        monitored_proc.monitored_by.remove(&monitoring_pid);
+        monitoring_proc.monitors.remove(&monitor_handle);
+        monitored_proc.monitored_by.remove(&monitor_handle);
 
         Ok(())
     }

@@ -95,7 +95,7 @@ impl dyn Rt {
         let handle = RtHandle(Arc::downgrade(self));
 
         let mut links = links.into_iter();
-        let mut mons = monitors.into_iter();
+        let mut mons = monitors.into_iter().map(|pid| (self.new_handle(), pid));
 
         let pid = self.spawn_direct(&move || handle.clone(), mk_proc, &mut links, &mut mons);
 
