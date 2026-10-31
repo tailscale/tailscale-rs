@@ -32,6 +32,7 @@ members = [
     "tools/checks",
     "tools/ts_devtools",
     "crates/ts_runtime",
+    "crates/utils/ts_actor",
     "crates/utils/ts_cli_util",
     "crates/utils/ts_http_util",
     "crates/utils/ts_keys",
@@ -139,6 +140,7 @@ ts_packetfilter_state = { path = "crates/net/overlay/ts_packetfilter_state", ver
 ts_transport = { path = "crates/net/ts_transport", version = "0.6.1" }
 ts_tunnel = { path = "crates/net/protocol/ts_tunnel", version = "0.6.1" }
 
+ts_actor = { path = "crates/utils/ts_actor", version = "0.6.1" }
 ts_cli_util = { path = "crates/utils/ts_cli_util" }
 ts_http_util = { path = "crates/utils/ts_http_util", version = "0.6.1" }
 ts_keys = { path = "crates/utils/ts_keys", version = "0.6.1" }
