@@ -118,24 +118,19 @@ impl<T> Default for VersionedValue<T> {
     }
 }
 
-impl<T: Clone + PartialEq> VersionedValue<Option<T>> {
+impl<T: Clone + PartialEq> VersionedValue<T> {
     /// Pass a mutable reference to the value visible to `txn_id` (if there is one) to `f`.
     ///
+    /// The value is cloned into `txn_id`'s slot (if it is not already there). If `f` leaves the
+    /// value unchanged and `txn_id` had not already written the value, then the clone is
+    /// discarded so that the value does not count as mutated.
+    ///
     /// Returns `None` (and does not call `f`) if there is no value.
-    pub(crate) fn with_mut_value<R>(
-        &mut self,
-        txn_id: TxnId,
-        f: impl FnOnce(&mut T) -> R,
-    ) -> Option<R> {
-        // Check for a value before cloning: a removed singleton is stored as a `None` in an occupied
-        // slot, and cloning that into the free slot would look like a mutation and cause a spurious
-        // `Remove` notification.
-        self.get(txn_id)?.as_ref()?;
-
-        // If this transaction has already written to the singleton, then it counts as mutated.
+    fn with_mut_value<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+        // If this transaction has already written to the value, then it counts as mutated.
         let previously_written = self.modified_in_txn(txn_id).is_some();
 
-        let value = self.internal_clone(txn_id)?.as_mut()?;
+        let value = self.internal_clone(txn_id)?;
         let old_value = (!previously_written).then(|| value.clone());
         let result = f(value);
 
@@ -145,6 +140,162 @@ impl<T: Clone + PartialEq> VersionedValue<Option<T>> {
         }
 
         Some(result)
+    }
+}
+
+/// Storage for a singleton's value.
+///
+/// Implemented by `VersionedValue<Option<T>>` for singletons which may have no value, and by
+/// `DefaultValue<T>` for singletons declared with `default`, which always have a value.
+#[doc(hidden)]
+pub trait SingletonSlot: Default {
+    /// The type of the singleton's value.
+    type Value;
+    /// The result type of operations which might not find a value: `Option<T>` if the singleton
+    /// may have no value, `T` if it always has a value.
+    type Maybe<T>;
+
+    /// Convert the result of an operation which might not find a value to `Self::Maybe`.
+    ///
+    /// Panics if `result` is `None` and the singleton always has a value.
+    fn from_option<R>(result: Option<R>) -> Self::Maybe<R>;
+
+    /// The value visible to `txn_id`, if there is one.
+    fn get(&self, txn_id: TxnId) -> Option<&Self::Value>;
+
+    /// Pass a reference to the value visible to `txn_id` (if there is one) to `f`.
+    fn with<R>(&self, txn_id: TxnId, f: impl FnOnce(&Self::Value) -> R) -> Self::Maybe<R> {
+        Self::from_option(self.get(txn_id).map(f))
+    }
+
+    /// Pass a mutable reference to the value visible to `txn_id` (if there is one) to `f`.
+    fn with_mut<R>(
+        &mut self,
+        txn_id: TxnId,
+        f: impl FnOnce(&mut Self::Value) -> R,
+    ) -> Self::Maybe<R>
+    where
+        Self::Value: Clone + PartialEq;
+
+    /// Write `value` in transaction `txn_id`.
+    fn insert(&mut self, value: Self::Value, txn_id: TxnId);
+
+    /// Delete the value in transaction `txn_id`.
+    fn delete(&mut self, txn_id: TxnId);
+
+    /// Delete the value in transaction `txn_id`, returning a clone of the deleted value (if there
+    /// was one).
+    fn remove(&mut self, txn_id: TxnId) -> Self::Maybe<Self::Value>
+    where
+        Self::Value: Clone,
+    {
+        let result = self.get(txn_id).cloned();
+        // Only delete a value which is present, otherwise the delete would count as a write.
+        if result.is_some() {
+            self.delete(txn_id);
+        }
+        Self::from_option(result)
+    }
+
+    /// How the value was changed by transaction `txn_id`.
+    ///
+    /// Returns `None` if the transaction did not write the value, `Some(None)` if the transaction
+    /// deleted the value, and `Some(Some(value))` if the transaction inserted or mutated the value.
+    fn change_in_txn(&self, txn_id: TxnId) -> Option<Option<&Self::Value>>;
+
+    /// Cleanup a rolled-back transaction.
+    fn gc_txn(&mut self, txn_id: TxnId);
+}
+
+/// A singleton which may have no value. A deleted value is stored as a `None` tombstone.
+impl<T> SingletonSlot for VersionedValue<Option<T>> {
+    type Value = T;
+    type Maybe<R> = Option<R>;
+
+    fn from_option<R>(result: Option<R>) -> Option<R> {
+        result
+    }
+
+    fn get(&self, txn_id: TxnId) -> Option<&T> {
+        self.get(txn_id)?.as_ref()
+    }
+
+    fn with_mut<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> Option<R>
+    where
+        T: Clone + PartialEq,
+    {
+        // Check for a value before cloning: a deleted singleton is stored as a `None` in an
+        // occupied slot, and cloning that into the free slot would look like a mutation and cause
+        // a spurious `Remove` notification.
+        SingletonSlot::get(self, txn_id)?;
+
+        self.with_mut_value(txn_id, |value| value.as_mut().map(f))?
+    }
+
+    fn insert(&mut self, value: T, txn_id: TxnId) {
+        self.set(Some(value), txn_id);
+    }
+
+    fn delete(&mut self, txn_id: TxnId) {
+        self.set(None, txn_id);
+    }
+
+    fn change_in_txn(&self, txn_id: TxnId) -> Option<Option<&T>> {
+        self.modified_in_txn(txn_id).map(Option::as_ref)
+    }
+
+    fn gc_txn(&mut self, txn_id: TxnId) {
+        VersionedValue::gc_txn(self, txn_id);
+    }
+}
+
+/// Storage for a singleton declared with `default`, which always has a value.
+///
+/// Deleting the value is just writing the default value (so it is notified as an upsert).
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct DefaultValue<T>(VersionedValue<T>);
+
+impl<T: Default> Default for DefaultValue<T> {
+    fn default() -> Self {
+        DefaultValue(VersionedValue::new(T::default(), TxnId::FIRST))
+    }
+}
+
+impl<T: Default> SingletonSlot for DefaultValue<T> {
+    type Value = T;
+    type Maybe<R> = R;
+
+    fn from_option<R>(result: Option<R>) -> R {
+        result.expect("defaulting singleton has no value")
+    }
+
+    fn get(&self, txn_id: TxnId) -> Option<&T> {
+        self.0.get(txn_id)
+    }
+
+    fn with_mut<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> R
+    where
+        T: Clone + PartialEq,
+    {
+        Self::from_option(self.0.with_mut_value(txn_id, f))
+    }
+
+    fn insert(&mut self, value: T, txn_id: TxnId) {
+        self.0.set(value, txn_id);
+    }
+
+    fn delete(&mut self, txn_id: TxnId) {
+        self.0.set(T::default(), txn_id);
+    }
+
+    fn change_in_txn(&self, txn_id: TxnId) -> Option<Option<&T>> {
+        // The value is never deleted, so any write is an upsert.
+        self.0.modified_in_txn(txn_id).map(Some)
+    }
+
+    fn gc_txn(&mut self, txn_id: TxnId) {
+        self.0.gc_txn(txn_id);
     }
 }
 
@@ -240,14 +391,10 @@ impl<T> VersionedValue<T> {
     }
 
     fn was_mutated<D: TableDesc<Value = T>>(&self) -> bool {
-        if self.slot_a.is_none() || self.slot_b.is_none() {
-            return false;
+        match (&self.slot_a, &self.slot_b) {
+            (Some((_, a)), Some((_, b))) => !D::value_eq(a, b),
+            _ => false,
         }
-
-        !D::value_eq(
-            &self.slot_a.as_ref().unwrap().1,
-            &self.slot_b.as_ref().unwrap().1,
-        )
     }
 
     pub fn get(&self, id: TxnId) -> Option<&T> {
@@ -367,9 +514,7 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
         match self {
             DeleteMask::None => {
                 if present {
-                    let mut removed: HashSet<K> = HashSet::new();
-                    removed.insert(k.to_owned());
-                    *self = Self::Some(txn_id, removed);
+                    *self = Self::Some(txn_id, HashSet::from([k.to_owned()]));
                 }
             }
             DeleteMask::All(_, present_rows) => {
@@ -383,54 +528,46 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
         }
     }
 
-    fn get<Q>(&self, k: &Q, txn_id: TxnId) -> MaskStatus<&V>
+    /// Get the value for `k` visible to `txn_id`, from the delete mask if `k` is in it, otherwise
+    /// from the table's main storage, `data`.
+    fn lookup<'a, Q>(
+        &'a self,
+        data: &'a HashMap<K, VersionedValue<V>>,
+        k: &Q,
+        txn_id: TxnId,
+    ) -> Option<&'a V>
     where
         K: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
         debug_assert!(self.check_txn_id(txn_id));
         match self {
-            DeleteMask::All(self_id, present) if *self_id == txn_id => match present.get(k) {
-                Some(v) => match v.get(txn_id) {
-                    Some(v) => MaskStatus::Overwritten(v),
-                    None => MaskStatus::Unknown,
-                },
-                None => MaskStatus::Removed,
-            },
-            DeleteMask::Some(self_id, removed) if *self_id == txn_id => {
-                if removed.contains(k) {
-                    MaskStatus::Removed
-                } else {
-                    MaskStatus::Unknown
-                }
-            }
-            _ => MaskStatus::Unknown,
+            DeleteMask::All(self_id, present) if *self_id == txn_id => present.get(k)?.get(txn_id),
+            DeleteMask::Some(self_id, removed) if *self_id == txn_id && removed.contains(k) => None,
+            _ => data.get(k)?.get(txn_id),
         }
     }
 
-    fn get_mut<Q>(&mut self, k: &Q, txn_id: TxnId) -> MaskStatus<&mut V>
+    /// Like `lookup`, but if the value is in the table's main storage, it is cloned into
+    /// `txn_id`'s slot (see `VersionedValue::internal_clone`).
+    fn lookup_mut<'a, Q>(
+        &'a mut self,
+        data: &'a mut HashMap<K, VersionedValue<V>>,
+        k: &Q,
+        txn_id: TxnId,
+    ) -> Option<&'a mut V>
     where
         K: Borrow<Q>,
+        V: Clone,
         Q: ?Sized + Hash + Eq,
     {
         debug_assert!(self.check_txn_id(txn_id));
         match self {
-            DeleteMask::None => MaskStatus::Unknown,
-            DeleteMask::All(self_id, present) if *self_id == txn_id => match present.get_mut(k) {
-                Some(v) => match v.get_mut(txn_id) {
-                    Some(v) => MaskStatus::Overwritten(v),
-                    None => MaskStatus::Unknown,
-                },
-                None => MaskStatus::Removed,
-            },
-            DeleteMask::Some(self_id, removed) if *self_id == txn_id => {
-                if removed.contains(k) {
-                    MaskStatus::Removed
-                } else {
-                    MaskStatus::Unknown
-                }
+            DeleteMask::All(self_id, present) if *self_id == txn_id => {
+                present.get_mut(k)?.get_mut(txn_id)
             }
-            _ => MaskStatus::Unknown,
+            DeleteMask::Some(self_id, removed) if *self_id == txn_id && removed.contains(k) => None,
+            _ => data.get_mut(k)?.internal_clone(txn_id),
         }
     }
 
@@ -451,16 +588,6 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
             }
         }
     }
-}
-
-/// The status of a row of a table in the delete mask.
-enum MaskStatus<T> {
-    /// No presence in the delete mask.
-    Unknown,
-    /// The key has been deleted.
-    Removed,
-    /// The key has been deleted, then a new value written.
-    Overwritten(T),
 }
 
 /// Tabular data in the KV store. There will be one of these for each logical table in the concrete
@@ -504,13 +631,19 @@ impl<D: schema::TableDesc> Table<D> {
         self.poisoned.set(true, txn_id);
     }
 
-    pub(crate) fn is_poisoned(&self, txn_id: TxnId) -> bool {
-        *self.poisoned.get(txn_id).unwrap_or(&false)
+    /// Returns an error if this table is poisoned.
+    pub(crate) fn check_poisoned(&self, txn_id: TxnId) -> Result<()> {
+        // Could use `ok_or` from MSRV 1.98
+        if self.poisoned.get(txn_id).copied().unwrap_or(false) {
+            Err(Error::NonUniqueIndexKey(D::NAME))
+        } else {
+            Ok(())
+        }
     }
 
     /// Rebuild all indexes for a specific key in this table.
-    pub(crate) fn rebuild_indexes_for_key(&mut self, key: &D::Key, txn_id: TxnId) {
-        if let Some(v) = get_from_table::<D, D::Key>(&self.delete_mask, &self.data, key, txn_id) {
+    fn rebuild_indexes_for_key(&mut self, key: &D::Key, txn_id: TxnId) {
+        if let Some(v) = self.delete_mask.lookup(&self.data, key, txn_id) {
             self.indexes.on_insert(key, v, txn_id);
         }
     }
@@ -557,9 +690,7 @@ impl<D: schema::TableDesc> Table<D> {
             return Err(Error::TransactionFailed);
         }
 
-        if self.is_poisoned(txn_id) {
-            return Err(crate::Error::NonUniqueIndexKey(D::NAME));
-        }
+        self.check_poisoned(txn_id)?;
 
         if !self.delete_mask.check_txn_id(txn_id) {
             return Err(Error::TransactionFailed);
@@ -590,6 +721,8 @@ impl<D: schema::TableDesc> Table<D> {
             return HashMap::new();
         }
 
+        assert!(self.delete_mask.check_txn_id(txn_id));
+
         let modified = self.modified.take().map(|mut m| {
             assert_eq!(m.txn_id, txn_id);
             self.filter_mutated_refs(&mut m.ref_keys);
@@ -598,26 +731,23 @@ impl<D: schema::TableDesc> Table<D> {
         });
 
         let result = match core::mem::take(&mut self.delete_mask) {
-            DeleteMask::All(dm_id, data) if dm_id == txn_id => {
+            DeleteMask::All(_, data) => {
                 // Only keys which were visible before this transaction can be notifiably removed;
                 // a key created and cleared within this transaction was never seen by subscribers.
-                let removed: HashSet<_> = self
+                let mut result: HashMap<_, _> = self
                     .data
                     .iter()
-                    .filter(|(_, v)| v.has_prior_value(txn_id))
-                    .map(|(k, _)| k.clone())
+                    .filter(|(k, v)| v.has_prior_value(txn_id) && !data.contains_key(*k))
+                    .map(|(k, _)| (k.clone(), WatchedEvent::Clear))
                     .collect();
+                result.extend(
+                    data.keys()
+                        .map(|k| (k.clone(), WatchedEvent::KeyOnlyUpsert)),
+                );
                 self.data = data;
-                let replaced = self.data.keys().cloned().collect();
-                let removed = removed.difference(&replaced).cloned();
-                let mut result: HashMap<_, _> = removed.map(|k| (k, WatchedEvent::Clear)).collect();
-                let replaced = replaced
-                    .into_iter()
-                    .map(|k| (k, WatchedEvent::KeyOnlyUpsert));
-                result.extend(replaced);
                 result
             }
-            DeleteMask::Some(dm_id, removed) if dm_id == txn_id => {
+            DeleteMask::Some(_, removed) => {
                 let mut modified = modified.unwrap_or_default();
                 let mut result: HashMap<_, _> = removed
                     .into_iter()
@@ -651,7 +781,6 @@ impl<D: schema::TableDesc> Table<D> {
                         .collect()
                 }
             }
-            _ => unreachable!(),
         };
 
         self.cleared = self.data.is_empty();
@@ -681,17 +810,18 @@ impl<D: schema::TableDesc> Table<D> {
     ///
     /// Panics if `self.check_txn_consistency` would return an error.
     pub fn commit_without_notifications(&mut self, txn_id: TxnId) {
+        assert!(self.delete_mask.check_txn_id(txn_id));
+
         match core::mem::take(&mut self.delete_mask) {
-            DeleteMask::All(dm_id, data) if dm_id == txn_id => {
+            DeleteMask::All(_, data) => {
                 self.data = data;
             }
-            DeleteMask::Some(dm_id, removed) if dm_id == txn_id => {
+            DeleteMask::Some(_, removed) => {
                 removed.iter().for_each(|k| {
                     self.data.remove(k);
                 });
             }
             DeleteMask::None => {}
-            _ => unreachable!(),
         }
         self.modified = None;
         self.cleared = self.data.is_empty();
@@ -750,10 +880,7 @@ impl<D: schema::TableDesc> Table<D> {
     /// while using the iterator, the row is still rolled back). The index entries of each yielded
     /// row are removed (since the row may be mutated), but not rebuilt: the caller must call
     /// `rebuild_indexes_for_key` for every key the iterator yields once it is done with the values.
-    pub(crate) fn iter_mut(
-        &mut self,
-        txn_id: TxnId,
-    ) -> impl Iterator<Item = (&D::Key, &mut D::Value)>
+    fn iter_mut(&mut self, txn_id: TxnId) -> impl Iterator<Item = (&D::Key, &mut D::Value)>
     where
         D::Value: Clone + PartialEq,
     {
@@ -778,6 +905,21 @@ impl<D: schema::TableDesc> Table<D> {
             })
     }
 
+    /// Pass a mutable iterator over the table to `f`.
+    ///
+    /// The index entries of every row `f` visits are rebuilt once `f` returns, so `f` may
+    /// (temporarily) give rows duplicate index keys.
+    pub(crate) fn with_iter_mut<T>(
+        &mut self,
+        txn_id: TxnId,
+        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>) -> T,
+    ) -> T
+    where
+        D::Value: Clone + PartialEq,
+    {
+        self.with_iter_mut_and_remove(txn_id, |iter, _| f(iter))
+    }
+
     /// Remove every row for which `f` returns `false`.
     pub(crate) fn retain(
         &mut self,
@@ -786,28 +928,52 @@ impl<D: schema::TableDesc> Table<D> {
     ) where
         D::Value: Clone + PartialEq,
     {
-        let mut retained = Vec::new();
-        let mut removed = Vec::new();
-        for (k, v) in self.iter_mut(txn_id) {
-            if f(k, v) {
-                if <D::IndexStorage as IndexStorage<_, _>>::HAS_INDEXES {
-                    retained.push(k.clone());
+        self.with_iter_mut_and_remove(txn_id, |iter, removed| {
+            for (k, v) in iter {
+                if !f(k, v) {
+                    removed.push(k.clone());
                 }
-            } else {
-                removed.push(k.clone());
             }
-        }
+        });
+    }
 
-        // `iter_mut` has removed the index entries of every row, so only retained rows need their
-        // entries rebuilt. Removed rows must not go through `Table::remove`, which would remove
-        // their (possibly mutated) index keys a second time, and those might now belong to
-        // another row.
-        for k in &retained {
-            self.rebuild_indexes_for_key(k, txn_id);
-        }
+    /// Pass a mutable iterator over the table to `f`, then remove the rows whose keys `f` pushes
+    /// onto its second argument, then rebuild the index entries of the remaining rows `f` visited.
+    fn with_iter_mut_and_remove<T>(
+        &mut self,
+        txn_id: TxnId,
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<Item = (&'a D::Key, &'a mut D::Value)>,
+            &mut Vec<D::Key>,
+        ) -> T,
+    ) -> T
+    where
+        D::Value: Clone + PartialEq,
+    {
+        let mut removed = Vec::new();
+        let mut yielded = Vec::new();
+        let result = if <D::IndexStorage as IndexStorage<_, _>>::HAS_INDEXES {
+            f(
+                &mut self
+                    .iter_mut(txn_id)
+                    .inspect(|(k, _)| yielded.push((*k).clone())),
+                &mut removed,
+            )
+        } else {
+            f(&mut self.iter_mut(txn_id), &mut removed)
+        };
+
+        // `iter_mut` has removed the index entries of every row it yielded. Removed rows must not
+        // go through `Table::delete`, which would remove their (possibly mutated) index keys a
+        // second time, and those might now belong to another row.
         for k in &removed {
             self.delete_mask.remove(k, txn_id, &self.data);
         }
+        // Removed rows are no longer visible, so this does not rebuild their index entries.
+        for k in &yielded {
+            self.rebuild_indexes_for_key(k, txn_id);
+        }
+        result
     }
 
     pub fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
@@ -815,10 +981,8 @@ impl<D: schema::TableDesc> Table<D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        if self.is_poisoned(txn_id) {
-            return None;
-        }
-        get_from_table::<D, Q>(&self.delete_mask, &self.data, key, txn_id)
+        self.check_poisoned(txn_id).ok()?;
+        self.delete_mask.lookup(&self.data, key, txn_id)
     }
 
     pub(crate) fn with_mut<Q, T>(
@@ -832,7 +996,7 @@ impl<D: schema::TableDesc> Table<D> {
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
         D::Value: Clone + PartialEq,
     {
-        let value = get_from_table_mut::<D, Q>(&mut self.delete_mask, &mut self.data, key, txn_id)?;
+        let value = self.delete_mask.lookup_mut(&mut self.data, key, txn_id)?;
         // Recorded before calling `f` so that if `f` panics, the (already cloned) value is still
         // rolled back by `gc_txn`.
         record_mut_ref(&mut self.modified, key, txn_id);
@@ -843,9 +1007,7 @@ impl<D: schema::TableDesc> Table<D> {
     }
 
     pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
-        if let Some(old_value) =
-            get_from_table::<D, D::Key>(&self.delete_mask, &self.data, &key, txn_id)
-        {
+        if let Some(old_value) = self.delete_mask.lookup(&self.data, &key, txn_id) {
             self.indexes.on_remove(old_value, txn_id);
         }
         self.indexes.on_insert(&key, &value, txn_id);
@@ -864,7 +1026,7 @@ impl<D: schema::TableDesc> Table<D> {
         // Only the value visible to this transaction is indexed. Any other value for `key` in
         // `self.data` (e.g., if `key` has already been removed in this transaction) may share
         // an index key with a different row, whose index entry must be kept.
-        if let Some(value) = get_from_table::<D, Q>(&self.delete_mask, &self.data, key, txn_id) {
+        if let Some(value) = self.delete_mask.lookup(&self.data, key, txn_id) {
             self.indexes.on_remove(value, txn_id);
         }
         self.delete_mask.remove(key, txn_id, &self.data);
@@ -874,47 +1036,6 @@ impl<D: schema::TableDesc> Table<D> {
         self.delete_mask.clear(txn_id);
         self.poisoned.set(false, txn_id);
         self.indexes.clear(txn_id);
-    }
-}
-
-/// Helper function for getting a reference from a table taking into account the delete mask.
-///
-/// Making this a method could cause lifetime issues.
-fn get_from_table<'a, D: schema::TableDesc, Q>(
-    delete_mask: &'a DeleteMask<D::Key, D::Value>,
-    data: &'a HashMap<D::Key, VersionedValue<D::Value>>,
-    key: &Q,
-    txn_id: TxnId,
-) -> Option<&'a D::Value>
-where
-    D::Key: Borrow<Q>,
-    Q: ?Sized + Hash + Eq,
-{
-    Some(match delete_mask.get(key, txn_id) {
-        MaskStatus::Unknown => data.get(key)?.get(txn_id)?,
-        MaskStatus::Removed => return None,
-        MaskStatus::Overwritten(v) => v,
-    })
-}
-
-/// Helper function for getting a mutable reference from a table taking into account the delete mask.
-///
-/// Making this a method could cause lifetime issues.
-fn get_from_table_mut<'a, D: schema::TableDesc, Q>(
-    delete_mask: &'a mut DeleteMask<D::Key, D::Value>,
-    data: &'a mut HashMap<D::Key, VersionedValue<D::Value>>,
-    key: &Q,
-    txn_id: TxnId,
-) -> Option<&'a mut D::Value>
-where
-    D::Key: Borrow<Q>,
-    D::Value: Clone,
-    Q: ?Sized + Hash + Eq,
-{
-    match delete_mask.get_mut(key, txn_id) {
-        MaskStatus::Unknown => data.get_mut(key)?.internal_clone(txn_id),
-        MaskStatus::Removed => None,
-        MaskStatus::Overwritten(v) => Some(v),
     }
 }
 
@@ -928,18 +1049,15 @@ struct TxnMutations<K> {
     ref_keys: HashSet<K>,
 }
 
-fn with_mutations<K>(
-    modified: &mut Option<TxnMutations<K>>,
-    txn_id: TxnId,
-    f: impl FnOnce(&mut TxnMutations<K>),
-) {
+/// The mutations recorded for `txn_id`, creating an empty record if there is none.
+fn mutations<K>(modified: &mut Option<TxnMutations<K>>, txn_id: TxnId) -> &mut TxnMutations<K> {
     let modified = modified.get_or_insert_with(|| TxnMutations {
         txn_id,
         keys: HashSet::new(),
         ref_keys: HashSet::new(),
     });
     assert_eq!(modified.txn_id, txn_id);
-    f(modified);
+    modified
 }
 
 fn record_mutation<K, Q>(modified: &mut Option<TxnMutations<K>>, key: &Q, txn_id: TxnId)
@@ -947,9 +1065,7 @@ where
     K: Borrow<Q> + Hash + Eq,
     Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
 {
-    with_mutations(modified, txn_id, |m| {
-        m.keys.insert(key.to_owned());
-    });
+    mutations(modified, txn_id).keys.insert(key.to_owned());
 }
 
 fn record_mut_ref<K, Q>(modified: &mut Option<TxnMutations<K>>, key: &Q, txn_id: TxnId)
@@ -957,9 +1073,7 @@ where
     K: Borrow<Q> + Hash + Eq,
     Q: ?Sized + Hash + Eq + ToOwned<Owned = K>,
 {
-    with_mutations(modified, txn_id, |m| {
-        m.ref_keys.insert(key.to_owned());
-    });
+    mutations(modified, txn_id).ref_keys.insert(key.to_owned());
 }
 
 #[cfg(test)]

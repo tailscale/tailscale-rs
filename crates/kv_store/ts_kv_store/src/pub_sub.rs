@@ -29,7 +29,7 @@ use std::{
 use crate::{
     Owner, SubscriptionResult,
     schema::{Desc, GeneratedStorage, PrimaryDesc, SingletonDesc},
-    storage::Storage,
+    storage::{SingletonSlot, Storage},
 };
 
 /// Identifies a subscriber.
@@ -362,7 +362,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         notifications: &mut Notifications<
             <S::Storage as crate::schema::GeneratedStorage>::Notification,
         >,
-        event: &Option<S::NotificationValue>,
+        event: Option<&S::NotificationValue>,
     ) {
         let notification = match event {
             None => S::make_notification(SingletonEvent::Remove),
@@ -569,10 +569,8 @@ pub(crate) fn send_current_singleton<S: SingletonDesc>(
     let Some(value) = S::get_ref(&storage.tables).get(storage.txn_id()) else {
         return;
     };
-    let Some(value) = S::notification_value(value).clone() else {
-        return;
-    };
-    let notification = S::make_notification(SingletonEvent::Upsert(value));
+    let notification =
+        S::make_notification(SingletonEvent::Upsert(S::notification_value(value).clone()));
     subs.notify(Notifications::<_>::single(notification, subscription));
 }
 
@@ -830,6 +828,8 @@ mod tests {
             Count(u64; OWNER; notify(Clone)),
             Shared(Arc<String>; OWNER; notify(Clone)),
             Quiet(u64; OWNER),
+            Defaulted(u64; OWNER; notify(Clone); default),
+            QuietDefaulted(u64; OWNER; default),
         }
         tables: {
             Items(u32 => String; OWNER; notify(Clone)),
@@ -971,6 +971,24 @@ mod tests {
                 SingletonEvent::Upsert(()) => QuietKind::Upsert,
                 SingletonEvent::Remove => QuietKind::Remove,
             }
+        }
+    }
+
+    /// A comparable projection of a `Defaulted` singleton notification.
+    fn defaulted_kind(n: &Notification) -> CountKind {
+        match n {
+            Notification::Defaulted(SingletonEvent::Upsert(v)) => CountKind::Upsert(*v),
+            Notification::Defaulted(SingletonEvent::Remove) => CountKind::Remove,
+            _ => panic!("unexpected notification: {n:?}"),
+        }
+    }
+
+    /// A comparable projection of a `QuietDefaulted` singleton notification.
+    fn quiet_defaulted_kind(n: &Notification) -> QuietKind {
+        match n {
+            Notification::QuietDefaulted(SingletonEvent::Upsert(())) => QuietKind::Upsert,
+            Notification::QuietDefaulted(SingletonEvent::Remove) => QuietKind::Remove,
+            _ => panic!("unexpected notification: {n:?}"),
         }
     }
 
@@ -1230,12 +1248,12 @@ mod tests {
             .unwrap();
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, Some(&5));
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert_eq!(CountKind::from(&map[&sub][0]), CountKind::Upsert(5));
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &Option::None);
+        subs.collect_singleton_events::<Count>(&mut notifs, None);
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert_eq!(CountKind::from(&map[&sub][0]), CountKind::Remove);
     }
@@ -1247,7 +1265,7 @@ mod tests {
         let sub = subs.create_global_subscription(subscriber).unwrap();
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, Some(&5));
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert_eq!(CountKind::from(&map[&sub][0]), CountKind::Upsert(5));
@@ -1263,7 +1281,7 @@ mod tests {
 
         let mut notifs = Notifications::default();
         subs.collect_events::<Items>(&mut notifs, events(&[(1, upsert("a"))]));
-        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, Some(&5));
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert!(!map.contains_key(&sub));
@@ -1281,7 +1299,7 @@ mod tests {
         subs.remove_singleton_subscription::<Count>(sub);
 
         let mut notifs = Notifications::default();
-        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, Some(&5));
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         assert!(!map.contains_key(&sub));
     }
@@ -1327,7 +1345,7 @@ mod tests {
 
         let mut notifs = Notifications::default();
         subs.collect_events::<Items>(&mut notifs, events(&[(1, upsert("a"))]));
-        subs.collect_singleton_events::<Count>(&mut notifs, &Option::Some(5));
+        subs.collect_singleton_events::<Count>(&mut notifs, Some(&5));
 
         let map: HashMap<Subscription, Vec<Notification>> = notifs.into();
         for s in gone_subs {
@@ -3037,6 +3055,222 @@ mod tests {
                 .map(ItemsKind::from)
                 .collect::<Vec<_>>(),
             vec![ItemsKind::TableClear, ItemsKind::TableUpsert(vec![2])]
+        );
+    }
+
+    /// A store with a subscription to `Defaulted`.
+    fn defaulted_store() -> (
+        Arc<dyn Notifier<Notification = Notification>>,
+        RecordingNotifier,
+        KvStore,
+        Subscription,
+    ) {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.Defaulted.subscribe(subscriber).unwrap();
+        (notifier, rec, store, sub)
+    }
+
+    fn defaulted_notifications(rec: &RecordingNotifier, sub: Subscription) -> Vec<CountKind> {
+        rec.notifications_for(sub)
+            .iter()
+            .map(defaulted_kind)
+            .collect()
+    }
+
+    #[test]
+    fn e2e_default_singleton_initialisation_does_not_notify() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        let sub = store.subscribe_global(subscriber).unwrap();
+
+        // Commit a transaction which does not touch the singleton.
+        store.Items.insert(OWNER, 1, "a".to_owned());
+        assert_eq!(store.Defaulted.get(OWNER), 0);
+
+        let got = rec.notifications_for(sub);
+        assert_eq!(got.len(), 1);
+        assert_eq!(ItemsKind::from(&got[0]), ItemsKind::TableUpsert(vec![1]));
+    }
+
+    #[test]
+    fn e2e_default_singleton_delete_is_upsert_of_default() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+
+        store.Defaulted.insert(OWNER, 7);
+        store.Defaulted.delete(OWNER);
+        store.Defaulted.insert(OWNER, 8);
+        assert_eq!(store.Defaulted.remove(OWNER), 8);
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![
+                CountKind::Upsert(7),
+                CountKind::Upsert(0),
+                CountKind::Upsert(8),
+                CountKind::Upsert(0),
+            ]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_delete_of_default_value_is_upsert() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+
+        store.Defaulted.delete(OWNER);
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(0)]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_insert_of_default_value_is_upsert() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+
+        store.Defaulted.insert(OWNER, 0);
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(0)]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_delete_then_insert_in_txn_is_upsert() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+        store.Defaulted.insert(OWNER, 7);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Defaulted.delete();
+        txn.Defaulted.insert(0);
+        txn.commit().unwrap();
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(0)]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_insert_then_delete_in_txn_is_upsert_of_default() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Defaulted.insert(7);
+        txn.Defaulted.delete();
+        txn.commit().unwrap();
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(0)]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_unchanging_with_mut_after_delete_is_upsert_of_default() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+        store.Defaulted.insert(OWNER, 7);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Defaulted.delete();
+        assert_eq!(txn.Defaulted.with_mut(|v| *v), 0);
+        txn.commit().unwrap();
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(0)]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_changing_with_mut_after_delete_is_upsert() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+        store.Defaulted.insert(OWNER, 7);
+        rec.reset();
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Defaulted.delete();
+        txn.Defaulted.with_mut(|v| *v += 1);
+        txn.commit().unwrap();
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(1)]
+        );
+    }
+
+    #[test]
+    fn e2e_default_singleton_with_mut_notifies_with_new_value() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+
+        store.Defaulted.with_mut(OWNER, |v| *v += 1);
+        // Leaving the value unchanged is not a mutation.
+        store.Defaulted.with_mut(OWNER, |v| *v);
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(1)]
+        );
+    }
+
+    #[test]
+    fn e2e_rolled_back_default_singleton_delete_notifies_nothing() {
+        let (_notifier, rec, store, sub) = defaulted_store();
+        store.Defaulted.insert(OWNER, 7);
+        rec.reset();
+
+        {
+            let mut txn = store.begin_transaction(OWNER);
+            txn.Defaulted.delete();
+        }
+        // A later transaction must not see the rolled-back delete.
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Defaulted.with_mut(|v| *v += 1);
+        txn.commit().unwrap();
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(8)]
+        );
+    }
+
+    #[test]
+    fn e2e_subscribe_and_notify_default_singleton_sends_default_value() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+
+        let sub = store.Defaulted.subscribe_and_notify(subscriber).unwrap();
+
+        assert_eq!(
+            defaulted_notifications(&rec, sub),
+            vec![CountKind::Upsert(0)]
+        );
+    }
+
+    #[test]
+    fn e2e_valueless_default_singleton_subscription() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let owned = store.with_owner(OWNER);
+        let subscriber = owned.register_subscriber();
+        let sub = owned.QuietDefaulted.subscribe(subscriber).unwrap();
+
+        owned.QuietDefaulted.insert(42);
+        owned.QuietDefaulted.delete();
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(quiet_defaulted_kind)
+                .collect::<Vec<_>>(),
+            vec![QuietKind::Upsert, QuietKind::Upsert]
         );
     }
 }

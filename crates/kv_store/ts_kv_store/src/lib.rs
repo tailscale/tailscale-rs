@@ -137,8 +137,9 @@
 //! The macros also create transaction types with a field for each singleton and table.
 //!
 //! The implementation of storage for tabular data is one HashMap per table (plus several helper data
-//! structures). For singleton data, we store values in an `Option` in fields with the name of
-//! the singleton.
+//! structures). For singleton data, we store values in fields with the name of the singleton. The
+//! value is stored in an `Option`, unless the singleton is declared with `default`, in which case it
+//! always has a value.
 //!
 //! The implementation of the storage operations (`get`, `insert`, etc.) is somewhat shared between
 //! the various types which support them (singleton, table, index, and transaction types). These are
@@ -161,7 +162,8 @@
 //! outside of the main storage in a per-table delete mask.
 //!
 //! Singletons work slightly differently: they still use a `VersionedValue`, but use a tombstone value
-//! for deletes (`None`) rather than a delete mask.
+//! for deletes (`None`) rather than a delete mask. Singletons declared with `default` have no
+//! tombstone, a delete just writes the default value.
 //!
 //! To commit a transaction, the delete masks are applied to their corresponding tables, the committed
 //! transaction id in the store is set to the committed transaction's, and the pending transaction
@@ -207,12 +209,15 @@ pub use pub_sub::{
     SubscriptionError,
 };
 #[doc(inline)]
-pub use raw::{Singleton, SingletonWithOwner, Table, TableWithOwner};
+pub use raw::{
+    DefaultSingleton, DefaultSingletonWithOwner, Singleton, SingletonWithOwner, Table,
+    TableWithOwner,
+};
 pub use schema::{GeneratedStorage, GeneratedStore};
 #[doc(inline)]
 pub use transactions::{
-    RoSingletonTransaction, RoTableTransaction, RoTransaction, SingletonTransaction,
-    TableTransaction, Transaction,
+    DefaultSingletonTransaction, RoDefaultSingletonTransaction, RoSingletonTransaction,
+    RoTableTransaction, RoTransaction, SingletonTransaction, TableTransaction, Transaction,
 };
 
 /// A key-value store. See the crate docs for details. Its schema is described by `TableStorage`.

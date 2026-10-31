@@ -6,7 +6,7 @@ use core::{any::Any, borrow::Borrow, hash::Hash, ops::Deref};
 use crate::{
     Owner,
     pub_sub::Subscriptions,
-    storage::{Table, VersionedValue},
+    storage::{DefaultValue, SingletonSlot, Table, VersionedValue},
     transactions::TxnId,
 };
 
@@ -33,11 +33,13 @@ pub trait Desc: Sized + 'static {
 pub unsafe trait SingletonDesc: Desc {
     /// The type of the value.
     type Value: Any + Send + Sync;
+    /// How the value is stored (determines whether the singleton is optional, or uses a default.
+    type Slot: SingletonSlot<Value = Self::Value>;
     /// The type of the notification for this singleton (either `Self::Value` or `()`).
     type NotificationValue: Clone;
 
     /// Get a reference to the field storing this singleton in `storage`.
-    fn get_ref(storage: &Self::Storage) -> &VersionedValue<Option<Self::Value>>;
+    fn get_ref(storage: &Self::Storage) -> &Self::Slot;
 
     /// Project a pointer to the storage to a pointer to the field storing this singleton, without
     /// creating a reference to the storage.
@@ -45,15 +47,39 @@ pub unsafe trait SingletonDesc: Desc {
     /// # Safety
     ///
     /// `storage` must be valid for reads and writes (i.e., dereferenceable).
-    unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut VersionedValue<Option<Self::Value>>;
+    unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut Self::Slot;
 
-    /// Convert an optional reference to this singleton's value to its notification value.
-    fn notification_value(value: &Option<Self::Value>) -> &Option<Self::NotificationValue>;
+    /// Convert a reference to this singleton's value to its notification value.
+    fn notification_value(value: &Self::Value) -> &Self::NotificationValue;
 
     /// Create a notification from an event.
     fn make_notification(
         event: crate::SingletonEvent<Self>,
     ) -> <Self::Storage as GeneratedStorage>::Notification;
+}
+
+/// A singleton which may have no value (i.e., which is declared without `default`).
+#[doc(hidden)]
+pub trait OptionalSingletonDesc:
+    SingletonDesc<Slot = VersionedValue<Option<<Self as SingletonDesc>::Value>>>
+{
+}
+
+impl<S> OptionalSingletonDesc for S where
+    S: SingletonDesc<Slot = VersionedValue<Option<<S as SingletonDesc>::Value>>>
+{
+}
+
+/// A singleton declared with `default`, which always has a value.
+#[doc(hidden)]
+pub trait DefaultSingletonDesc:
+    SingletonDesc<Slot = DefaultValue<<Self as SingletonDesc>::Value>, Value: Default>
+{
+}
+
+impl<S> DefaultSingletonDesc for S where
+    S: SingletonDesc<Slot = DefaultValue<<S as SingletonDesc>::Value>, Value: Default>
+{
 }
 
 /// Describes tabular key/values in the store.
@@ -247,7 +273,7 @@ pub trait GeneratedStore:
 /// The syntax is:
 /// ```ignore
 /// store!(
-///   kvs: { Name(ValueType; owner; notify(None|Clone)?),* }
+///   kvs: { Name(ValueType; owner; notify(None|Clone)?; default?),* }
 ///   tables: { Name(KeyType => ValueType; owner; indexes?; notify(None|Clone)?),* }
 /// )
 /// ```
@@ -277,6 +303,32 @@ pub trait GeneratedStore:
 ///     Edges(u32 => Box<dyn Edge + Send + Sync>; EDGES_OWNER),
 ///   }
 /// );
+/// ```
+///
+/// # Singelton defaults
+///
+/// By default (ha!), a singleton is optional: reading it returns an `Option`, and deleting it
+/// leaves it with no value (`None`). A singleton declared with `default` always has a value, which is
+/// initially `ValueType::default()`: reading it returns the bare value (not an `Option`), and
+/// deleting it resets it to `ValueType::default()`. To use `default`, the type of the value
+/// must implement `Default`. E.g.,
+///
+/// ```rust
+/// # use ts_kv_store::store;
+/// # const OWNER: ts_kv_store::Owner = ts_kv_store::Owner("foo");
+/// store!(
+///   kvs: {
+///     Count(u64; OWNER; default),
+///     Name(String; OWNER; notify(Clone); default),
+///   }
+/// );
+///
+/// let store = KvStore::new();
+/// assert_eq!(store.Count.get(OWNER), 0);
+/// store.Count.insert(OWNER, 42);
+/// assert_eq!(store.Count.get(OWNER), 42);
+/// store.Count.delete(OWNER);
+/// assert_eq!(store.Count.get(OWNER), 0);
 /// ```
 ///
 /// # Indexes
@@ -323,10 +375,16 @@ pub trait GeneratedStore:
 /// The `None` behaviour is that only keys are sent in notifications. The `Clone` behaviour is
 /// that values are cloned and included in notifications. This requires that the value type implements
 /// the `Clone` trait.
+///
+/// A singleton declared with `default` always has a value, so it never gives a `Remove`
+/// notification: deleting it is notified as an `Upsert` of the default value.
 #[macro_export]
 macro_rules! store {
     (
-        $(kvs: { $($sname:ident($svalue_ty:ty; $sowner:expr $(; notify($snotif:ident))?)),* $(,)? })?
+        // Singleton options are matched generically (as `; name` or `; name(arg)`), because
+        // matching an optional `notify(...)` followed by an optional flag is ambiguous. Options are
+        // checked by the `singleton_slot!` and `notification_*!` macros.
+        $(kvs: { $($sname:ident($svalue_ty:ty; $sowner:expr $(; $sopt:ident $(($sarg:ident))?)*)),* $(,)? })?
         $(tables: { $(
             $name:ident (
                 $key_ty:ty => $value_ty:ty;
@@ -350,20 +408,21 @@ macro_rules! store {
             // SAFETY: `value_ptr` points to the singleton's own field of `TableStorage`.
             unsafe impl $crate::schema::SingletonDesc for $sname {
                 type Value = $svalue_ty;
-                type NotificationValue = $crate::notification_value_type!($svalue_ty $(; notify($snotif))?);
+                type Slot = $crate::singleton_slot!($svalue_ty $(; $sopt $(($sarg))?)*);
+                type NotificationValue = $crate::notification_value_type!($svalue_ty $(; $sopt $(($sarg))?)*);
 
-                fn get_ref(storage: &Self::Storage) -> &$crate::storage::VersionedValue<::core::option::Option<Self::Value>> {
+                fn get_ref(storage: &Self::Storage) -> &Self::Slot {
                     &storage.$sname
                 }
 
-                unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut $crate::storage::VersionedValue<::core::option::Option<Self::Value>> {
+                unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut Self::Slot {
                     // SAFETY: `storage` is dereferenceable (by the caller's contract). This only
                     // computes a place, it does not create a reference to the storage.
                     unsafe { &raw mut (*storage).$sname }
                 }
 
-                fn notification_value(_value: &::core::option::Option<Self::Value>) -> &::core::option::Option<Self::NotificationValue> {
-                    $crate::notification_value!(_value $(; notify($snotif))? )
+                fn notification_value(_value: &Self::Value) -> &Self::NotificationValue {
+                    $crate::notification_value!(_value $(; $sopt $(($sarg))?)*)
                 }
 
                 fn make_notification(
@@ -458,7 +517,7 @@ macro_rules! store {
         #[allow(non_snake_case)]
         pub struct TableStorage {
             $($($name: $crate::storage::Table<$name>,)*)?
-            $($($sname: $crate::storage::VersionedValue<::core::option::Option<$svalue_ty>>,)*)?
+            $($($sname: <$sname as $crate::schema::SingletonDesc>::Slot,)*)?
         }
 
         /// Macro-generated notification type, there is a variant for each table and singleton with
@@ -497,9 +556,9 @@ macro_rules! store {
                 $(
                     $(
                         if _subscriptions.has_singleton_subscribers::<$sname>()
-                            && let ::core::option::Option::Some(event) = self.$sname.modified_in_txn(_txn_id)
+                            && let ::core::option::Option::Some(change) = $crate::storage::SingletonSlot::change_in_txn(&self.$sname, _txn_id)
                         {
-                            _subscriptions.collect_singleton_events::<$sname>(_notifications, <$sname as $crate::schema::SingletonDesc>::notification_value(event));
+                            _subscriptions.collect_singleton_events::<$sname>(_notifications, change.map(<$sname as $crate::schema::SingletonDesc>::notification_value));
                         }
                     )*
                 )?
@@ -525,7 +584,7 @@ macro_rules! store {
                 )?
                 $(
                     $(
-                        self.$sname.gc_txn(_txn_id);
+                        $crate::storage::SingletonSlot::gc_txn(&mut self.$sname, _txn_id);
                     )*
                 )?
             }
@@ -683,7 +742,7 @@ macro_rules! store {
             __store: $crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>,
 
             $($(#[allow(dead_code)] pub $name: $crate::Table<$name>,)*)?
-            $($(#[allow(dead_code)] pub $sname: $crate::Singleton<$sname>,)*)?
+            $($(#[allow(dead_code)] pub $sname: $crate::singleton_type!(Singleton, DefaultSingleton, [$sname] $(; $sopt $(($sarg))?)*),)*)?
         }
 
         impl KvStore {
@@ -704,7 +763,7 @@ macro_rules! store {
             pub fn with_owner(&self, owner: $crate::Owner) -> KvStoreWithOwner<'_> {
                 KvStoreWithOwner {
                     $($($name: $crate::TableWithOwner::new(::core::clone::Clone::clone(&self.__store), owner),)*)?
-                    $($($sname: $crate::SingletonWithOwner::new(::core::clone::Clone::clone(&self.__store), owner),)*)?
+                    $($($sname: <$crate::singleton_type!(SingletonWithOwner, DefaultSingletonWithOwner, [$sname] $(; $sopt $(($sarg))?)*)>::new(::core::clone::Clone::clone(&self.__store), owner),)*)?
                     __store: &self.__store,
                     __owner: owner,
                 }
@@ -726,7 +785,7 @@ macro_rules! store {
                 let store = $crate::__alloc::sync::Arc::new($crate::KvStore::from_notifier(notifier));
                 KvStore {
                     $($($name: $crate::Table::new(::core::clone::Clone::clone(&store)),)*)?
-                    $($($sname: $crate::Singleton::new(::core::clone::Clone::clone(&store)),)*)?
+                    $($($sname: <$crate::singleton_type!(Singleton, DefaultSingleton, [$sname] $(; $sopt $(($sarg))?)*)>::new(::core::clone::Clone::clone(&store)),)*)?
                     __store: store,
                 }
             }
@@ -743,7 +802,7 @@ macro_rules! store {
             __owner: $crate::Owner,
 
             $($(#[allow(dead_code)] pub $name: $crate::TableWithOwner<$name>,)*)?
-            $($(#[allow(dead_code)] pub $sname: $crate::SingletonWithOwner<$sname>,)*)?
+            $($(#[allow(dead_code)] pub $sname: $crate::singleton_type!(SingletonWithOwner, DefaultSingletonWithOwner, [$sname] $(; $sopt $(($sarg))?)*),)*)?
         }
 
         #[allow(dead_code)]
@@ -819,7 +878,7 @@ macro_rules! store {
             __store_txn: $crate::__alloc::rc::Rc<$crate::Transaction<'a, TableStorage>>,
 
             $($(pub $name: $crate::TableTransaction<'a, $name>,)*)?
-            $($(pub $sname: $crate::SingletonTransaction<'a, $sname>,)*)?
+            $($(pub $sname: $crate::singleton_type!(SingletonTransaction, DefaultSingletonTransaction, ['a, $sname] $(; $sopt $(($sarg))?)*),)*)?
         }
 
         #[allow(dead_code)]
@@ -834,7 +893,7 @@ macro_rules! store {
                     )*)?
                     $($(
                         // SAFETY: this is the only view of `$sname`.
-                        $sname: unsafe { $crate::SingletonTransaction::new(::core::clone::Clone::clone(&store_txn)) },
+                        $sname: unsafe { <$crate::singleton_type!(SingletonTransaction, DefaultSingletonTransaction, ['a, $sname] $(; $sopt $(($sarg))?)*)>::new(::core::clone::Clone::clone(&store_txn)) },
                     )*)?
 
                     __store_txn: store_txn,
@@ -878,7 +937,7 @@ macro_rules! store {
             __store_txn: $crate::__alloc::rc::Rc<$crate::RoTransaction<'a, TableStorage>>,
 
             $($(pub $name: $crate::RoTableTransaction<'a, $name>,)*)?
-            $($(pub $sname: $crate::RoSingletonTransaction<'a, $sname>,)*)?
+            $($(pub $sname: $crate::singleton_type!(RoSingletonTransaction, RoDefaultSingletonTransaction, ['a, $sname] $(; $sopt $(($sarg))?)*),)*)?
         }
 
         #[allow(dead_code)]
@@ -888,7 +947,7 @@ macro_rules! store {
 
                 RoTransaction {
                     $($($name: $crate::RoTableTransaction::new(::core::clone::Clone::clone(&store_txn)),)*)?
-                    $($($sname: $crate::RoSingletonTransaction::new(::core::clone::Clone::clone(&store_txn)),)*)?
+                    $($($sname: <$crate::singleton_type!(RoSingletonTransaction, RoDefaultSingletonTransaction, ['a, $sname] $(; $sopt $(($sarg))?)*)>::new(::core::clone::Clone::clone(&store_txn)),)*)?
 
                     __store_txn: store_txn,
                 }
@@ -940,41 +999,36 @@ macro_rules! on_insert_each {
         $name:ident,
         $field:ident :
         $field_ty:ty;
-        ($self:ident, $key:ident, $value:ident, $txn_id:ident); assert_unique
+        ($self:ident, $key:ident, $value:ident, $txn_id:ident) $(; $unique:ident)?
     ) => {
         for index_key in index::$name::Storage::$field($value) {
-            let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
-            ::core::assert!(
-                unique,
-                "Index key is non-unique for index `{}` of table `{}`",
-                ::core::stringify!($field),
-                ::core::stringify!($name),
-            );
-            $self.$field.insert(
-                index_key,
-                $crate::__alloc::borrow::ToOwned::to_owned($key),
-                $txn_id,
-            );
-        }
-    };
-    (
-        $name:ident,
-        $field:ident :
-        $field_ty:ty;
-        ($self:ident, $key:ident, $value:ident, $txn_id:ident)
-    ) => {
-        for index_key in index::$name::Storage::$field($value) {
-            let unique = $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none();
-            if unique {
+            if $self.$field.get::<$field_ty>(&index_key, $txn_id).is_none() {
                 $self.$field.insert(
                     index_key,
                     $crate::__alloc::borrow::ToOwned::to_owned($key),
                     $txn_id,
                 );
             } else {
-                $self.$field.set_poisoned($txn_id);
+                $crate::on_non_unique_index_key!($name, $field, $self, $txn_id $(; $unique)?);
             }
         }
+    };
+}
+
+/// Handle a non-unique index key: panic for an index declared with `assert_unique`, otherwise
+/// poison the index.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! on_non_unique_index_key {
+    ($name:ident, $field:ident, $self:ident, $txn_id:ident; assert_unique) => {
+        ::core::panic!(
+            "Index key is non-unique for index `{}` of table `{}`",
+            ::core::stringify!($field),
+            ::core::stringify!($name),
+        )
+    };
+    ($name:ident, $field:ident, $self:ident, $txn_id:ident) => {
+        $self.$field.set_poisoned($txn_id)
     };
 }
 
@@ -1013,11 +1067,33 @@ macro_rules! value_eq {
 
 #[doc(hidden)]
 #[macro_export]
+macro_rules! singleton_slot {
+    ($value_ty:ty $(; notify($notif:ident))?) => {
+        $crate::storage::VersionedValue<::core::option::Option<$value_ty>>
+    };
+    ($value_ty:ty $(; notify($notif:ident))?; default) => {
+        $crate::storage::DefaultValue<$value_ty>
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! singleton_type {
+    ($optional:ident, $default:ident, [$($args:tt)*] $(; notify($notif:ident))?) => {
+        $crate::$optional<$($args)*>
+    };
+    ($optional:ident, $default:ident, [$($args:tt)*] $(; notify($notif:ident))?; default) => {
+        $crate::$default<$($args)*>
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
 macro_rules! notification_value_type {
-    ($value_ty:ty; notify(Clone)) => {
+    ($value_ty:ty; notify(Clone) $(; default)?) => {
         $value_ty
     };
-    ($value_ty:ty $(; notify(None))?) => {
+    ($value_ty:ty $(; notify(None))? $(; default)?) => {
         ()
     };
 }
@@ -1035,15 +1111,11 @@ macro_rules! notification_clone_value {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! notification_value {
-    ($value:ident; notify(Clone)) => {
+    ($value:ident; notify(Clone) $(; default)?) => {
         $value
     };
-    ($value:ident $(; notify(None))?) => {
-        if $value.is_some() {
-            &::core::option::Option::Some(())
-        } else {
-            &::core::option::Option::None
-        }
+    ($value:ident $(; notify(None))? $(; default)?) => {
+        &()
     };
 }
 
