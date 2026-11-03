@@ -309,7 +309,7 @@ crate::impl_cast!(TypedBus, Register, ctx, state, Register { pid, tid }, {
 
     sub_state.recipients.insert(pid);
 
-    None
+    gen_server::Action::None
 });
 
 crate::impl_cast!(
@@ -321,7 +321,7 @@ crate::impl_cast!(
     {
         #[allow(clippy::question_mark)] // not semantically appropriate
         let Some(sub_state) = state.get_mut(&tid) else {
-            return None;
+            return gen_server::Action::None;
         };
 
         sub_state.recipients.remove(&pid);
@@ -330,7 +330,7 @@ crate::impl_cast!(
             state.remove(&tid);
         }
 
-        None
+        gen_server::Action::None
     }
 );
 
@@ -375,7 +375,7 @@ crate::impl_cast!(
             });
         }
 
-        None
+        gen_server::Action::None
     }
 );
 
@@ -405,7 +405,7 @@ impl GenServer for TypedBus {
         &self,
         _ctx: &ProcContext,
         _args: Self::Args,
-    ) -> Result<(Self::State, Option<gen_server::Action>), Error> {
+    ) -> Result<(Self::State, gen_server::Action), Error> {
         Ok(Default::default())
     }
 

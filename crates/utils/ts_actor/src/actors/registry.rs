@@ -64,7 +64,7 @@ impl gen_server::TypedCast<Register> for Registry {
         ctx: &ProcContext,
         state: &mut Self::State,
         Register { id, name }: Register,
-    ) -> Option<gen_server::Action> {
+    ) -> gen_server::Action {
         let waiters = state.waiters.remove(&name);
         state.registrations.insert(name, id);
 
@@ -72,7 +72,7 @@ impl gen_server::TypedCast<Register> for Registry {
             waiter.send_reply(ctx, id).await;
         }
 
-        None
+        Default::default()
     }
 }
 
@@ -82,9 +82,10 @@ impl gen_server::TypedCast<Unregister> for Registry {
         _ctx: &ProcContext,
         state: &mut Self::State,
         Unregister { name }: Unregister,
-    ) -> Option<gen_server::Action> {
+    ) -> gen_server::Action {
         state.registrations.remove(&name);
-        None
+
+        Default::default()
     }
 }
 
@@ -119,7 +120,7 @@ impl gen_server::TypedCall<WaitFor> for Registry {
         } else {
             state.waiters.entry(name).or_default().insert(caller_handle);
 
-            (None, None)
+            Default::default()
         }
     }
 }
@@ -158,7 +159,7 @@ impl gen_server::TypedInfo<protocol::registry::Lookup> for Registry {
         ctx: &ProcContext,
         state: &mut Self::State,
         protocol::registry::Lookup { reply, name, rf }: protocol::registry::Lookup,
-    ) -> Option<gen_server::Action> {
+    ) -> gen_server::Action {
         let resp = protocol::registry::Reply {
             rf,
             pid: state.registrations.get(&name).copied(),
@@ -168,7 +169,7 @@ impl gen_server::TypedInfo<protocol::registry::Lookup> for Registry {
             tracing::warn!(err = %e, "failed to reply to reg lookup");
         }
 
-        None
+        Default::default()
     }
 }
 
@@ -180,7 +181,7 @@ impl GenServer for Registry {
         &self,
         _: &ProcContext,
         _: Self::Args,
-    ) -> Result<(Self::State, Option<gen_server::Action>), Error> {
+    ) -> Result<(Self::State, gen_server::Action), Error> {
         Ok(Default::default())
     }
 

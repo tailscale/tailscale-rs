@@ -83,19 +83,19 @@ crate::impl_info!(Supervisor, SystemMessage, ctx, state, msg, {
                 // TODO(npry): this means _we_ should die, since the process that died wasn't our
                 //  child
                 tracing::warn!(?linked_process, ?reason, "link exit for unknown process");
-                return None;
+                return Default::default();
             };
 
             let Some(child) = state.specs.get_mut(&proc_name) else {
                 debug_assert!(false, "supervisor invariant violated: child spec missing");
                 tracing::error!(?proc_name, "supervisor invariant error: child spec missing");
-                return None;
+                return Default::default();
             };
 
             let Some(pid) = state.pid_lookup.remove(&proc_name) else {
                 debug_assert!(false, "supervisor invariant violated: child pid missing");
                 tracing::error!(?proc_name, "supervisor invariant error: child pid missing");
-                return None;
+                return Default::default();
             };
 
             let should_restart = match child.restart {
@@ -133,7 +133,7 @@ crate::impl_info!(Supervisor, SystemMessage, ctx, state, msg, {
         }
     }
 
-    None
+    Default::default()
 });
 
 impl GenServer for Supervisor {
@@ -144,7 +144,7 @@ impl GenServer for Supervisor {
         &self,
         ctx: &ProcContext,
         mut state: State,
-    ) -> Result<(Self::State, Option<gen_server::Action>), Error> {
+    ) -> Result<(Self::State, gen_server::Action), Error> {
         ctx.trap_exit(true)?;
 
         let child_keys = state.specs.keys().cloned().collect::<Vec<_>>();
@@ -153,7 +153,7 @@ impl GenServer for Supervisor {
             spawn_child(ctx, &mut state, &child_id)?;
         }
 
-        Ok((state, None))
+        Ok((state, gen_server::Action::None))
     }
 
     crate::typed_call!(StartChild);
@@ -561,8 +561,8 @@ mod test {
                 &self,
                 _ctx: &ProcContext,
                 _args: Self::Args,
-            ) -> Result<(Self::State, Option<Action>), Error> {
-                Ok(((), None))
+            ) -> Result<(Self::State, Action), Error> {
+                Ok(((), Action::None))
             }
         }
 

@@ -42,28 +42,31 @@ pub use typed::{
 
 use crate::pid::Pid;
 
-/// Start a new [`GenServer`] defined by behavior `B` and with the given `args`.
+/// Start a new [`GenServer`] with the given `args`.
 ///
 /// Returns a [`ProcFuture`] to run the [`GenServer`].
-pub fn start<B>(behavior: B, args: B::Args) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture>
+pub fn start<GS>(
+    genserver: GS,
+    args: GS::Args,
+) -> impl FnOnce(ProcContext) -> StaticStorage<ProcFuture>
 where
-    B: GenServer + 'static,
+    GS: GenServer + 'static,
 {
     move |ctx| {
         StaticStorage::Box(Box::new(async move {
-            let (mut state, mut action) = behavior.init(&ctx, args).await?;
+            let (mut state, mut action) = genserver.init(&ctx, args).await?;
 
             loop {
                 let timeout = match action.take() {
-                    Some(Action::Continue) => {
-                        action = behavior.handle_continue(&ctx, &mut state).await;
+                    Action::Continue => {
+                        action = genserver.handle_continue(&ctx, &mut state).await;
                         continue;
                     }
-                    Some(Action::Stop) => {
+                    Action::Stop => {
                         return Ok(());
                     }
-                    Some(Action::Timeout(dur)) => Some(dur),
-                    None => None,
+                    Action::Timeout(dur) => Some(dur),
+                    _ => None,
                 };
 
                 let rt = ctx.rt()?;
@@ -81,7 +84,7 @@ where
                 msg_match! [
                     msg,
                     Call: Call { rf, msg, sender } => {
-                        let (reply, resp_action)  = behavior.handle_call(&ctx, &mut state, msg, ReplyHandle {
+                        let (reply, resp_action)  = genserver.handle_call(&ctx, &mut state, msg, ReplyHandle {
                             pid: sender,
                             rf,
                         }).await;
@@ -93,10 +96,10 @@ where
                         }
                     },
                     Cast: Cast(msg) => {
-                        action = behavior.handle_cast(&ctx, &mut state, msg).await;
+                        action = genserver.handle_cast(&ctx, &mut state, msg).await;
                     },
                     else msg => {
-                        action = behavior.handle_info(&ctx, &mut state, msg).await;
+                        action = genserver.handle_info(&ctx, &mut state, msg).await;
                     }
                 ]
             }
@@ -168,7 +171,7 @@ pub async fn cast(ctx: &ProcContext, server: &dyn ToProcName, msg: Message) -> R
 }
 
 /// Result alias for the return type of [`GenServer::handle_call`].
-pub type CallResult = (Option<Reply>, Option<Action>);
+pub type CallResult = (Option<Reply>, Action);
 
 /// Defines a process which handles messages in request-response style, i.e. like a server.
 pub trait GenServer: Send {
@@ -184,7 +187,7 @@ pub trait GenServer: Send {
         &self,
         ctx: &ProcContext,
         args: Self::Args,
-    ) -> impl Future<Output = Result<(Self::State, Option<Action>), Error>> + Send;
+    ) -> impl Future<Output = Result<(Self::State, Action), Error>> + Send;
 
     /// Handle a request from another process.
     ///
@@ -198,13 +201,13 @@ pub trait GenServer: Send {
         state: &mut Self::State,
         message: Message,
         handle: ReplyHandle,
-    ) -> impl Future<Output = (Option<Reply>, Option<Action>)> + Send {
+    ) -> impl Future<Output = CallResult> + Send {
         _ = ctx;
         _ = handle;
         _ = state;
         drop(message);
 
-        async move { (Some(handle.commit(Default::default())), None) }
+        async move { (Some(handle.commit(Default::default())), Default::default()) }
     }
 
     /// Handle a one-way message from another process. Replies are not possible.
@@ -217,12 +220,12 @@ pub trait GenServer: Send {
         ctx: &ProcContext,
         state: &mut Self::State,
         message: Message,
-    ) -> impl Future<Output = Option<Action>> + Send {
+    ) -> impl Future<Output = Action> + Send {
         _ = ctx;
         _ = state;
         drop(message);
 
-        async move { None }
+        async move { Action::None }
     }
 
     /// Handle a message which isn't a call or cast.
@@ -235,12 +238,12 @@ pub trait GenServer: Send {
         ctx: &ProcContext,
         state: &mut Self::State,
         message: Message,
-    ) -> impl Future<Output = Option<Action>> + Send {
+    ) -> impl Future<Output = Action> + Send {
         _ = ctx;
         _ = state;
         drop(message);
 
-        async move { None }
+        async move { Action::None }
     }
 
     /// Handle [`Action::Continue`].
@@ -250,10 +253,10 @@ pub trait GenServer: Send {
         &self,
         ctx: &ProcContext,
         state: &mut Self::State,
-    ) -> impl Future<Output = Option<Action>> + Send {
+    ) -> impl Future<Output = Action> + Send {
         _ = ctx;
         _ = state;
-        async move { None }
+        async move { Action::None }
     }
 }
 
@@ -268,7 +271,7 @@ where
         &self,
         ctx: &ProcContext,
         args: Self::Args,
-    ) -> Result<(Self::State, Option<Action>), Error> {
+    ) -> Result<(Self::State, Action), Error> {
         B::init(self, ctx, args).await
     }
 
@@ -278,7 +281,7 @@ where
         state: &mut Self::State,
         message: Message,
         caller_handle: ReplyHandle,
-    ) -> impl Future<Output = (Option<Reply>, Option<Action>)> + Send {
+    ) -> impl Future<Output = CallResult> + Send {
         B::handle_call(self, ctx, state, message, caller_handle)
     }
 
@@ -287,7 +290,7 @@ where
         ctx: &ProcContext,
         state: &mut Self::State,
         message: Message,
-    ) -> impl Future<Output = Option<Action>> + Send {
+    ) -> impl Future<Output = Action> + Send {
         B::handle_cast(self, ctx, state, message)
     }
 
@@ -296,7 +299,7 @@ where
         ctx: &ProcContext,
         state: &mut Self::State,
         message: Message,
-    ) -> impl Future<Output = Option<Action>> + Send {
+    ) -> impl Future<Output = Action> + Send {
         B::handle_info(self, ctx, state, message)
     }
 
@@ -304,7 +307,7 @@ where
         &self,
         ctx: &ProcContext,
         state: &mut Self::State,
-    ) -> impl Future<Output = Option<Action>> + Send {
+    ) -> impl Future<Output = Action> + Send {
         B::handle_continue(self, ctx, state)
     }
 }
@@ -341,8 +344,12 @@ impl ReplyHandle {
 pub struct Timeout(());
 
 /// Actions which may occur as a result of a [`GenServer`] handler.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum Action {
+    /// No action.
+    #[default]
+    None,
+
     /// Stop the [`GenServer`] normally.
     Stop,
 
@@ -358,6 +365,12 @@ pub enum Action {
     /// This allows sending a reply immediately and continuing to perform additional
     /// processing afterward.
     Continue,
+}
+
+impl Action {
+    fn take(&mut self) -> Action {
+        core::mem::take(self)
+    }
 }
 
 /// Reply to a genserver call message.
@@ -386,7 +399,7 @@ impl Reply {
 
 impl From<Reply> for CallResult {
     fn from(value: Reply) -> Self {
-        (Some(value), None)
+        (Some(value), Action::None)
     }
 }
 

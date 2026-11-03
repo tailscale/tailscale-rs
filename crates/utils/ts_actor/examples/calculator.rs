@@ -16,7 +16,7 @@ impl GenServer for Calculator {
         &self,
         _ctx: &ProcContext,
         _: Self::Args,
-    ) -> Result<(Self::State, Option<Action>), Error> {
+    ) -> Result<(Self::State, Action), Error> {
         Ok(Default::default())
     }
 

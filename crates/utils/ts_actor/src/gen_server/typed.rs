@@ -29,7 +29,7 @@ use crate::{
 };
 
 /// Convenience alias for the return type of [`TypedCall::handle_call`].
-pub type TypedCallResult<Reply> = (Option<TypedReply<Reply>>, Option<Action>);
+pub type TypedCallResult<Reply> = (Option<TypedReply<Reply>>, Action);
 
 /// Send a request to the [`GenServer`] identified by `server`, waiting for its reply.
 pub async fn call_typed<M, GS>(
@@ -148,7 +148,7 @@ impl<Reply> TypedReply<Reply> {
 
 impl<Reply> From<TypedReply<Reply>> for TypedCallResult<Reply> {
     fn from(value: TypedReply<Reply>) -> Self {
-        (Some(value), None)
+        (Some(value), Action::None)
     }
 }
 
@@ -169,8 +169,8 @@ impl<Reply> From<TypedReply<Reply>> for TypedCallResult<Reply> {
 ///     // ...
 /// #    type State = ();
 /// #    type Args = ();
-/// #    async fn init(&self, ctx: &ProcContext, args: Self::Args) -> Result<(Self::State, Option<Action>), Error> {
-/// #         Ok(((), None))
+/// #    async fn init(&self, ctx: &ProcContext, args: Self::Args) -> Result<(Self::State, Action), Error> {
+/// #         Ok(((), Default::default()))
 /// #    }
 ///     ts_actor::typed_call!(u8);
 /// }
@@ -213,7 +213,7 @@ pub trait TypedCall<M>: GenServer {
         state: &mut Self::State,
         message: M,
         handle: TypedReplyHandle<Self::Reply>,
-    ) -> impl Future<Output = (Option<TypedReply<Self::Reply>>, Option<Action>)> + Send;
+    ) -> impl Future<Output = TypedCallResult<Self::Reply>> + Send;
 }
 
 /// Handler for a specific cast message of type `M`.
@@ -233,8 +233,8 @@ pub trait TypedCall<M>: GenServer {
 ///     // ...
 /// #    type State = ();
 /// #    type Args = ();
-/// #    async fn init(&self, ctx: &ProcContext, args: Self::Args) -> Result<(Self::State, Option<Action>), Error> {
-/// #         Ok(((), None))
+/// #    async fn init(&self, ctx: &ProcContext, args: Self::Args) -> Result<(Self::State, Action), Error> {
+/// #         Ok(((), Default::default()))
 /// #    }
 ///     ts_actor::typed_cast!(String);
 /// }
@@ -245,9 +245,9 @@ pub trait TypedCall<M>: GenServer {
 ///         ctx: &ProcContext,
 ///         state: &mut Self::State,
 ///         message: String,
-///     ) -> Option<gen_server::Action> {
+///     ) -> gen_server::Action {
 ///         println!("{message}");
-///         None
+///         Default::default()
 ///     }
 /// }
 ///
@@ -273,7 +273,7 @@ pub trait TypedCast<M>: GenServer {
         ctx: &ProcContext,
         state: &mut Self::State,
         message: M,
-    ) -> impl Future<Output = Option<Action>> + Send;
+    ) -> impl Future<Output = Action> + Send;
 }
 
 /// Handler for a specific info message of type `M`.
@@ -295,8 +295,8 @@ pub trait TypedCast<M>: GenServer {
 ///     // ...
 /// #    type State = usize;
 /// #    type Args = ();
-/// #    async fn init(&self, ctx: &ProcContext, args: Self::Args) -> Result<(Self::State, Option<Action>), Error> {
-/// #         Ok((0, None))
+/// #    async fn init(&self, ctx: &ProcContext, args: Self::Args) -> Result<(Self::State, Action), Error> {
+/// #         Ok((0, Default::default()))
 /// #    }
 ///     ts_actor::typed_info!(Inc);
 /// }
@@ -307,9 +307,9 @@ pub trait TypedCast<M>: GenServer {
 ///         ctx: &ProcContext,
 ///         state: &mut Self::State,
 ///         _message: Inc,
-///     ) -> Option<gen_server::Action> {
+///     ) -> gen_server::Action {
 ///         *state += 1;
-///         None
+///         Default::default()
 ///     }
 /// }
 ///
@@ -334,7 +334,7 @@ pub trait TypedInfo<M>: GenServer {
         ctx: &ProcContext,
         state: &mut Self::State,
         message: M,
-    ) -> impl Future<Output = Option<Action>> + Send;
+    ) -> impl Future<Output = Action> + Send;
 }
 
 /// Generate a [`GenServer::handle_call`] implementation on the basis of a number of
@@ -351,8 +351,8 @@ pub trait TypedInfo<M>: GenServer {
 /// #   type State = ();
 /// #   type Args = ();
 /// #
-/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, Option<gen_server::Action>), ts_actor::Error> {
-/// #       Ok(((), None))
+/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, gen_server::Action), ts_actor::Error> {
+/// #       Ok(((), Default::default()))
 /// #   }
 ///
 ///     ts_actor::typed_call!(u8);
@@ -373,7 +373,7 @@ macro_rules! typed_call {
             state: &mut Self::State,
             message: $crate::Message,
             handle: $crate::gen_server::ReplyHandle,
-        ) -> (Option<$crate::gen_server::Reply>, Option<$crate::gen_server::Action>) {
+        ) -> (Option<$crate::gen_server::Reply>, $crate::gen_server::Action) {
             $crate::msg_match! {
                 message,
                 $(
@@ -389,7 +389,7 @@ macro_rules! typed_call {
                 else _msg => {
                     (Some(handle.commit(
                         $crate::Message::new($crate::Error::BadArg)
-                    )), None)
+                    )), $crate::gen_server::Action::None)
                 }
             }
         }
@@ -410,8 +410,8 @@ macro_rules! typed_call {
 /// #   type State = ();
 /// #   type Args = ();
 /// #
-/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, Option<gen_server::Action>), ts_actor::Error> {
-/// #       Ok(((), None))
+/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, gen_server::Action), ts_actor::Error> {
+/// #       Ok(((), Default::default()))
 /// #   }
 ///
 ///     ts_actor::typed_cast!(u8);
@@ -419,7 +419,7 @@ macro_rules! typed_call {
 ///
 /// ts_actor::impl_cast!(MyGenServer, u8, ctx, state, msg, {
 ///     println!("got u8: {msg}");
-///     None
+///     Default::default()
 /// });
 /// ```
 #[macro_export]
@@ -430,8 +430,8 @@ macro_rules! typed_cast {
             ctx: &$crate::ProcContext,
             state: &mut Self::State,
             message: $crate::Message,
-        ) -> Option<$crate::gen_server::Action> {
-            let result: Option<$crate::gen_server::Action> = $crate::msg_match! {
+        ) -> $crate::gen_server::Action {
+            let result: $crate::gen_server::Action = $crate::msg_match! {
                 message,
                 $(
                     $msgty: msg => {
@@ -439,7 +439,7 @@ macro_rules! typed_cast {
                     },
                 )*
                 else _msg => {
-                    None
+                    $crate::gen_server::Action::None
                 }
             };
 
@@ -462,8 +462,8 @@ macro_rules! typed_cast {
 /// #   type State = ();
 /// #   type Args = ();
 /// #
-/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, Option<gen_server::Action>), ts_actor::Error> {
-/// #       Ok(((), None))
+/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, gen_server::Action), ts_actor::Error> {
+/// #       Ok(((), Default::default()))
 /// #   }
 ///
 ///     ts_actor::typed_info!(u8);
@@ -471,7 +471,7 @@ macro_rules! typed_cast {
 ///
 /// ts_actor::impl_info!(MyGenServer, u8, ctx, state, msg, {
 ///     println!("got u8: {msg}");
-///     None
+///     gen_server::Action::None
 /// });
 /// ```
 #[macro_export]
@@ -482,8 +482,8 @@ macro_rules! typed_info {
             ctx: &$crate::ProcContext,
             state: &mut Self::State,
             message: $crate::Message,
-        ) -> Option<$crate::gen_server::Action> {
-            let result: Option<$crate::gen_server::Action> = $crate::msg_match! {
+        ) -> $crate::gen_server::Action {
+            let result: $crate::gen_server::Action = $crate::msg_match! {
                 message,
                 $(
                     $msgty: msg => {
@@ -491,7 +491,7 @@ macro_rules! typed_info {
                     },
                 )*
                 else _msg => {
-                    None
+                    $crate::gen_server::Action::None
                 }
             };
 
@@ -514,8 +514,8 @@ macro_rules! typed_info {
 /// #   type State = ();
 /// #   type Args = ();
 /// #
-/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, Option<gen_server::Action>), ts_actor::Error> {
-/// #       Ok(((), None))
+/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, gen_server::Action), ts_actor::Error> {
+/// #       Ok(((), Default::default()))
 /// #   }
 /// # }
 /// #
@@ -556,14 +556,14 @@ macro_rules! impl_call {
 /// #   type State = ();
 /// #   type Args = ();
 /// #
-/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, Option<gen_server::Action>), ts_actor::Error> {
-/// #       Ok(((), None))
+/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, gen_server::Action), ts_actor::Error> {
+/// #       Ok(((), Default::default()))
 /// #   }
 /// # }
 /// #
 /// impl_cast!(MyGenServer, MyMessage, ctx, state, MyMessage(msg), {
 ///     println!("got cast message: {msg}");
-///     None
+///     gen_server::Action::None
 /// });
 /// ```
 #[macro_export]
@@ -575,7 +575,7 @@ macro_rules! impl_cast {
                 $ctx: &$crate::ProcContext,
                 $state: &mut Self::State,
                 $t: $msg,
-            ) -> Option<$crate::gen_server::Action> {
+            ) -> $crate::gen_server::Action {
                 $body
             }
         }
@@ -595,14 +595,14 @@ macro_rules! impl_cast {
 /// #   type State = ();
 /// #   type Args = ();
 /// #
-/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, Option<gen_server::Action>), ts_actor::Error> {
-/// #       Ok(((), None))
+/// #   async fn init(&self, ctx: &ts_actor::ProcContext, args: Self::Args) -> Result<(Self::State, gen_server::Action), ts_actor::Error> {
+/// #       Ok(((), Default::default()))
 /// #   }
 /// # }
 /// #
 /// impl_info!(MyGenServer, MyMessage, ctx, state, MyMessage(msg), {
 ///     println!("got info message: {msg}");
-///     None
+///     gen_server::Action::None
 /// });
 /// ```
 #[macro_export]
@@ -614,7 +614,7 @@ macro_rules! impl_info {
                 $ctx: &$crate::ProcContext,
                 $state: &mut Self::State,
                 $t: $msg,
-            ) -> Option<$crate::gen_server::Action> {
+            ) -> $crate::gen_server::Action {
                 $body
             }
         }
@@ -639,8 +639,11 @@ mod test {
                 _state: &mut Self::State,
                 message: u8,
                 caller_handle: TypedReplyHandle<Self::Reply>,
-            ) -> (Option<TypedReply<Self::Reply>>, Option<Action>) {
-                (Some(caller_handle.commit((message as u16).pow(2))), None)
+            ) -> TypedCallResult<Self::Reply> {
+                (
+                    Some(caller_handle.commit((message as u16).pow(2))),
+                    Action::None,
+                )
             }
         }
 
@@ -653,8 +656,11 @@ mod test {
                 _state: &mut Self::State,
                 message: u16,
                 caller_handle: TypedReplyHandle<Self::Reply>,
-            ) -> (Option<TypedReply<Self::Reply>>, Option<Action>) {
-                (Some(caller_handle.commit((message as u32).pow(2))), None)
+            ) -> TypedCallResult<Self::Reply> {
+                (
+                    Some(caller_handle.commit((message as u32).pow(2))),
+                    Action::None,
+                )
             }
         }
 
@@ -666,7 +672,7 @@ mod test {
                 &self,
                 _ctx: &ProcContext,
                 _args: Self::Args,
-            ) -> Result<(Self::State, Option<Action>), Error> {
+            ) -> Result<(Self::State, Action), Error> {
                 Ok(core::default::Default::default())
             }
 
