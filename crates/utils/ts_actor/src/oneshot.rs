@@ -55,17 +55,15 @@ enum State {
     ReceiverClosed = 3,
 }
 
-impl TryFrom<u8> for State {
-    type Error = ();
-
-    fn try_from(val: u8) -> Result<State, Self::Error> {
-        Ok(match val {
+impl From<u8> for State {
+    fn from(val: u8) -> State {
+        match val {
             0 => State::Empty,
             1 => State::Ready,
             2 => State::SenderClosed,
             3 => State::ReceiverClosed,
-            _ => return Err(()),
-        })
+            x => panic!("invalid oneshot state: {x}"),
+        }
     }
 }
 
@@ -163,7 +161,7 @@ impl<T> Receiver<T> {
         // Empty and returns Poll::Pending thereafter.
         let state = self.inner.state.swap(State::Empty as _, Ordering::AcqRel);
 
-        match State::try_from(state).unwrap() {
+        match State::from(state) {
             State::Ready => {
                 let mut out = MaybeUninit::uninit();
 
