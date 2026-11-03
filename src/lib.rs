@@ -332,7 +332,10 @@ impl Device {
     /// down if it timed out, just more violently and with potential resource leaks.
     ///
     /// If `timeout` is `None`, then shutdown will never time-out.
-    pub async fn shutdown(self, timeout: Option<Duration>) -> bool {
+    ///
+    /// Once the device has shut down, other operations on it return errors, and calling this
+    /// again returns immediately.
+    pub async fn shutdown(&self, timeout: Option<Duration>) -> bool {
         match timeout {
             Some(timeout) => {
                 if tokio::time::timeout(timeout, async {

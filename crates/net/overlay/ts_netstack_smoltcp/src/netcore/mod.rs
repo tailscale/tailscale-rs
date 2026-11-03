@@ -197,6 +197,23 @@ impl Netstack {
             resp,
         }: Request,
     ) {
+        // Completing a command whose requester has gone away would discard its result, e.g.
+        // losing received data or an accepted connection, so drop the command instead. Commands
+        // without a result to lose, e.g. sends made with `request_nonblocking`, still run.
+        if resp.is_disconnected() && has_result(&command) {
+            tracing::debug!("requester gone, dropping command");
+
+            // A blocked connect owns the socket it is connecting.
+            if matches!(
+                command,
+                Command::TcpStream(tcp::stream::Command::Connect { .. })
+            ) && handle.is_some()
+            {
+                self.process_tcp_stream(tcp::stream::Command::Close, handle);
+            }
+            return;
+        }
+
         let cmd_resp = match command {
             Command::StackControl(cmd) => self.process_stack_control(cmd),
             Command::Udp(udp) => self.process_udp(udp, handle),
@@ -221,8 +238,30 @@ impl Netstack {
 
                 if let Err(resp) = resp.send(otherwise) {
                     tracing::debug!(resp = ?resp.0, "response channel closed");
+                    self.release_undelivered(resp.0);
                 }
             }
+        }
+    }
+
+    /// Release any socket created for a response which couldn't be delivered because the
+    /// requester has gone away (e.g., its future was cancelled), as nothing else will close it.
+    fn release_undelivered(&mut self, resp: Response) {
+        match resp {
+            Response::TcpListen(tcp::listen::Response::Accepted { handle, .. })
+            | Response::TcpStream(tcp::stream::Response::Connected { handle }) => {
+                self.process_tcp_stream(tcp::stream::Command::Close, Some(handle));
+            }
+            Response::TcpListen(tcp::listen::Response::Listening { handle }) => {
+                self.process_tcp_listen(tcp::listen::Command::Close { handle }, None);
+            }
+            Response::Udp(udp::Response::Bound { handle, .. }) => {
+                self.process_udp(udp::Command::Close, Some(handle));
+            }
+            Response::Raw(raw::Response::Opened { handle }) => {
+                self.process_raw(raw::Command::Close, Some(handle));
+            }
+            _ => {}
         }
     }
 
@@ -606,6 +645,18 @@ where
             Poll::Pending
         }
     }
+}
+
+/// Whether `command` blocks waiting for a result which would be lost if not delivered.
+fn has_result(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::TcpStream(
+            tcp::stream::Command::Connect { .. } | tcp::stream::Command::Recv { .. }
+        ) | Command::TcpListen(tcp::listen::Command::Accept { .. })
+            | Command::Udp(udp::Command::Recv { .. })
+            | Command::Raw(raw::Command::Recv { .. })
+    )
 }
 
 fn set_loopback<const N: usize>(ips: &mut heapless::Vec<smoltcp::wire::IpCidr, N>) -> bool {

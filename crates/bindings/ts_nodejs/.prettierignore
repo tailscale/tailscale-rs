@@ -1,0 +1,5 @@
+# Generated files.
+native.js
+native.d.ts
+dist/
+package-lock.json

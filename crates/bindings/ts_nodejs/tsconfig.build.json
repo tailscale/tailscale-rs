@@ -1,0 +1,17 @@
+{
+  // Compiles the public TypeScript API in `lib/` to CommonJS (usable from both CommonJS and ES
+  // modules) in `dist/`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "lib",
+    "outDir": "dist",
+    "noEmit": false,
+    "declaration": true,
+    // Removes `@internal` members (e.g. the factories wrapping native objects) from `dist/*.d.ts`.
+    "stripInternal": true,
+    // `lib/` compiles to CommonJS, where `verbatimModuleSyntax` would forbid `import` statements.
+    "verbatimModuleSyntax": false,
+    "allowImportingTsExtensions": false
+  },
+  "include": ["lib/**/*.ts"]
+}

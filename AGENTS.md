@@ -32,6 +32,9 @@
 - Clippy runs with `-D warnings` and `--all-features`, so code behind features (e.g. `axum`,
   `ssh`) must be warning-free too.
 - Tests run with `cargo nextest`; doc tests run separately with `cargo test --doc`.
+- Node.js bindings (`crates/bindings/ts_nodejs`): build with `npm run build:debug` before
+  `npm run typecheck` or `npm test`. Tests needing a tailnet are skipped unless run as
+  `TS_RS_TEST_NET=1 TS_RS_TEST_AUTHKEY=<key> npm test`, with a reusable auth key.
 
 ## Commits and changes
 

@@ -214,7 +214,7 @@ impl Client<DefaultIo> {
         region: impl IntoIterator<Item = &'c ServerConnInfo>,
         node_keypair: &NodeKeyPair,
     ) -> Result<Self, Error> {
-        let conn = connect(region).await?.unwrap();
+        let conn = connect(region).await?.ok_or(Error::NoServerReachable)?;
 
         Client::handshake(conn, node_keypair).await
     }

@@ -1,0 +1,84 @@
+{
+  "name": "tailscale-rs",
+  "version": "0.6.1",
+  "description": "Tailscale library written in Rust.",
+  "license": "BSD-3-Clause",
+  "keywords": [
+    "tailscale",
+    "tailscale-rs",
+    "vpn",
+    "wireguard",
+    "napi-rs",
+    "typescript"
+  ],
+  "homepage": "https://github.com/tailscale/tailscale-rs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tailscale/tailscale-rs.git",
+    "directory": "crates/bindings/ts_nodejs"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "native.js",
+    "native.d.ts",
+    "*.node"
+  ],
+  "engines": {
+    "node": ">= 18.18"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">= 22.13",
+      "onFail": "error"
+    }
+  },
+  "napi": {
+    "binaryName": "tailscale",
+    "constEnum": false,
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "build": "npm run build:native -- --release && npm run build:ts",
+    "build:debug": "npm run build:native && npm run build:ts",
+    "build:native": "napi build --platform --js native.js --dts native.d.ts",
+    "build:ts": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc",
+    "test": "node --experimental-strip-types --test \"test/**/*.test.ts\"",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "peerDependencies": {
+    "@types/node": ">= 18"
+  },
+  "peerDependenciesMeta": {
+    "@types/node": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@napi-rs/cli": "3.10.8",
+    "@types/node": "22.20.5",
+    "eslint": "10.13.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0"
+  }
+}

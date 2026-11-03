@@ -6,8 +6,14 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- Added (ts_nodejs): Node.js and TypeScript language bindings.
+- Added (ts_netstack_smoltcp): `TcpStream::shutdown` closes the sending half of a connection.
+- Fixed (ts_netstack_smoltcp): cancelling a request (e.g., by dropping its future) no longer leaks
+  a socket, and is much less likely to lose received data or an incoming connection.
+- Fixed (ts_python): passing both `keys` and a key file no longer writes unused keys to the key file.
 - Fixed (Rust API): return an error from `is_authorized` when the user's auth key is rejected by
   the control server. Resolves crashes and panics that would otherwise occur in this case.
+- Fixed (ts_derp, ts_runtime): no longer panic when tasks are cancelled by the runtime shutting down.
 
 ## [0.6.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.6.1) - 2026-09-17
 

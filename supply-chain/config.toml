@@ -75,12 +75,6 @@ audit-as-crates-io = false
 [policy.ts_netstack_smoltcp]
 audit-as-crates-io = false
 
-[policy.ts_netstack_smoltcp_core]
-audit-as-crates-io = false
-
-[policy.ts_netstack_smoltcp_socket]
-audit-as-crates-io = false
-
 [policy.ts_nodecapability]
 audit-as-crates-io = false
 
@@ -100,6 +94,9 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy.ts_peercapability]
+audit-as-crates-io = false
+
+[policy.ts_nodejs]
 audit-as-crates-io = false
 
 [policy.ts_python]
@@ -291,6 +288,10 @@ criteria = "safe-to-deploy"
 version = "1.3.0"
 criteria = "safe-to-run"
 
+[[exemptions.convert_case]]
+version = "0.12.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.core-foundation]]
 version = "0.10.1"
 criteria = "safe-to-run"
@@ -329,6 +330,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.crypto_secretbox]]
 version = "0.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.ctor]]
+version = "1.0.13"
 criteria = "safe-to-deploy"
 
 [[exemptions.ctr]]
@@ -675,6 +680,26 @@ criteria = "safe-to-run"
 version = "1.1.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.napi]]
+version = "3.14.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-build]]
+version = "2.6.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-derive]]
+version = "3.6.12"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-derive-backend]]
+version = "6.1.5"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-sys]]
+version = "3.4.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.netconfig-rs]]
 version = "0.1.5"
 criteria = "safe-to-deploy"
@@ -701,6 +726,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.nix]]
 version = "0.31.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.nohash-hasher]]
+version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.nom]]
