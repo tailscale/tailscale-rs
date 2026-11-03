@@ -1,4 +1,4 @@
-use crate::{ProcFuture, StaticStorage};
+use crate::{ProcFuture, StaticStorage, error::Error};
 
 /// Abstraction around an async executor.
 pub trait Executor: Send + Sync + 'static {
@@ -261,5 +261,3 @@ mod _async_exec {
 
 #[cfg(feature = "async-executor")]
 pub use _async_exec::*;
-
-use crate::error::Error;
