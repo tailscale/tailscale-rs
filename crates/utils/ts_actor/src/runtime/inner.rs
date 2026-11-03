@@ -31,7 +31,10 @@ fn ptable_is_empty<V>(global_reg: Pid, table: &BTreeMap<Pid, V>) -> bool {
 }
 
 impl<RW, M> Inner<RW, M> {
-    fn remove_proc(&self, pid: Pid, reason: LinkExitReason) -> Result<(), Error>
+    /// Remove a process with pid `pid`, propagating exits to its links and monitors.
+    ///
+    /// Reports whether the process actually existed.
+    fn remove_proc(&self, pid: Pid, reason: LinkExitReason) -> bool
     where
         RW: RawRwLock,
         M: RawMutex,
@@ -39,25 +42,27 @@ impl<RW, M> Inner<RW, M> {
         // Minor optimization: run it first once with the specified pid explicitly, rather than
         // putting it into the set. If there are no links to kill, the set doesn't allocate.
         let mut pids = BTreeSet::new();
-        self.remove_one(pid, &mut pids, reason.clone())?;
+        let exists = self.remove_one(pid, &mut pids, reason.clone());
 
         while let Some(pid) = pids.pop_first() {
-            self.remove_one(pid, &mut pids, reason.clone())?;
+            self.remove_one(pid, &mut pids, reason.clone());
         }
 
-        Ok(())
+        exists
     }
 
     /// Remove a single process by pid.
     ///
     /// Adds any additional linked processes to remove to `pids_to_remove`. Done this way
     /// for tracking in the [`RtInner::kill`] impl for `Inner`.
+    ///
+    /// Reports whether `pid` actually existed.
     fn remove_one(
         &self,
         pid: Pid,
         pids_to_remove: &mut BTreeSet<Pid>,
         reason: LinkExitReason,
-    ) -> Result<(), Error>
+    ) -> bool
     where
         RW: RawRwLock,
         M: RawMutex,
@@ -68,7 +73,7 @@ impl<RW, M> Inner<RW, M> {
             let mut ptable = self.process_table.write();
 
             let Some(proc) = ptable.get(&pid) else {
-                return Err(Error::NoProc);
+                return false;
             };
 
             {
@@ -92,7 +97,7 @@ impl<RW, M> Inner<RW, M> {
         pids_to_remove.remove(&pid);
 
         let Some(proc) = proc else {
-            return Err(Error::NoProc);
+            return false;
         };
 
         let proc = proc.into_inner();
@@ -143,7 +148,7 @@ impl<RW, M> Inner<RW, M> {
             }
         }
 
-        Ok(())
+        true
     }
 }
 
@@ -367,7 +372,11 @@ where
 
     #[tracing::instrument(skip_all, fields(%pid))]
     fn kill(&self, pid: Pid) -> Result<(), Error> {
-        self.remove_proc(pid, LinkExitReason::Killed)
+        if !self.remove_proc(pid, LinkExitReason::Killed) {
+            Err(Error::NoProc)
+        } else {
+            Ok(())
+        }
     }
 
     #[tracing::instrument(skip_all, fields(%a, %b))]
