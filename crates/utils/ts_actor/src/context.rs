@@ -228,7 +228,7 @@ impl ProcContext {
     /// ```
     ///
     /// This function will instead generally be used to model RPC patterns where
-    /// this actor expects specific message(s) in response to message(s) it sent:
+    /// this process expects specific message(s) in response to message(s) it sent:
     ///
     /// ```no_run
     /// # use ts_actor::runtime::{Tokio, self};
@@ -323,12 +323,12 @@ impl ProcContext {
         self.rt()?.send(pid, message)
     }
 
-    /// Register this actor as `name` with the global registry.
+    /// Register this process as `name` with the global registry.
     pub async fn register(&self, name: impl Into<SmolStr>) -> Result<(), Error> {
         self.register_other(self.this_pid, name.into()).await
     }
 
-    /// Register another actor as `name` with the global registry.
+    /// Register another process as `name` with the global registry.
     pub async fn register_other(&self, pid: Pid, name: impl Into<SmolStr>) -> Result<(), Error> {
         registry::register(self, &self.rt()?.global_registry(), pid, name.into()).await?;
 
