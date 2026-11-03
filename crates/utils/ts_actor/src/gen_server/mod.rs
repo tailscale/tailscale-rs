@@ -195,6 +195,10 @@ pub trait GenServer: Send {
     /// return it, the `gen_server` logic handles sending it for you. If you need to defer
     /// your reply, you can store the handle and call [`ReplyHandle::send_reply`] to respond
     /// later.
+    ///
+    /// The returned [`Action`] describes an action the genserver will take _after_
+    /// sending the reply (if present). See the docs on [`Action`] for a description of
+    /// what each variant does.
     fn handle_call(
         &self,
         ctx: &ProcContext,
@@ -215,6 +219,9 @@ pub trait GenServer: Send {
     /// The difference between this and [`GenServer::handle_info`] is that cast messages are
     /// deliberately sent via [`GenServer`] machinery, while info messages are a catchall
     /// for everything else.
+    ///
+    /// The returned [`Action`] describes the action the genserver will take after handling
+    /// the message. See the docs on [`Action`] for a description of what each variant does.
     fn handle_cast(
         &self,
         ctx: &ProcContext,
@@ -233,6 +240,9 @@ pub trait GenServer: Send {
     /// Any messages sent to this process which aren't aware of [`GenServer`] semantics are
     /// routed to this method. If you need to handle
     /// [`SystemMessage`][crate::SystemMessage], for instance, those appear here.
+    ///
+    /// The returned [`Action`] describes the action the genserver will take after handling
+    /// the message. See the docs on [`Action`] for a description of what each variant does.
     fn handle_info(
         &self,
         ctx: &ProcContext,
@@ -249,6 +259,9 @@ pub trait GenServer: Send {
     /// Handle [`Action::Continue`].
     ///
     /// This allows behavior to continue running without blocking a message handler.
+    ///
+    /// The returned [`Action`] describes the action the genserver will take after handling
+    /// the message. See the docs on [`Action`] for a description of what each variant does.
     fn handle_continue(
         &self,
         ctx: &ProcContext,
