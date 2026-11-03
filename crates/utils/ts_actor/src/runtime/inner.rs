@@ -198,14 +198,14 @@ pub trait RtInner: Send + Sync {
 
     /// Get the process state for the given pid and invoke the closure with it.
     ///
-    /// Invariant: either the closure will be called exactly once, or the return value is
-    /// an error.
+    /// Invariant: either the closure will be called exactly once, or the process doesn't
+    /// exist and the return value is [`Error::NoProc`].
     fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), NoProc>;
 
     /// Get mutable process state for the given pid and invoke the closure with it.
     ///
-    /// Invariant: either the closure will be called exactly once, or the return value is
-    /// an error.
+    /// Invariant: either the closure will be called exactly once, or the process doesn't
+    /// exist and the return value is [`Error::NoProc`].
     fn with_proc_mut_dyn(
         &self,
         pid: Pid,
@@ -503,7 +503,6 @@ where
         Ok(())
     }
 
-    /// Get a read ref to a given process by pid, invoking the closure on it.
     fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), NoProc> {
         get_procs!(self.process_table, proc => pid);
         f(&proc.read());
@@ -511,7 +510,6 @@ where
         Ok(())
     }
 
-    /// Get a mutable ref to a given process by pid, invoking the closure on it.
     fn with_proc_mut_dyn(
         &self,
         pid: Pid,

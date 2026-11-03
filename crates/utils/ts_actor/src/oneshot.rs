@@ -49,7 +49,7 @@ enum State {
     Empty = 0,
     /// There is a value in the channel.
     Ready = 1,
-    /// The sender has closed.
+    /// The sender has closed without a message being sent.
     SenderClosed = 2,
     /// The receiver has closed.
     ReceiverClosed = 3,
