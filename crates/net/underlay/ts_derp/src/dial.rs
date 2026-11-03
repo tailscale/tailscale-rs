@@ -146,7 +146,8 @@ pub async fn dial_region_tcp<'c>(
 /// IPv4 and IPv6 connections are raced concurrently: the first one to establish wins and is
 /// used.
 ///
-/// Returns `None` iff the server has both IPv4 and IPv6 configured as [`IpUsage::Disable`].
+/// Returns `None` if the server has both IPv4 and IPv6 configured as [`IpUsage::Disable`], or if
+/// both dials were cancelled (e.g., by the runtime shutting down).
 pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, Error> {
     let mut js = JoinSet::new();
 
@@ -167,9 +168,14 @@ pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, E
     let mut last_error = None;
 
     while let Some(task) = js.join_next().await {
-        // A JoinError is either a cancellation (not the case by inspection) or a task panic.
-        // Hence, this unwrap just forwards the inner panic, which is the behavior we want here.
-        match task.unwrap() {
+        // A JoinError is either a cancellation (possible when the runtime shuts down) or a task panic.
+        // Forward the inner panic in the second case, and ignore the first.
+        let task = match task {
+            Ok(task) => task,
+            Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+            Err(_) => continue,
+        };
+        match task {
             Ok(Some(stream)) => return Ok(Some(stream)),
             Ok(None) => {
                 continue;

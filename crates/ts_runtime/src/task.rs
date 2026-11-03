@@ -125,10 +125,11 @@ where
 
         if handle.is_finished()
             && let Err(e) = handle.detach().await
+            && e.is_panic()
         {
-            // The task was never canceled because it was still in the abort handle (the
-            // only way this particular task would be canceled), so the error must be due to
-            // a panic. Rethrow it here to make it appear as this actor's panic to kameo.
+            // The task wasn't aborted, since it was still in the abort handle, but may have been
+            // cancelled by the runtime shutting down. Otherwise, the error is due to a panic:
+            // rethrow it here to make it appear as this actor's panic to kameo.
             std::panic::resume_unwind(e.into_panic())
         }
 
