@@ -79,12 +79,6 @@ impl<T> Shared<T> {
     }
 }
 
-impl<S> fmt::Debug for Shared<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Inner").finish_non_exhaustive()
-    }
-}
-
 /// Oneshot sender.
 pub struct Sender<T> {
     inner: Arc<Shared<T>>,
@@ -173,7 +167,7 @@ impl<T> Receiver<T> {
             State::Ready => {
                 let mut out = MaybeUninit::uninit();
 
-                // SAFETY: we are in State::Ready, meaning that the sender has done its one-shot
+                // SAFETY: we were in State::Ready, meaning that the sender has done its one-shot
                 // write and we are clear to read the value (aliasing isn't possible).
                 core::mem::swap(&mut out, unsafe { &mut *self.inner.value.get() });
 
