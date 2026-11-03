@@ -28,6 +28,10 @@ pub enum Error {
     /// Error in HTTP connection.
     #[error("http error")]
     Http,
+
+    /// A DERP server could not be reached.
+    #[error("no DERP server in the region could be reached")]
+    NoServerReachable,
 }
 
 impl From<ts_http_util::Error> for Error {
