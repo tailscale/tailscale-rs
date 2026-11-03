@@ -100,6 +100,16 @@ impl Netstack {
                 }
             }
 
+            TcpStreamCommand::Shutdown => {
+                let handle = handle.unwrap();
+
+                let sock = self.socket_set.get_mut::<tcp::Socket>(handle);
+                // smoltcp's `close` only closes the transmit half: the socket can still receive.
+                sock.close();
+
+                Response::Ok
+            }
+
             TcpStreamCommand::Close => {
                 let handle = handle.unwrap();
 

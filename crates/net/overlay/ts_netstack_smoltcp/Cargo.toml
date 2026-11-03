@@ -54,7 +54,7 @@ clap.workspace = true
 include_dir = "0.7"
 mime_guess = "2.0"
 rand.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 tracing = { workspace = true, features = ["release_max_level_off"] }
 tracing-panic = "0.1"
 ts_cli_util.workspace = true
@@ -136,4 +136,8 @@ harness = false
 
 [[test]]
 name = "wrong_ip_version"
+required-features = ["tokio"]
+
+[[test]]
+name = "tcp"
 required-features = ["tokio"]
