@@ -11,7 +11,8 @@ pub trait Executor: Send + Sync + 'static {
     ) -> StaticStorage<dyn Future<Output = ()> + Send>;
 }
 
-/// Abstraction around an async task.
+/// Abstraction around an async task: a future spawned off and running in its own execution
+/// context.
 pub trait Task: Future<Output = Result<(), TaskError>> + Send + Sync + Unpin + 'static {
     /// Report whether the task is finished.
     fn is_finished(&self) -> bool;
@@ -34,6 +35,12 @@ pub enum TaskError {
 }
 
 pin_project_lite::pin_project! {
+    /// Generic wrapper for an executor-specific task type (e.g. tokio's `JoinHandle`) used
+    /// as a container type on which to implement [`Task`].
+    ///
+    /// The contained future is optional to make it easy to always implement
+    /// [`Task::abort`]: executors without `Task::abort(&mut self)` semantics can simply
+    /// [`Option::take`] the task and drop.
     struct TaskBridge<T> {
         #[pin]
         fut: Option<T>
