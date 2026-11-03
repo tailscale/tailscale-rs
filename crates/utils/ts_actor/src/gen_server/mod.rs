@@ -62,8 +62,9 @@ where
                         action = genserver.handle_continue(&ctx, &mut state).await;
                         continue;
                     }
-                    Action::Stop => {
-                        return Ok(());
+                    Action::Stop(ret) => {
+                        genserver.terminate(&ctx, state).await;
+                        return ret;
                     }
                     Action::Timeout(dur) => Some(dur),
                     _ => None,
@@ -271,6 +272,16 @@ pub trait GenServer: Send {
         _ = state;
         async move { Action::None }
     }
+
+    /// Called when the server is about to terminate.
+    ///
+    /// Not invoked if the runtime is shutting down or the process has been killed.
+    fn terminate(&self, ctx: &ProcContext, state: Self::State) -> impl Future<Output = ()> + Send {
+        _ = ctx;
+        drop(state);
+
+        async move {}
+    }
 }
 
 impl<B> GenServer for &B
@@ -323,6 +334,10 @@ where
     ) -> impl Future<Output = Action> + Send {
         B::handle_continue(self, ctx, state)
     }
+
+    fn terminate(&self, ctx: &ProcContext, state: Self::State) -> impl Future<Output = ()> + Send {
+        B::terminate(self, ctx, state)
+    }
 }
 
 /// Lightweight handle to a caller which the implementer of [`GenServer::handle_call`] can
@@ -363,8 +378,8 @@ pub enum Action {
     #[default]
     None,
 
-    /// Stop the [`GenServer`] normally.
-    Stop,
+    /// Stop the [`GenServer`] with the given process result.
+    Stop(Result<(), Error>),
 
     /// Set a timeout.
     ///
