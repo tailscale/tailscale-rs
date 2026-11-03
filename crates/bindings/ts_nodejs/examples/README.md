@@ -1,0 +1,27 @@
+# Examples
+
+This directory contains TypeScript examples that use `tailscale-rs`.
+
+## Requirements
+
+For all the examples, you'll need:
+
+- Node.js 22.13+ and a Rust toolchain.
+- A [tailnet](https://tailscale.com/docs/how-to/quickstart) and Tailscale (the Go client)
+  installed on your local machine.
+- Two [auth keys](https://tailscale.com/docs/features/access-control/auth-keys) registered for the
+  tailnet, referred to as `$AUTH_KEY_1` and `$AUTH_KEY_2` in the examples
+  - For one-off keys, **do not** follow the "Register a node with the auth key" section! The
+    examples take care of that for you.
+  - If you prefer, you can use a reusable auth key rather than two auth keys.
+- A tailnet policy configured to allow access between your local machine and the example code, and
+  between the examples themselves
+
+## [UDP](udp)
+
+A UDP sender and receiver. The sender sends UDP datagrams to the receiver over the tailnet.
+
+## [TCP](tcp)
+
+A TCP echo server and client. The client sends lines to the server over the tailnet, and the
+server sends them back.

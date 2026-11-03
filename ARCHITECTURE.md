@@ -40,6 +40,7 @@ Crates/libraries that applications will program against.
 - [`tailscale`](src/lib.rs): the Rust API, for Rust language access and for other language bindings to build upon.
 - [`ts_elixir`](crates/bindings/ts_elixir/README.md): Elixir language bindings built on top of the Rust API.
 - [`ts_ffi`:](crates/bindings/ts_ffi/README.md) C language bindings built on top of the Rust API. This is also commonly referred to as a Foreign Function Interface (FFI).
+- [`ts_nodejs`](crates/bindings/ts_nodejs/README.md): Node.js language bindings (with TypeScript definitions) built on top of the Rust API, using napi-rs.
 - [`ts_python`](crates/bindings/ts_python/README.md): Python language bindings built on top of the Rust API.
 
 ### Runtime

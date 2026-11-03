@@ -6,6 +6,7 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- Added (ts_nodejs): Node.js and TypeScript language bindings.
 - Added (ts_netstack_smoltcp): `TcpStream::shutdown` closes the sending half of a connection.
 - Fixed (ts_netstack_smoltcp): cancelling a request (e.g., by dropping its future) no longer leaks
   a socket, and is much less likely to lose received data or an incoming connection.

@@ -1,0 +1,93 @@
+name: nodejs
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The Node.js version to build and test with.
+  node_version: 22
+  # The Rust toolchain version to build the addon with. Should be latest supported
+  # version (MSRV + 1).
+  rust_toolchain: 1.98.1
+
+jobs:
+  build:
+    name: build (${{ matrix.platform.os }}, ${{ matrix.platform.target }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - os: linux
+            runner: linux-arm64-16cpu
+            target: aarch64
+            triple: aarch64-unknown-linux-gnu
+          - os: linux
+            runner: linux-x86_64-16cpu
+            target: x86_64
+            triple: x86_64-unknown-linux-gnu
+          - os: macOS
+            runner: macos-26
+            target: aarch64
+            triple: aarch64-apple-darwin
+          - os: windows
+            runner: windows-8vcpu
+            target: x86_64
+            triple: x86_64-pc-windows-msvc
+
+    defaults:
+      run:
+        working-directory: crates/bindings/ts_nodejs
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain-version: ${{ env.rust_toolchain }}
+          builder-triple: ${{ matrix.platform.triple }}
+      - name: Install node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.node_version }}
+          cache: npm
+          cache-dependency-path: crates/bindings/ts_nodejs/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Check formatting (prettier)
+        # Platform-independent, so only checked once. (On Windows, checkouts may have CRLF line
+        # endings, which Prettier would reject.)
+        if: matrix.platform.os == 'linux' && matrix.platform.target == 'x86_64'
+        run: npm run format:check
+      - name: Build addon
+        # Builds the native addon, then compiles the TypeScript API in `lib/` to `dist/`.
+        run: npm run build:native -- --release --target ${{ matrix.platform.triple }} && npm run build:ts
+      - name: Type check (tsc)
+        run: npm run typecheck
+      - name: Lint (eslint)
+        # Platform-independent, so only checked once. Needs the build: linting uses type
+        # information, including the generated `native.d.ts`.
+        if: matrix.platform.os == 'linux' && matrix.platform.target == 'x86_64'
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Upload addon
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: addon-${{ matrix.platform.os }}-${{ matrix.platform.target }}
+          path: crates/bindings/ts_nodejs/*.node
