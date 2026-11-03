@@ -24,7 +24,7 @@ pub use executor::AsyncExecutor;
 pub use executor::Smol;
 #[cfg(feature = "tokio")]
 pub use executor::Tokio;
-pub use executor::{Executor, TaskError, TaskHandle};
+pub use executor::{Executor, Task, TaskError};
 pub use handle::RtHandle;
 use inner::Inner;
 pub(crate) use inner::RtInner;

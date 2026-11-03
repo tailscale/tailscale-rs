@@ -1,6 +1,6 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 
-use crate::{Handle, StaticStorage, mailbox::Sender, pid::Pid, runtime::TaskHandle};
+use crate::{Handle, StaticStorage, mailbox::Sender, pid::Pid, runtime::Task};
 
 /// State of a process in the system.
 pub struct ProcessState {
@@ -28,6 +28,6 @@ pub struct ProcessState {
 pub enum ProcessInitState {
     /// The process initializer is still in the course of executing.
     Initializing,
-    /// The process has been initialized with the given [`TaskHandle`].
-    Initialized(StaticStorage<dyn TaskHandle>),
+    /// The process has been initialized with the given [`Task`].
+    Initialized(StaticStorage<dyn Task>),
 }

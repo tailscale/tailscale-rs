@@ -3,7 +3,7 @@ use crate::{ProcFuture, StaticStorage, error::Error};
 /// Abstraction around an async executor.
 pub trait Executor: Send + Sync + 'static {
     /// Spawn a future onto the executor.
-    fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle>;
+    fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn Task>;
     /// Return a future that sleeps for the given duration.
     fn sleep(
         &self,
@@ -12,16 +12,14 @@ pub trait Executor: Send + Sync + 'static {
 }
 
 /// Abstraction around an async task.
-pub trait TaskHandle:
-    Future<Output = Result<(), TaskError>> + Send + Sync + Unpin + 'static
-{
+pub trait Task: Future<Output = Result<(), TaskError>> + Send + Sync + Unpin + 'static {
     /// Report whether the task is finished.
     fn is_finished(&self) -> bool;
     /// Mark the task as aborted.
     fn abort(&mut self);
 }
 
-/// Errors which may occur while a [`TaskHandle`] is executing.
+/// Errors which may occur while a [`Task`] is executing.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, thiserror::Error)]
 pub enum TaskError {
     /// The task panicked.
@@ -76,7 +74,7 @@ mod _tokio {
     }
 
     impl Executor for Tokio {
-        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle> {
+        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn Task> {
             StaticStorage::Box(Box::new(TaskBridge {
                 fut: Some(self.0.spawn(fut)),
             }))
@@ -87,7 +85,7 @@ mod _tokio {
         }
     }
 
-    impl TaskHandle for TaskBridge<JoinHandle<Result<(), Error>>> {
+    impl Task for TaskBridge<JoinHandle<Result<(), Error>>> {
         fn is_finished(&self) -> bool {
             self.fut.as_ref().is_none_or(|x| x.is_finished())
         }
@@ -139,7 +137,7 @@ mod _smol {
 
     use crate::{
         ProcFuture, StaticStorage,
-        runtime::{Executor, TaskHandle, executor::TaskBridge},
+        runtime::{Executor, Task, executor::TaskBridge},
     };
 
     /// An executor adapter for [`smol`].
@@ -149,7 +147,7 @@ mod _smol {
     pub struct Smol;
 
     impl Executor for Smol {
-        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle> {
+        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn Task> {
             let task = smol::spawn(fut);
 
             // NB: smol uses async-executor under the hood, hence this reuses the TaskHandle impl
@@ -178,7 +176,6 @@ mod _async_exec {
         time::Duration,
     };
 
-    use async_executor::Task;
     use tap::Pipe;
 
     use super::*;
@@ -202,7 +199,7 @@ mod _async_exec {
     where
         B: Borrow<async_executor::Executor<'static>> + Send + Sync + 'static,
     {
-        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn TaskHandle> {
+        fn spawn(&self, fut: StaticStorage<ProcFuture>) -> StaticStorage<dyn Task> {
             let task = self.0.borrow().spawn(fut);
 
             StaticStorage::Box(Box::new(TaskBridge { fut: Some(task) }))
@@ -215,7 +212,7 @@ mod _async_exec {
         }
     }
 
-    impl<M> TaskHandle for TaskBridge<Task<Result<(), Error>, M>>
+    impl<M> Task for TaskBridge<async_executor::Task<Result<(), Error>, M>>
     where
         M: Send + Sync + 'static,
     {
@@ -229,7 +226,7 @@ mod _async_exec {
         }
     }
 
-    impl<T, M> Future for TaskBridge<Task<Result<T, Error>, M>> {
+    impl<T, M> Future for TaskBridge<async_executor::Task<Result<T, Error>, M>> {
         type Output = Result<T, TaskError>;
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
