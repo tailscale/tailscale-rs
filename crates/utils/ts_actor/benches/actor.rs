@@ -14,14 +14,12 @@ fn echo(bencher: divan::Bencher, n: usize) {
         .unwrap();
     let rt = ts_actor::runtime::new(ts_actor::runtime::Tokio::new(tokio.handle().clone()));
 
-    let replier = rt
-        .spawn(async |ctx| {
-            loop {
-                let msg = ctx.recv().await?;
-                ctx.send(&"bench", msg).await?;
-            }
-        })
-        .unwrap();
+    let replier = rt.spawn(async |ctx| {
+        loop {
+            let msg = ctx.recv().await?;
+            ctx.send(&"bench", msg).await?;
+        }
+    });
 
     bencher
         .with_inputs(|| {

@@ -2,6 +2,7 @@ use alloc::{boxed::Box, sync::Arc};
 use core::any::Any;
 
 use smol_str::SmolStr;
+use tap::Pipe;
 
 use crate::{
     Error, Handle, Message, ProcFuture, ProcName, StaticStorage, ToProcName,
@@ -35,7 +36,7 @@ impl ProcContext {
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        self.rt()?.spawn(proc)
+        self.rt()?.spawn(proc).pipe(Ok)
     }
 
     /// Spawn a new process which is linked to this one.
@@ -51,14 +52,16 @@ impl ProcContext {
     {
         let mut proc = Some(proc);
 
-        self.rt()?.spawn_dyn(
-            &mut move |ctx| {
-                let proc_fut = proc.take().unwrap()(ctx);
-                StaticStorage::Box(Box::new(proc_fut) as Box<ProcFuture>)
-            },
-            [self.this_pid],
-            [],
-        )
+        self.rt()?
+            .spawn_dyn(
+                &mut move |ctx| {
+                    let proc_fut = proc.take().unwrap()(ctx);
+                    StaticStorage::Box(Box::new(proc_fut) as Box<ProcFuture>)
+                },
+                [self.this_pid],
+                [],
+            )
+            .pipe(Ok)
     }
 
     /// Spawn a new process which is monitored by this one.
@@ -72,13 +75,15 @@ impl ProcContext {
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        self.rt()?.spawn_dyn(
-            &mut ts_util::fn_::fn_mut1(move |ctx| {
-                StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFuture>)
-            }),
-            [],
-            [self.this_pid],
-        )
+        self.rt()?
+            .spawn_dyn(
+                &mut ts_util::fn_::fn_mut1(move |ctx| {
+                    StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFuture>)
+                }),
+                [],
+                [self.this_pid],
+            )
+            .pipe(Ok)
     }
 
     /// Get this process's pid.

@@ -29,7 +29,7 @@ const DEFAULT_NAME: SmolStr = SmolStr::new_static("bus");
 /// ```rust
 /// # #[tokio::main] async fn main() {
 /// # let rt = ts_actor::runtime::new(ts_actor::runtime::Tokio::current());
-/// # let bus_pid = rt.spawn(ts_actor::actors::bus::start_default).unwrap();
+/// # let bus_pid = rt.spawn(ts_actor::actors::bus::start_default);
 /// # rt.run(async move |ctx| {
 /// # ctx.wait_proc("bus").await?;
 /// ts_actor::bus_sub_all!(&ctx, u8).await?;
@@ -522,7 +522,7 @@ mod test {
     async fn bus_basic() {
         let rt = runtime::new(Tokio::current());
 
-        rt.spawn(start_default).unwrap();
+        rt.spawn(start_default);
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         struct MyStruct {

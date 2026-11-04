@@ -53,7 +53,7 @@ ts_actor::impl_call!(Calculator, Pow, f32, _ctx, _state, Pow(a, b), handle, {
 async fn main() -> Result<(), Error> {
     let rt = runtime::new(runtime::Tokio::current());
 
-    let calc = rt.spawn(gen_server::start(Calculator, ()))?;
+    let calc = rt.spawn(gen_server::start(Calculator, ()));
 
     rt.run(async move |ctx| {
         let ret = gen_server::call_typed::<_, Calculator>(&ctx, &calc, Add(1., 2.)).await?;

@@ -64,7 +64,7 @@ where
     });
 
     let rt: &Arc<dyn Rt> = &(inner.clone() as _);
-    let global_pid = rt.spawn(gen_server::start(registry::Registry, ())).unwrap();
+    let global_pid = rt.spawn(gen_server::start(registry::Registry, ()));
 
     inner.global_registry.store(global_pid, Ordering::Release);
 
@@ -91,22 +91,17 @@ impl dyn Rt {
         mk_proc: &mut MakeProc<StaticStorage<ProcFuture>>,
         links: impl IntoIterator<Item = Pid>,
         monitors: impl IntoIterator<Item = Pid>,
-    ) -> Result<Pid, Error> {
+    ) -> Pid {
         let handle = RtHandle(Arc::downgrade(self));
 
         let mut links = links.into_iter();
         let mut mons = monitors.into_iter().map(|pid| (self.new_handle(), pid));
 
-        let pid = self.spawn_direct(&move || handle.clone(), mk_proc, &mut links, &mut mons);
-
-        Ok(pid)
+        self.spawn_direct(&move || handle.clone(), mk_proc, &mut links, &mut mons)
     }
 
     /// Spawn a process.
-    pub fn spawn<Fut>(
-        self: &Arc<Self>,
-        proc: impl FnOnce(ProcContext) -> Fut + 'static,
-    ) -> Result<Pid, Error>
+    pub fn spawn<Fut>(self: &Arc<Self>, proc: impl FnOnce(ProcContext) -> Fut + 'static) -> Pid
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
@@ -140,7 +135,7 @@ impl dyn Rt {
         self.spawn(async move |ctx| {
             tx.send_unchecked(proc(ctx).await);
             Ok(())
-        })?;
+        });
 
         rx.await.ok_or(Error::Other).flatten()
     }

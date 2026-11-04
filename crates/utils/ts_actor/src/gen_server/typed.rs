@@ -192,7 +192,7 @@ impl<Reply> From<TypedReply<Reply>> for TypedCallResult<Reply> {
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), ts_actor::Error> {
 /// #   let rt = ts_actor::runtime::new(ts_actor::runtime::Tokio::current());
-/// #   let sqr_pid = rt.spawn(gen_server::start(SquareServer, ()))?;
+/// #   let sqr_pid = rt.spawn(gen_server::start(SquareServer, ()));
 /// #
 /// #   rt.run(async move |ctx| {
 /// let result = gen_server::call_typed::<_, SquareServer>(&ctx, &sqr_pid, 3u8).await?;
@@ -254,7 +254,7 @@ pub trait TypedCall<M>: GenServer {
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), ts_actor::Error> {
 /// #   let rt = ts_actor::runtime::new(ts_actor::runtime::Tokio::current());
-/// #   let print_pid = rt.spawn(gen_server::start(PrintServer, ()))?;
+/// #   let print_pid = rt.spawn(gen_server::start(PrintServer, ()));
 /// #
 /// #   rt.run(async move |ctx| {
 /// gen_server::cast_typed::<_, PrintServer>(&ctx, &print_pid, "hi".to_string()).await?;
@@ -316,7 +316,7 @@ pub trait TypedCast<M>: GenServer {
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), ts_actor::Error> {
 /// #   let rt = ts_actor::runtime::new(ts_actor::runtime::Tokio::current());
-/// #   let count_pid = rt.spawn(gen_server::start(CountServer, ()))?;
+/// #   let count_pid = rt.spawn(gen_server::start(CountServer, ()));
 /// #
 /// #   rt.run(async move |ctx| {
 /// ctx.send(&count_pid, ts_actor::Message::new(Inc)).await;
@@ -683,7 +683,7 @@ mod test {
 
         let rt = runtime::new(Tokio::current());
 
-        let pid = rt.spawn(gen_server::start(Dummy, ())).unwrap();
+        let pid = rt.spawn(gen_server::start(Dummy, ()));
 
         let ret = rt
             .run(async move |ctx| {

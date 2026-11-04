@@ -221,7 +221,7 @@ mod test {
     async fn reg_unreg() {
         let rt = runtime::new(Tokio::current());
 
-        let reg_pid = rt.spawn(gen_server::start(super::Registry, ())).unwrap();
+        let reg_pid = rt.spawn(gen_server::start(super::Registry, ()));
 
         rt.run(async move |ctx| {
             let resp = super::lookup(&ctx, &reg_pid, "abc".into()).await?;

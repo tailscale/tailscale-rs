@@ -38,7 +38,7 @@ async fn reg_count() -> Result<(), ts_actor::Error> {
             println!("msg: {value}");
             count_move.store(value, Ordering::Release);
         }
-    })?;
+    });
 
     rt.spawn(async move |ctx| {
         tracing::trace!(pid = %ctx.pid(), "sender started");
@@ -61,7 +61,7 @@ async fn reg_count() -> Result<(), ts_actor::Error> {
         }
 
         Ok(())
-    })?;
+    });
 
     rt.wait_all_proc().await;
     assert_eq!(count.load(Ordering::Acquire), COUNT_TO as usize);

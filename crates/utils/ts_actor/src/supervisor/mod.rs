@@ -456,18 +456,16 @@ mod test {
 
         let rt = runtime::new(Tokio::current());
 
-        let pid = rt
-            .spawn(
-                supervisor::start(
-                    Config {
-                        strategy: Strategy::OneForOne,
-                        restart_behavior: RestartBehavior::RateLimit(Duration::from_millis(5)),
-                    },
-                    [],
-                )
-                .unwrap(),
+        let pid = rt.spawn(
+            supervisor::start(
+                Config {
+                    strategy: Strategy::OneForOne,
+                    restart_behavior: RestartBehavior::RateLimit(Duration::from_millis(5)),
+                },
+                [],
             )
-            .unwrap();
+            .unwrap(),
+        );
 
         assert_running(&rt, pid).await;
     }
@@ -480,30 +478,28 @@ mod test {
 
         struct Die;
 
-        let pid = rt
-            .spawn(
-                supervisor::start(
-                    Config {
-                        strategy: Strategy::OneForOne,
-                        restart_behavior: RestartBehavior::RateLimit(Duration::from_millis(5)),
-                    },
-                    [ChildSpec::new(
-                        "foo".into(),
-                        async move |ctx: ProcContext| {
-                            ctx.register("foo").await?;
+        let pid = rt.spawn(
+            supervisor::start(
+                Config {
+                    strategy: Strategy::OneForOne,
+                    restart_behavior: RestartBehavior::RateLimit(Duration::from_millis(5)),
+                },
+                [ChildSpec::new(
+                    "foo".into(),
+                    async move |ctx: ProcContext| {
+                        ctx.register("foo").await?;
 
-                            loop {
-                                msg_match! {
-                                    ctx.recv().await?,
-                                    Die: _ => return Ok(()),
-                                }
+                        loop {
+                            msg_match! {
+                                ctx.recv().await?,
+                                Die: _ => return Ok(()),
                             }
-                        },
-                    )],
-                )
-                .unwrap(),
+                        }
+                    },
+                )],
             )
-            .unwrap();
+            .unwrap(),
+        );
 
         assert_running(&rt, pid).await;
 
@@ -566,16 +562,14 @@ mod test {
             }
         }
 
-        let _pid = rt
-            .spawn(
-                supervisor::start(
-                    Default::default(),
-                    [ChildSpec::new("dummy".into(), async |ctx| {
-                        gen_server::start(DummyGenserver, ())(ctx).await
-                    })],
-                )
-                .unwrap(),
+        let _pid = rt.spawn(
+            supervisor::start(
+                Default::default(),
+                [ChildSpec::new("dummy".into(), async |ctx| {
+                    gen_server::start(DummyGenserver, ())(ctx).await
+                })],
             )
-            .unwrap();
+            .unwrap(),
+        );
     }
 }
