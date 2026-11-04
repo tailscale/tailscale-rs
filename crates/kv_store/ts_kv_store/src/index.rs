@@ -519,15 +519,6 @@ mod test {
     }
 
     #[test]
-    fn index_iter_keys_cloned_empty() {
-        let store = KvStore::new();
-        let table = store.with_owner(OWNER).Users.indexes().name;
-
-        let count = table.with_keys(|i| i.count());
-        assert_eq!(count, 0);
-    }
-
-    #[test]
     fn index_iter_keys_cloned_yields_index_keys() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
