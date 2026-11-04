@@ -65,6 +65,10 @@ crate::impl_call!(Supervisor, StartChild, Result<Pid, StartChildError>, ctx, sta
     state.specs.insert(id.clone(), child);
 
     let result = spawn_child(ctx, state, &id).map_err(Error::from).map_err(Into::into);
+    if result.is_err() {
+        state.specs.remove(&id);
+    }
+
     caller_handle.commit(result).into()
 });
 
