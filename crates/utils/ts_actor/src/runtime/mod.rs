@@ -44,12 +44,12 @@ where
     RW: RawRwLockUpgrade + Send + Sync + 'static,
     M: RawMutex + Send + Sync + 'static,
 {
-    new_ss_with::<RW, M>(StaticStorage::Box(Box::new(executor)))
+    new_with_dyn::<RW, M>(StaticStorage::Box(Box::new(executor)))
 }
 
 /// Construct a new runtime around the given executor with the given mutexes and a
 /// particular executor storage.
-pub fn new_ss_with<RW, M>(executor: StaticStorage<dyn Executor>) -> Arc<dyn Rt>
+pub fn new_with_dyn<RW, M>(executor: StaticStorage<dyn Executor>) -> Arc<dyn Rt>
 where
     RW: RawRwLockUpgrade + Send + Sync + 'static,
     M: RawMutex + Send + Sync + 'static,
@@ -86,7 +86,7 @@ impl dyn Rt {
     }
 
     /// Spawn a process with the given process constructor, links, and monitors.
-    pub fn spawn_ss(
+    pub fn spawn_dyn(
         self: &Arc<Self>,
         mk_proc: &mut MakeProc<StaticStorage<ProcFuture>>,
         links: impl IntoIterator<Item = Pid>,
@@ -110,7 +110,7 @@ impl dyn Rt {
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        self.spawn_ss(
+        self.spawn_dyn(
             &mut ts_util::fn_::fn_mut1(move |ctx| {
                 StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFuture>)
             }),

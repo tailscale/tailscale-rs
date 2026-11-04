@@ -51,7 +51,7 @@ impl ProcContext {
     {
         let mut proc = Some(proc);
 
-        self.rt()?.spawn_ss(
+        self.rt()?.spawn_dyn(
             &mut move |ctx| {
                 let proc_fut = proc.take().unwrap()(ctx);
                 StaticStorage::Box(Box::new(proc_fut) as Box<ProcFuture>)
@@ -72,7 +72,7 @@ impl ProcContext {
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        self.rt()?.spawn_ss(
+        self.rt()?.spawn_dyn(
             &mut ts_util::fn_::fn_mut1(move |ctx| {
                 StaticStorage::Box(Box::new(proc(ctx)) as Box<ProcFuture>)
             }),
