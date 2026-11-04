@@ -7,7 +7,7 @@ use smol_str::SmolStr;
 
 use crate::{
     Error, LinkExitReason, ProcContext, ProcFuture, StaticProcFuture, StaticStorage, SystemMessage,
-    ToProcName, gen_server, gen_server::GenServer, pid::Pid,
+    ToProcName, error::RuntimeStopped, gen_server, gen_server::GenServer, pid::Pid,
 };
 
 struct State {
@@ -64,13 +64,8 @@ crate::impl_call!(Supervisor, StartChild, Result<Pid, StartChildError>, ctx, sta
     let id = child.id.clone();
     state.specs.insert(id.clone(), child);
 
-    match spawn_child(ctx, state, &id) {
-        Ok(pid) => caller_handle.commit(Ok(pid)).into(),
-
-        Err(e) => {
-            caller_handle.commit(Err(e.into())).into()
-        }
-    }
+    let result = spawn_child(ctx, state, &id).map_err(Error::from).map_err(Into::into);
+    caller_handle.commit(result).into()
 });
 
 crate::impl_info!(Supervisor, SystemMessage, ctx, state, msg, {
@@ -80,8 +75,9 @@ crate::impl_info!(Supervisor, SystemMessage, ctx, state, msg, {
             linked_process,
         } => {
             let Some(proc_name) = state.child_ids.remove(&linked_process) else {
-                // TODO(npry): this means _we_ should die, since the process that died wasn't our
-                //  child
+                // TODO(npry): if we're modeling Erlang directly, we need to be tracking our
+                //  parent process to decide whether we should die at this point -- which
+                //  means we want something like `proc_lib`
                 tracing::warn!(?linked_process, ?reason, "link exit for unknown process");
                 return Default::default();
             };
@@ -149,7 +145,7 @@ impl GenServer for Supervisor {
 
         let child_keys = state.specs.keys().cloned().collect::<Vec<_>>();
         for child_id in child_keys {
-            // TODO(npry): gracefully handle child spawn failure
+            // Only failure case is if the runtime is stopped, no need for graceful cleanup.
             spawn_child(ctx, &mut state, &child_id)?;
         }
 
@@ -186,10 +182,13 @@ pub fn start(
     Ok(gen_server::start(Supervisor, state))
 }
 
-fn spawn_child(ctx: &ProcContext, state: &mut State, id: &SmolStr) -> Result<Pid, Error> {
-    let Some(spec) = state.specs.get(id) else {
-        return Err(Error::Other);
-    };
+/// Spawn a child process.
+///
+/// # Panics
+///
+/// If there isn't a spec with identifier `id` in `state.specs`.
+fn spawn_child(ctx: &ProcContext, state: &mut State, id: &SmolStr) -> Result<Pid, RuntimeStopped> {
+    let spec = state.specs.get(id).unwrap();
 
     let start = spec.start.clone();
     let pid = ctx.spawn_link(move |ctx| start(ctx))?;

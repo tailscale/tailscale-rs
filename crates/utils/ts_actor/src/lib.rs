@@ -10,7 +10,7 @@ use core::fmt::{Debug, Formatter};
 
 pub mod actors;
 mod context;
-mod error;
+pub mod error;
 pub mod gen_server;
 pub mod mailbox;
 mod message;

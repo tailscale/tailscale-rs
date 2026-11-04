@@ -13,6 +13,7 @@ use lock_api::{Mutex, RawMutex, RawRwLock, RawRwLockUpgrade, RwLock};
 use crate::{
     AtomicPid, Error, Handle, LinkExitReason, MakeProc, Message, Pid, ProcContext, ProcFuture,
     StaticStorage, SystemMessage,
+    error::NoProc,
     mailbox::async_mailbox,
     runtime::{Executor, ProcessInitState, ProcessState, RtHandle},
 };
@@ -167,28 +168,39 @@ pub trait RtInner: Send + Sync {
     ) -> Pid;
 
     /// Kill a process immediately.
-    fn kill(&self, pid: Pid) -> Result<(), Error>;
+    fn kill(&self, pid: Pid) -> Result<(), NoProc>;
 
     /// Link process `a` to process `b`. Order doesn't matter.
+    ///
+    /// Returns [`Error::BadArg`] if `a` == `b`, or [`Error::NoProc`] if either process
+    /// doesn't exist.
     fn link(&self, a: Pid, b: Pid) -> Result<(), Error>;
 
     /// Unlink process `a` from process `b`. Order doesn't matter.
+    ///
+    /// Returns [`Error::BadArg`] if `a` == `b`, or [`Error::NoProc`] if either process
+    /// doesn't exist.
     fn unlink(&self, a: Pid, b: Pid) -> Result<(), Error>;
 
     /// Establish a monitor from the `monitoring` process on the `monitored` process.
     ///
     /// The returned handle is the handle to this specific monitor.
+    ///
+    /// Returns [`Error::BadArg`] if `a` == `b`, or [`Error::NoProc`] if either process
+    /// doesn't exist.
     fn monitor(&self, monitoring: Pid, monitored: Pid) -> Result<Handle, Error>;
 
     /// Remove the monitor from the `monitoring` process on the `monitored` process.
     ///
+    /// Returns [`Error::BadArg`] if `a` == `b`, or [`Error::NoProc`] if either process
+    /// doesn't exist.
     fn unmonitor(&self, monitoring: Pid, monitor_handle: Handle) -> Result<(), Error>;
 
     /// Get the process state for the given pid and invoke the closure with it.
     ///
     /// Invariant: either the closure will be called exactly once, or the return value is
     /// an error.
-    fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), Error>;
+    fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), NoProc>;
 
     /// Get mutable process state for the given pid and invoke the closure with it.
     ///
@@ -198,7 +210,7 @@ pub trait RtInner: Send + Sync {
         &self,
         pid: Pid,
         f: &mut dyn FnMut(&mut ProcessState),
-    ) -> Result<(), Error>;
+    ) -> Result<(), NoProc>;
 
     /// Internal: notify the runtime that the process corresponding to `pid` died.
     fn notify_proc_done(&self, pid: Pid);
@@ -251,7 +263,7 @@ macro_rules! get_procs {
         let ptab = $process_table.read();
 
         $(
-            let $name = ptab.get(&$pid).ok_or(Error::NoProc)?;
+            let $name = ptab.get(&$pid).ok_or(NoProc)?;
         )*
     }
 }
@@ -371,9 +383,9 @@ where
     }
 
     #[tracing::instrument(skip_all, fields(%pid))]
-    fn kill(&self, pid: Pid) -> Result<(), Error> {
+    fn kill(&self, pid: Pid) -> Result<(), NoProc> {
         if !self.remove_proc(pid, LinkExitReason::Killed) {
-            Err(Error::NoProc)
+            Err(NoProc)
         } else {
             Ok(())
         }
@@ -492,7 +504,7 @@ where
     }
 
     /// Get a read ref to a given process by pid, invoking the closure on it.
-    fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), Error> {
+    fn with_proc_dyn(&self, pid: Pid, f: &mut dyn FnMut(&ProcessState)) -> Result<(), NoProc> {
         get_procs!(self.process_table, proc => pid);
         f(&proc.read());
 
@@ -504,7 +516,7 @@ where
         &self,
         pid: Pid,
         f: &mut dyn FnMut(&mut ProcessState),
-    ) -> Result<(), Error> {
+    ) -> Result<(), NoProc> {
         get_procs!(self.process_table, proc => pid);
         f(&mut proc.write());
 

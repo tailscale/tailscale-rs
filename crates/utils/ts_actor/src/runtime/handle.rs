@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use core::fmt::{Debug, Formatter};
 
-use crate::{error::Error, runtime::Rt};
+use crate::{error::RuntimeStopped, runtime::Rt};
 
 /// A weak handle to the runtime.
 ///
@@ -35,8 +35,8 @@ impl RtHandle {
     /// Try to upgrade this handle to an `Arc<dyn RuntimeT>`.
     ///
     /// Returns `Error::RuntimeStopped` if the runtime has been dropped.
-    pub fn runtime(&self) -> Result<Arc<dyn Rt>, Error> {
-        self.0.upgrade().ok_or(Error::RuntimeStopped)
+    pub fn runtime(&self) -> Result<Arc<dyn Rt>, RuntimeStopped> {
+        self.0.upgrade().ok_or(RuntimeStopped)
     }
 }
 

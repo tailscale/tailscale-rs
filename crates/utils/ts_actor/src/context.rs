@@ -7,6 +7,7 @@ use tap::Pipe;
 use crate::{
     Error, Handle, Message, ProcFuture, ProcName, StaticStorage, ToProcName,
     actors::registry,
+    error::{NoProc, RuntimeStopped},
     mailbox::{Receiver, TryRecvError},
     pid::Pid,
     protocol,
@@ -27,12 +28,15 @@ pub struct ProcContext {
 impl ProcContext {
     /// Generate a new [`Handle`], which is completely unique compared to any [`Handle`] generated
     /// before.
-    pub fn new_ref(&self) -> Result<Handle, Error> {
+    pub fn new_ref(&self) -> Result<Handle, RuntimeStopped> {
         Ok(self.rt()?.new_handle())
     }
 
     /// Spawn a new process.
-    pub fn spawn<Fut>(&self, proc: impl FnOnce(ProcContext) -> Fut + 'static) -> Result<Pid, Error>
+    pub fn spawn<Fut>(
+        &self,
+        proc: impl FnOnce(ProcContext) -> Fut + 'static,
+    ) -> Result<Pid, RuntimeStopped>
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
@@ -46,7 +50,7 @@ impl ProcContext {
     pub fn spawn_link<Fut>(
         &self,
         proc: impl FnOnce(ProcContext) -> Fut + 'static,
-    ) -> Result<Pid, Error>
+    ) -> Result<Pid, RuntimeStopped>
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
@@ -71,7 +75,7 @@ impl ProcContext {
     pub fn spawn_monitor<Fut>(
         &self,
         proc: impl FnOnce(ProcContext) -> Fut + 'static,
-    ) -> Result<Pid, Error>
+    ) -> Result<Pid, RuntimeStopped>
     where
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
@@ -173,32 +177,44 @@ impl ProcContext {
     /// This causes the runtime to send a
     /// [`SystemMessage::LinkExit`][crate::SystemMessage::LinkExit] message to this
     /// process when its links die rather than killing it (which is the default behavior).
-    pub fn trap_exit(&self, mut trap: bool) -> Result<bool, Error> {
-        self.rt()?.with_proc_mut_dyn(self.this_pid, &mut |p| {
-            core::mem::swap(&mut trap, &mut p.trap_exit);
-        })?;
+    pub fn trap_exit(&self, mut trap: bool) -> Result<bool, RuntimeStopped> {
+        // Unwrap: this-pid is known to be alive because the context is.
+        self.rt()?
+            .with_proc_mut_dyn(self.this_pid, &mut |p| {
+                core::mem::swap(&mut trap, &mut p.trap_exit);
+            })
+            .unwrap();
 
         Ok(trap)
     }
 
     /// Receive a message from our mailbox.
-    pub async fn recv(&self) -> Result<Message, Error> {
-        self.mbox_rx.recv().await.ok_or(Error::NoProc)
+    ///
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
+    pub async fn recv(&self) -> Result<Message, NoProc> {
+        self.mbox_rx.recv().await.ok_or(NoProc)
     }
 
     /// Try to receive a message from our mailbox.
     ///
     /// If no message is available, returns `Ok(None)`.
-    pub fn try_recv(&self) -> Result<Option<Message>, Error> {
+    ///
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
+    pub fn try_recv(&self) -> Result<Option<Message>, NoProc> {
         match self.mbox_rx.try_recv() {
             Ok(msg) => Ok(Some(msg)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Closed) => Err(Error::NoProc),
+            Err(TryRecvError::Closed) => Err(NoProc),
         }
     }
 
     /// Receive the first message matching the predicate, waiting until such a message
     /// becomes available.
+    ///
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
     ///
     /// # Usage model
     ///
@@ -255,17 +271,18 @@ impl ProcContext {
     /// # Ok(())
     /// # });
     /// ```
-    pub async fn recv_where(&self, pred: impl Fn(&Message) -> bool) -> Result<Message, Error> {
-        self.mbox_rx.recv_where(pred).await.ok_or(Error::NoProc)
+    pub async fn recv_where(&self, pred: impl Fn(&Message) -> bool) -> Result<Message, NoProc> {
+        self.mbox_rx.recv_where(pred).await.ok_or(NoProc)
     }
 
-    /// Receive the next message and attempt to downcast it to `T`.
+    /// Receive the next message which is a `T` and attempt to downcast it.
     ///
     /// This is a helper mostly useful for writing tests or very well-defined message
     /// exchanges.
     ///
-    /// Returns `Error::BadArg` if the message is not `T`.
-    pub async fn recv_downcast<T>(&self) -> Result<T, Error>
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
+    pub async fn recv_downcast<T>(&self) -> Result<T, NoProc>
     where
         T: 'static,
     {
@@ -273,7 +290,10 @@ impl ProcContext {
     }
 
     /// Helper wrapping [`ProcContext::recv_where`] which downcasts the message type to `T`.
-    pub async fn recv_where_downcast<T>(&self, pred: impl Fn(&T) -> bool) -> Result<T, Error>
+    ///
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
+    pub async fn recv_where_downcast<T>(&self, pred: impl Fn(&T) -> bool) -> Result<T, NoProc>
     where
         T: Any,
     {
@@ -293,19 +313,25 @@ impl ProcContext {
 
     /// Receive the first message matching the predicate, returning `None` if no such
     /// message is in this process's mailbox.
+    ///
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
     pub fn try_recv_where(
         &self,
         pred: impl Fn(&Message) -> bool,
-    ) -> Result<Option<Message>, Error> {
+    ) -> Result<Option<Message>, NoProc> {
         match self.mbox_rx.try_recv_where(pred) {
             Ok(msg) => Ok(Some(msg)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Closed) => Err(Error::NoProc),
+            Err(TryRecvError::Closed) => Err(NoProc),
         }
     }
 
     /// Helper wrapping [`ProcContext::try_recv_where`] which downcasts the message type to `T`.
-    pub fn try_recv_where_downcast<T>(&self, pred: impl Fn(&T) -> bool) -> Result<Option<T>, Error>
+    ///
+    /// Returns [`NoProc`] if this process has been dropped by the runtime (this is
+    /// unrecoverable).
+    pub fn try_recv_where_downcast<T>(&self, pred: impl Fn(&T) -> bool) -> Result<Option<T>, NoProc>
     where
         T: Any,
     {
@@ -351,19 +377,19 @@ impl ProcContext {
     }
 
     /// Report the [`Pid`] of the global registry.
-    pub fn global_registry(&self) -> Result<Pid, Error> {
+    pub fn global_registry(&self) -> Result<Pid, RuntimeStopped> {
         Ok(self.rt()?.global_registry())
     }
 
     /// Sleep for the given [`Duration`][core::time::Duration].
     ///
     /// This uses the executor's sleep implementation.
-    pub async fn sleep(&self, duration: core::time::Duration) -> Result<(), Error> {
+    pub async fn sleep(&self, duration: core::time::Duration) -> Result<(), RuntimeStopped> {
         self.rt()?.executor().sleep(duration).await;
         Ok(())
     }
 
-    pub(crate) fn rt(&self) -> Result<Arc<dyn Rt>, Error> {
+    pub(crate) fn rt(&self) -> Result<Arc<dyn Rt>, RuntimeStopped> {
         self.handle.runtime()
     }
 }
