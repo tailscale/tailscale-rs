@@ -6,6 +6,8 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- Fixed (ts_python): passing both `keys` and a key file no longer generates and saves a new set of
+  keys before saving the `keys` argument.
 - Fixed (Rust API): return an error from `is_authorized` when the user's auth key is rejected by
   the control server. Resolves crashes and panics that would otherwise occur in this case.
 
