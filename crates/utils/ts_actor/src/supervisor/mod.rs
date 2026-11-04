@@ -119,9 +119,9 @@ crate::impl_info!(Supervisor, SystemMessage, ctx, state, msg, {
 
             if should_restart {
                 if let Err(e) = spawn_child(ctx, state, &proc_name) {
-                    tracing::error!(error = %e, %proc_name, "restarting child");
+                    tracing::error!(error = %e, "restarting child");
                 } else {
-                    tracing::trace!(%proc_name, "child restarted");
+                    tracing::trace!("child restarted");
                 }
             } else {
                 let id = child.id.clone();
