@@ -6,6 +6,9 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+- Added (ts_netstack_smoltcp): `TcpStream::shutdown` closes the sending half of a connection.
+- Fixed (ts_netstack_smoltcp): cancelling a request (e.g., by dropping its future) no longer leaks
+  a socket, and is much less likely to lose received data or an incoming connection.
 - Fixed (Rust API): return an error from `is_authorized` when the user's auth key is rejected by
   the control server. Resolves crashes and panics that would otherwise occur in this case.
 

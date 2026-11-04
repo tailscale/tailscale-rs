@@ -58,6 +58,13 @@ pub enum Command {
         buf: Bytes,
     },
 
+    /// Close the sending half of this connection.
+    ///
+    /// The remote receives end-of-stream once any data already sent has been delivered. Data
+    /// can still be received until the remote closes its half of the connection. Unlike
+    /// [`Command::Close`], the socket isn't released until it is closed.
+    Shutdown,
+
     /// Close this connection.
     ///
     /// This message causes the connection to enter the closing state, but responds
@@ -79,6 +86,7 @@ impl Debug for Command {
                 .finish(),
             Self::Recv { max_len } => f.debug_struct("Recv").field("max_len", max_len).finish(),
             Self::Send { buf } => f.debug_struct("Send").field("buf_len", &buf.len()).finish(),
+            Self::Shutdown => f.write_str("Shutdown"),
             Self::Close => f.write_str("Close"),
         }
     }
