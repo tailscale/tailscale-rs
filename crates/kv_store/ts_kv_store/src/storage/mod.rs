@@ -2,7 +2,7 @@ use alloc::sync::Weak;
 
 pub use self::{
     index::{UniqueIndex, policy},
-    singleton::{DefaultValue, SingletonSlot},
+    singleton::SingletonValue,
     table::Table,
     versioned::VersionedValue,
 };
@@ -147,19 +147,19 @@ mod txn_test {
     }
 
     #[test]
-    fn clear_transaction_rolls_back_and_frees_singleton_entry() {
+    fn clear_transaction_rolls_back_singleton() {
         let mut storage =
             Storage::<TableStorage>::new(alloc::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
-        storage.tables.Count.set(Some(42), id);
+        storage.tables.Count.insert(42, id);
         // Visible to the in-progress transaction.
-        assert_eq!(storage.tables.Count.get(id), Some(&Some(42)));
+        assert_eq!(storage.tables.Count.get(id), &42);
 
         // Simulate cleanup of an abandoned transaction.
         storage.clear_transaction();
 
         assert!(storage.current_txn().is_none());
         let now = storage.txn_id();
-        assert!(storage.tables.Count.get(now).is_none());
+        assert_eq!(storage.tables.Count.get(now), &0);
     }
 }

@@ -45,7 +45,7 @@ impl PeerTracker {
     fn peer_by_tailnet_ip_opt(&self, ip: IpAddr) -> Option<Node> {
         let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
 
-        let id = txn.PeerIpIndex.with(|v| v.lookup(ip).copied())??;
+        let id = txn.PeerIpIndex.with(|v| v.lookup(ip).copied())?;
         txn.Peers.get(&id)
     }
 
@@ -53,7 +53,7 @@ impl PeerTracker {
     pub fn get_route(&self, route: ipnet::IpNet) -> Vec<Node> {
         let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
 
-        let Some(Some(ids)) = txn.PeerRouteIndex.with(|v| v.lookup_prefix(route).cloned()) else {
+        let Some(ids) = txn.PeerRouteIndex.with(|v| v.lookup_prefix(route).cloned()) else {
             return Vec::new();
         };
 

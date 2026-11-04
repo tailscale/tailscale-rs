@@ -9,7 +9,7 @@ use crate::{
     schema::index::{
         IndexWrite, MultiIndexIterable, MultiIndexRead, UniqueIndexIterable, UniqueIndexRead,
     },
-    storage::{DefaultValue, SingletonSlot, Table, VersionedValue},
+    storage::{SingletonValue, Table},
     transactions::TxnId,
 };
 
@@ -38,14 +38,12 @@ pub trait Desc: Sized + 'static {
 #[doc(hidden)]
 pub unsafe trait SingletonDesc: Desc {
     /// The type of the value.
-    type Value: Any + Send + Sync;
-    /// How the value is stored (determines whether the singleton is optional, or uses a default).
-    type Slot: SingletonSlot<Value = Self::Value>;
+    type Value: Default + Any + Send + Sync;
     /// The type of the notification for this singleton (either `Self::Value` or `()`).
     type NotificationValue: Clone;
 
     /// Get a reference to the field storing this singleton in `storage`.
-    fn get_ref(storage: &Self::Storage) -> &Self::Slot;
+    fn get_ref(storage: &Self::Storage) -> &SingletonValue<Self::Value>;
 
     /// Project a pointer to the storage to a pointer to the field storing this singleton, without
     /// creating a reference to the storage.
@@ -53,7 +51,7 @@ pub unsafe trait SingletonDesc: Desc {
     /// # Safety
     ///
     /// `storage` must be valid for reads and writes (i.e., dereferenceable).
-    unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut Self::Slot;
+    unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut SingletonValue<Self::Value>;
 
     /// Convert a reference to this singleton's value to its notification value.
     fn notification_value(value: &Self::Value) -> &Self::NotificationValue;
@@ -62,30 +60,6 @@ pub unsafe trait SingletonDesc: Desc {
     fn make_notification(
         event: crate::SingletonEvent<Self>,
     ) -> <Self::Storage as GeneratedStorage>::Notification;
-}
-
-/// A singleton which may have no value (i.e., which is declared without `default`).
-#[doc(hidden)]
-pub trait OptionalSingletonDesc:
-    SingletonDesc<Slot = VersionedValue<Option<<Self as SingletonDesc>::Value>>>
-{
-}
-
-impl<S> OptionalSingletonDesc for S where
-    S: SingletonDesc<Slot = VersionedValue<Option<<S as SingletonDesc>::Value>>>
-{
-}
-
-/// A singleton declared with `default`, which always has a value.
-#[doc(hidden)]
-pub trait DefaultSingletonDesc:
-    SingletonDesc<Slot = DefaultValue<<Self as SingletonDesc>::Value>, Value: Default>
-{
-}
-
-impl<S> DefaultSingletonDesc for S where
-    S: SingletonDesc<Slot = DefaultValue<<S as SingletonDesc>::Value>, Value: Default>
-{
 }
 
 /// Describes tabular key/values in the store.
@@ -358,7 +332,7 @@ mod test {
             kvs: {
                 Foo(Box<u64>; OWNER; notify(Clone)),
                 Bar(Arc<u64>; OWNER; notify(None)),
-                Baz(&'static u64; OWNER),
+                Baz(&'static str; OWNER),
                 Qux(u64; OWNER),
             }
         );
@@ -367,7 +341,7 @@ mod test {
         fn single() {
             let store = KvStore::new();
             store.Foo.insert(OWNER, Box::new(42));
-            assert_eq!(store.Foo.get(OWNER).unwrap(), Box::new(42));
+            assert_eq!(store.Foo.get(OWNER), Box::new(42));
         }
     }
 

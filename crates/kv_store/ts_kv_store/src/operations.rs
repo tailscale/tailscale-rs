@@ -17,7 +17,7 @@ use crate::{
         PrimaryTableDesc, SingletonDesc, TableDesc, UniqueIndexDesc,
         index::{IndexMaintenance, MultiIndexRead, UniqueIndexRead},
     },
-    storage::{SingletonSlot, Storage, Table},
+    storage::{SingletonValue, Storage, Table},
     transactions::{TransactionRef, TxnId},
 };
 
@@ -43,7 +43,9 @@ pub trait StorageGuard<TableStorage: GeneratedStorage>: Sized {
     ///
     /// There must be no live mutable reference to the singleton described by `S` while the
     /// returned reference is live.
-    unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(&self) -> &S::Slot;
+    unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(
+        &self,
+    ) -> &SingletonValue<S::Value>;
 
     /// The storage of the index described by `D`.
     ///
@@ -63,7 +65,9 @@ impl<TableStorage: GeneratedStorage> StorageGuard<TableStorage> for Storage<Tabl
         D::get_table(&self.tables)
     }
 
-    unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(&self) -> &S::Slot {
+    unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(
+        &self,
+    ) -> &SingletonValue<S::Value> {
         S::get_ref(&self.tables)
     }
 
@@ -71,11 +75,6 @@ impl<TableStorage: GeneratedStorage> StorageGuard<TableStorage> for Storage<Tabl
         D::get_index(&self.tables)
     }
 }
-
-/// The result of an operation on the singleton `S`.
-///
-/// For a singleton declared with `default` this is `T`. Otherwise, it is `Option<T>`.
-type Maybe<S, T> = <<S as SingletonDesc>::Slot as SingletonSlot>::Maybe<T>;
 
 pub(crate) trait Ops<TableStorage: GeneratedStorage>: Sized {
     type ReadLock: Deref<Target: StorageGuard<TableStorage>>;
@@ -94,7 +93,7 @@ pub(crate) unsafe trait SingletonOps<TableStorage: GeneratedStorage>:
 {
     type Desc: SingletonDesc<Storage = TableStorage>;
 
-    fn get(self, owner: Owner) -> Maybe<Self::Desc, <Self::Desc as SingletonDesc>::Value>
+    fn get(self, owner: Owner) -> <Self::Desc as SingletonDesc>::Value
     where
         <Self::Desc as SingletonDesc>::Value: Clone,
     {
@@ -105,7 +104,7 @@ pub(crate) unsafe trait SingletonOps<TableStorage: GeneratedStorage>:
         self,
         f: impl FnOnce(&<Self::Desc as SingletonDesc>::Value) -> T,
         _owner: Owner,
-    ) -> Maybe<Self::Desc, T> {
+    ) -> T {
         let guard = self.read_lock();
         // SAFETY: `guard` is from `read_lock`, so by the trait's contract there are no mutable
         // references to `Self::Desc`'s value.
@@ -416,7 +415,11 @@ pub(crate) trait SingletonOpsMut<'txn, D: schema::SingletonDesc>: OpsMut<'txn, D
     ///
     /// The write lock is held while `f` runs.
     #[track_caller]
-    fn with_singleton_mut<T>(self, owner: Owner, f: impl FnOnce(&mut D::Slot, TxnId) -> T) -> T {
+    fn with_singleton_mut<T>(
+        self,
+        owner: Owner,
+        f: impl FnOnce(&mut SingletonValue<D::Value>, TxnId) -> T,
+    ) -> T {
         let mut guard = self.write_lock();
         assert_owner(D::OWNER, owner);
         let txn_id = guard.txn_id();
@@ -432,14 +435,14 @@ pub(crate) trait SingletonOpsMut<'txn, D: schema::SingletonDesc>: OpsMut<'txn, D
         self.with_singleton_mut(owner, |slot, txn_id| slot.delete(txn_id))
     }
 
-    fn remove(self, owner: Owner) -> Maybe<D, D::Value>
+    fn remove(self, owner: Owner) -> D::Value
     where
         D::Value: Clone,
     {
         self.with_singleton_mut(owner, |slot, txn_id| slot.remove(txn_id))
     }
 
-    fn with_mut<T>(self, f: impl FnOnce(&mut D::Value) -> T, owner: Owner) -> Maybe<D, T>
+    fn with_mut<T>(self, f: impl FnOnce(&mut D::Value) -> T, owner: Owner) -> T
     where
         D::Value: Clone + PartialEq,
     {
