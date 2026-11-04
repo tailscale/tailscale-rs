@@ -75,12 +75,6 @@ audit-as-crates-io = false
 [policy.ts_netstack_smoltcp]
 audit-as-crates-io = false
 
-[policy.ts_netstack_smoltcp_core]
-audit-as-crates-io = false
-
-[policy.ts_netstack_smoltcp_socket]
-audit-as-crates-io = false
-
 [policy.ts_nodecapability]
 audit-as-crates-io = false
 
