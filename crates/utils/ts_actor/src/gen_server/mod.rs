@@ -239,8 +239,8 @@ pub trait GenServer: Send {
     /// Handle a message which isn't a call or cast.
     ///
     /// Any messages sent to this process which aren't aware of [`GenServer`] semantics are
-    /// routed to this method. If you need to handle
-    /// [`SystemMessage`][crate::SystemMessage], for instance, those appear here.
+    /// routed to this method. If you need to handle [`SystemMessage`], for instance, those appear
+    /// here.
     ///
     /// The returned [`Action`] describes the action the genserver will take after handling
     /// the message. See the docs on [`Action`] for a description of what each variant does.
