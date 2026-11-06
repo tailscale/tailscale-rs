@@ -2,14 +2,31 @@
 
 Record breaking or significant changes here. All dates are UTC.
 
-## Unreleased - October 2026
+## Unreleased - December 2026
 
 Put changes for the upcoming release here!
 
+## [0.7.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.7.0) - 2026-11-06
+
+- Changed (all): tidied up the repo root by grouping crates into category-specific directories and consolidating some
+  crates. [#425](https://github.com/tailscale/tailscale-rs/pull/425), [#426](https://github.com/tailscale/tailscale-rs/pull/426), [#429](https://github.com/tailscale/tailscale-rs/pull/429)
+- Changed (ts_netstack_smoltcp): enabled cubic congestion control on TCP streams by default.
+  [#438](https://github.com/tailscale/tailscale-rs/pull/438)
+- Changed (ts_netmon): only export PlatformMon on supported platforms. Thanks to @YisHub for the report!
+  [#467](https://github.com/tailscale/tailscale-rs/pull/467)
+- Fixed (ts_netstack_smoltcp): accept TCP sockets in the half-closed state rather than dropping/closing them. Thanks to
+  @kasper0406 for the report! [#475](https://github.com/tailscale/tailscale-rs/pull/475)
 - Fixed (ts_python): passing both `keys` and a key file no longer generates and saves a new set of
-  keys before saving the `keys` argument.
+  keys before saving the `keys` argument. [#472](https://github.com/tailscale/tailscale-rs/pull/472)
 - Fixed (Rust API): return an error from `is_authorized` when the user's auth key is rejected by
   the control server. Resolves crashes and panics that would otherwise occur in this case.
+  [#440](https://github.com/tailscale/tailscale-rs/pull/440)
+- Fixed (ts_netstack_smoltcp): netstack futures now (configurably) cancel on drop, preventing futures like UDP recv
+  from silently eating queued datagrams after cancellation. Thanks to @kasper0406 for the report!
+  [#466](https://github.com/tailscale/tailscale-rs/pull/466)
+- Fixed (ts_control_serde): Unicode escapes in `ResolverAddr` are now properly handled, which allows deserialization of
+  DoH/DoT/etc URLs for NextDNS users with per-device configuration profiles. Thanks to @a1ecbr0wn for the report!
+  [#418](https://github.com/tailscale/tailscale-rs/pull/418)
 
 ## [0.6.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.6.1) - 2026-09-17
 
