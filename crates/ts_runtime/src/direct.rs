@@ -168,11 +168,11 @@ impl DirectActor {
 
 fn udp_rx(sock: impl Borrow<UdpSocket>) -> impl Stream<Item = UdpRx> {
     // Required capacity to receive a UDP datagram. Any smaller and data may technically be dropped
-    // with a large MTU or a large fragmented packet. We keep the buffer capacity topped off to this
-    // size each time we try a receive in the loop below.
+    // with a large MTU or a large fragmented packet. The receive buffer below always has this size.
     const REQUIRED_CAPACITY: usize = u16::MAX as _;
 
-    let buf = BytesMut::zeroed(REQUIRED_CAPACITY);
+    // Receive buffer continuously reused for incoming packets.
+    let buf = vec![0u8; REQUIRED_CAPACITY];
 
     futures_util::stream::try_unfold((sock, buf), async |(sock, mut buf)| {
         let mut v = vec![];
@@ -184,10 +184,6 @@ fn udp_rx(sock: impl Borrow<UdpSocket>) -> impl Stream<Item = UdpRx> {
             sock.readable().await?;
 
             loop {
-                if buf.len() < REQUIRED_CAPACITY {
-                    buf.resize(REQUIRED_CAPACITY, 0);
-                }
-
                 let (n, who) = match sock.try_recv_from(&mut buf) {
                     Ok((n, who)) => (n, who),
                     Err(e) if e.kind() == ErrorKind::WouldBlock => {
@@ -196,8 +192,7 @@ fn udp_rx(sock: impl Borrow<UdpSocket>) -> impl Stream<Item = UdpRx> {
                     Err(e) => return Err(e),
                 };
 
-                let pkt_buf = buf.split_to(n);
-                v.push((who, PacketMut::from(pkt_buf)));
+                v.push((who, PacketMut::from(&buf[..n])));
             }
         };
 
