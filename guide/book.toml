@@ -1,0 +1,21 @@
+[book]
+title = "tailscale-rs user guide"
+language = "en"
+
+[rust]
+edition = "2024"
+
+[build]
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/tailscale/tailscale-rs/"
+site-url = "/user-guide/"
+
+[output.linkcheck2]
+follow-web-links = true
+traverse-parent-directories = false
+exclude = []
+
+[output.linkcheck2.http-headers]
+'crates\.io' = ["Accept: text/html"]

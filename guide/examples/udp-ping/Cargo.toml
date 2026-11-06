@@ -1,0 +1,10 @@
+[package]
+name = "udp-ping"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Depends on tailscale-rs.
+tailscale = { version = "0.7" }
+# We'll use Tokio as an async runtime in our example.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

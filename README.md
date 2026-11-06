@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ).await?;
 
     // Bind a UDP socket on our tailnet IP, port 1234
-    let sock = dev.udp_bind((dev.ipv4().await?, 1234).into()).await?;
+    let sock = dev.udp_bind((dev.ipv4_addr().await?, 1234).into()).await?;
 
     // Send a packet containing "ping" to 100.64.0.1:5678 once per second
     loop {

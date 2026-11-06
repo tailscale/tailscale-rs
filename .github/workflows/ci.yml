@@ -181,6 +181,26 @@ jobs:
       - &dry_publish
         name: Publish (Dry run)
         run: cargo ws publish --dry-run --publish-as-is
+      - name: Build user guide
+        steps:
+          - name: Build examples
+            run: cargo test --all --manifest-path=./examples/Cargo.toml --target-dir ./target
+            with:
+              working-directory: guide
+          - name: Install mdbook
+            uses: taiki-e/install-action@v2
+            with:
+              tool: mdbook
+          - name: Install mdbook-linkcheck2
+            uses: taiki-e/install-action@v2
+            with:
+              tool: mdbook-linkcheck2
+              fallback: cargo-install
+          - name: Build
+            run: mdbook build
+            with:
+              working-directory: guide
+
 
   publish:
     name: publish
