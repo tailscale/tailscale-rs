@@ -1,3 +1,4 @@
+
 # cargo-vet config file
 
 [cargo-vet]
@@ -10,6 +11,9 @@ url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
 [policy.tailscale]
+audit-as-crates-io = false
+
+[policy.ts_actor]
 audit-as-crates-io = false
 
 [policy.ts_array256]
@@ -293,10 +297,6 @@ criteria = "safe-to-run"
 version = "0.2.17"
 criteria = "safe-to-deploy"
 
-[[exemptions.cpufeatures]]
-version = "0.3.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.crc32fast]]
 version = "1.5.0"
 criteria = "safe-to-run"
@@ -506,10 +506,6 @@ version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.hashbrown]]
-version = "0.14.5"
-criteria = "safe-to-deploy"
-
-[[exemptions.hashbrown]]
 version = "0.15.5"
 criteria = "safe-to-deploy"
 
@@ -548,10 +544,6 @@ criteria = "safe-to-deploy"
 [[exemptions.httparse]]
 version = "1.10.1"
 criteria = "safe-to-deploy"
-
-[[exemptions.humantime]]
-version = "2.3.0"
-criteria = "safe-to-run"
 
 [[exemptions.hyper]]
 version = "1.8.1"
@@ -632,10 +624,6 @@ criteria = "safe-to-deploy"
 [[exemptions.lock_api]]
 version = "0.4.14"
 criteria = "safe-to-deploy"
-
-[[exemptions.lru-slab]]
-version = "0.1.2"
-criteria = "safe-to-run"
 
 [[exemptions.managed]]
 version = "0.8.0"
@@ -799,10 +787,6 @@ criteria = "safe-to-run"
 
 [[exemptions.quinn-proto]]
 version = "0.11.14"
-criteria = "safe-to-run"
-
-[[exemptions.quinn-udp]]
-version = "0.5.14"
 criteria = "safe-to-run"
 
 [[exemptions.r-efi]]
@@ -1041,10 +1025,6 @@ criteria = "safe-to-deploy"
 version = "2.0.117"
 criteria = "safe-to-deploy"
 
-[[exemptions.sync_wrapper]]
-version = "1.0.2"
-criteria = "safe-to-run"
-
 [[exemptions.system-configuration-sys]]
 version = "0.5.0"
 criteria = "safe-to-deploy"
@@ -1083,10 +1063,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tinystr]]
 version = "0.8.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.tinyvec]]
-version = "1.10.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]
@@ -1228,10 +1204,6 @@ criteria = "safe-to-deploy"
 [[exemptions.web-sys]]
 version = "0.3.91"
 criteria = "safe-to-run"
-
-[[exemptions.web-time]]
-version = "1.1.0"
-criteria = "safe-to-deploy"
 
 [[exemptions.webpki-root-certs]]
 version = "1.0.6"
