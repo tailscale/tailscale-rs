@@ -6,6 +6,11 @@ Record breaking or significant changes here. All dates are UTC.
 
 Put changes for the upcoming release here!
 
+## [0.7.1](https://github.com/tailscale/tailscale-rs/releases/tag/v0.7.1) - 2026-11-06
+
+- Changed (ts_netstack_smoltcp): reverts change to cubic congestion control in smoltcp, which requires `std` for a few
+  math functions, preventing publishing to crates.io.
+
 ## [0.7.0](https://github.com/tailscale/tailscale-rs/releases/tag/v0.7.0) - 2026-11-06
 
 - Changed (all): tidied up the repo root by grouping crates into category-specific directories and consolidating some
