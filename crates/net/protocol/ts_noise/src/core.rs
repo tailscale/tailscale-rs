@@ -19,11 +19,6 @@ use hkdf::SimpleHkdf;
 use zerocopy::IntoBytes;
 use zeroize::ZeroizeOnDrop;
 
-/// Initialize a ChaCha20Poly1305 cipher with the given key.
-fn must_cipher(key: [u8; 32]) -> ChaCha20Poly1305 {
-    ChaCha20Poly1305::new(&key.into())
-}
-
 /// Use HKDF to derive N 32-byte values.
 ///
 /// # Panics
@@ -46,11 +41,48 @@ pub struct Session {
     pub role: Role,
 }
 
+/// An AEAD cipher and its nonce counter.
+///
+/// Each Aead instance can only be used to perform two cryptographic operations, consuming
+/// nonce values 0 and 1.
+#[derive(Clone, ZeroizeOnDrop)]
+struct Aead {
+    cipher: ChaCha20Poly1305,
+    nonce: u8,
+}
+
+impl Aead {
+    fn new(key: [u8; 32]) -> Self {
+        Self {
+            cipher: ChaCha20Poly1305::new(&key.into()),
+            nonce: 0,
+        }
+    }
+
+    /// Return the next nonce to use for encryption or decryption.
+    ///
+    /// # Panics
+    ///
+    /// If this Aead has already produced 2 nonces. This is an additional sanity check, because
+    /// the handshake patterns we implement never require more than 2 nonces per Aead, so trying
+    /// to consume more indicates an implementation mistake.
+    fn next_nonce(&mut self) -> [u8; 12] {
+        if self.nonce >= 2 {
+            panic!("Aead used more than twice");
+        }
+        let mut ret = [0; 12];
+        ret[0] = self.nonce;
+        self.nonce += 1;
+        ret
+    }
+}
+
 /// Base Noise handshake state.
 #[derive(Clone, ZeroizeOnDrop)]
 pub struct State {
     hash: [u8; 32],
     chaining_key: [u8; 32],
+    cipher: Option<Aead>,
 }
 
 /// The role of the local peer in the handshake.
@@ -62,6 +94,12 @@ pub enum Role {
     Responder,
 }
 
+/// A pre-shared symmetric key.
+pub type Psk = [u8; 32];
+
+/// The authentication tag of an AEAD ciphertext.
+pub type AeadTag = [u8; 16];
+
 impl State {
     /// Initialize a new Noise handshake.
     ///
@@ -72,6 +110,7 @@ impl State {
         State {
             hash: init.into(),
             chaining_key: init.into(),
+            cipher: None,
         }
     }
 
@@ -102,29 +141,85 @@ impl State {
     pub fn mix_hash_and_key(mut self, public: &x25519_dalek::PublicKey) -> State {
         self = self.mix_hash(public.as_ref());
         let [ck] = must_hkdf(&self.chaining_key, public.as_ref());
-        State {
-            hash: self.hash,
-            chaining_key: ck,
-        }
+        self.chaining_key = ck;
+        self
     }
 
     /// Perform an X25519 operation, and mix the result into the handshake state.
     ///
     /// This is the MixKey(DH(private, public)) operation in the Noise spec.
     pub fn mix_dh(
-        self,
+        mut self,
         private: &x25519_dalek::StaticSecret,
         public: &x25519_dalek::PublicKey,
-    ) -> StateWithAead {
+    ) -> State {
         let shared = private.diffie_hellman(public);
         let [ck, k] = must_hkdf(&self.chaining_key, shared.as_ref());
-        StateWithAead {
-            state: State {
-                hash: self.hash,
-                chaining_key: ck,
-            },
-            aead: must_cipher(k),
-        }
+        self.chaining_key = ck;
+        self.cipher = Some(Aead::new(k));
+        self
+    }
+
+    /// Mix a pre-shared symmetric key into the handshake state.
+    ///
+    /// This is the MixKeyAndHash() operation in the Noise spec.
+    pub fn mix_psk(mut self, psk: &Psk) -> State {
+        let [ck, h, k] = must_hkdf(&self.chaining_key, psk);
+        self.chaining_key = ck;
+        self.cipher = Some(Aead::new(k));
+        self.mix_hash(&h)
+    }
+
+    /// Seal `cleartext` in place.
+    ///
+    /// `cleartext` is overwritten with ciphertext, and the authentication tag is written to `tag`.
+    ///
+    /// This is the EncryptAndHash() operation in the Noise spec.
+    ///
+    /// # Panics
+    ///
+    /// If an encryption key is not available in the current handshake state. This indicates that
+    /// the caller's handshake implementation is incorrect.
+    pub fn seal(mut self, cleartext: &mut [u8], tag: &mut AeadTag) -> State {
+        let cipher = self.cipher.as_mut().unwrap();
+        let nonce = cipher.next_nonce();
+        let res = cipher
+            .cipher
+            .encrypt_in_place_detached(&nonce.into(), &self.hash, cleartext)
+            .unwrap();
+        res.write_to(tag).unwrap();
+
+        self.mix_hash_gather(&[cleartext, tag])
+    }
+
+    /// Decrypt `ciphertext` in place, authenticating with `tag`.
+    ///
+    /// If successful, `ciphertext` is overwritten with cleartext. Returns `None` if decryption
+    /// fails, implicitly terminating the handshake.
+    ///
+    /// This is the DecryptAndHash() operation in the Noise spec.
+    ///
+    /// # Panics
+    ///
+    /// If a decryption key is not available in the current handshake state. This indicates that
+    /// the caller's handshake implementation is incorrect.
+    pub fn open(self, ciphertext: &mut [u8], tag: &AeadTag) -> Option<State> {
+        // On successful decryption, we have to mix the ciphertext into the handshake state.
+        // This pairs awkwardly with the in place crypto we're doing, where a successful decryption
+        // overwrites the ciphertext.
+        // Instead, update the handshake hash before the decryption attempt. This is okay because
+        // we discard the handshake state entirely on decryption failure.
+        let hash = self.hash;
+        let mut state = self.mix_hash_gather(&[ciphertext, tag]);
+
+        let cipher = state.cipher.as_mut().unwrap();
+        let nonce = cipher.next_nonce();
+        cipher
+            .cipher
+            .decrypt_in_place_detached(&nonce.into(), &hash, ciphertext, tag.into())
+            .ok()?;
+
+        Some(state)
     }
 
     /// Finalize the handshake.
@@ -137,100 +232,6 @@ impl State {
             responder_to_initiator: responder_to_initiator.into(),
             role,
         }
-    }
-}
-
-/// A pre-shared symmetric key.
-pub type Psk = [u8; 32];
-
-/// The authentication tag of an AEAD ciphertext.
-pub type AeadTag = [u8; 16];
-
-/// Noise handshake state when AEAD operations are available.
-///
-/// For the supported handshake patterns, when the handshake is in this state there are
-/// only two valid ways to continue:
-///
-/// - Perform an AEAD operation ([`StateWithAead::seal`] or [`StateWithAead::open`]), which
-///   consumes the AEAD and returns a plain [`State`].
-/// - Mix additional key material into the handshake ([`StateWithAead::mix_dh`] or
-///   [`StateWithAead::mix_psk`], which returns an updated [`StateWithAead`].
-pub struct StateWithAead {
-    // Note: StateWithAead doesn't derive ZeroizeOnDrop, because doing so forces a bunch of
-    // unnecessary clones in its impl. All its fields are themselves ZeroizeOnDrop, so the
-    // default drop implementation still zeroizes in practice, while also letting us move
-    // individual fields out of the struct when needed.
-    //
-    // If you are adding a new field here, you MUST think through whether that field needs
-    // to be zeroized, and make it ZeroizeOnDrop.
-    state: State,
-    aead: ChaCha20Poly1305,
-}
-
-impl StateWithAead {
-    /// Perform an X25519 operation, and mix the result into the handshake state.
-    ///
-    /// This is the MixKey(DH(private, public)) operation in the Noise spec.
-    pub fn mix_dh(
-        self,
-        private: &x25519_dalek::StaticSecret,
-        public: &x25519_dalek::PublicKey,
-    ) -> StateWithAead {
-        self.state.mix_dh(private, public)
-    }
-
-    /// Mix a pre-shared symmetric key into the handshake state.
-    ///
-    /// This is the MixKeyAndHash() operation in the Noise spec.
-    pub fn mix_psk(self, psk: &Psk) -> StateWithAead {
-        let [ck, h, k] = must_hkdf(&self.state.chaining_key, psk);
-        StateWithAead {
-            state: State {
-                hash: self.state.hash,
-                chaining_key: ck,
-            }
-            .mix_hash(&h),
-            aead: must_cipher(k),
-        }
-    }
-
-    /// Seal `cleartext` in place.
-    ///
-    /// `cleartext` is overwritten with ciphertext, and the authentication tag is written to `tag`.
-    ///
-    /// This is the EncryptAndHash() operation in the Noise spec.
-    pub fn seal(self, cleartext: &mut [u8], tag: &mut AeadTag) -> State {
-        let nonce = [0; 12];
-        let res = self
-            .aead
-            .encrypt_in_place_detached(&nonce.into(), &self.state.hash, cleartext)
-            .unwrap();
-        res.write_to(tag).unwrap();
-
-        self.state.mix_hash_gather(&[cleartext, tag])
-    }
-
-    /// Decrypt `ciphertext` in place, authenticating with `tag`.
-    ///
-    /// If successful, `ciphertext` is overwritten with cleartext. Returns `None` if decryption
-    /// fails, implicitly terminating the handshake.
-    ///
-    /// This is the DecryptAndHash() operation in the Noise spec.
-    pub fn open(self, ciphertext: &mut [u8], tag: &AeadTag) -> Option<State> {
-        // On successful decryption, we have to mix the ciphertext into the handshake state.
-        // This pairs awkwardly with the in place crypto we're doing, where a successful decryption
-        // overwrites the ciphertext.
-        // Instead, update the handshake hash before the decryption attempt. This is okay because
-        // we discard the handshake state entirely on decryption failure.
-        let hash = self.state.hash;
-        let state = self.state.mix_hash_gather(&[ciphertext, tag]);
-
-        let nonce = [0; 12];
-        self.aead
-            .decrypt_in_place_detached(&nonce.into(), &hash, ciphertext, tag.into())
-            .ok()?;
-
-        Some(state)
     }
 }
 
@@ -261,7 +262,5 @@ mod tests {
 
         // Handshake state
         assert_implements::<State>();
-        // StateWithAead is not ZeroizeOnDrop even though all its fields are, see comment in its
-        // definition.
     }
 }
