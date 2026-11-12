@@ -1,7 +1,7 @@
 # Tailscale
 
 
-[Tailscale](https://tailscale.com/) is a zero-trust, identity-based connectivity platform that replaces your legacy VPN, SASE, and PAM and connects remote teams, multi-cloud environments, CI/CD pipelines, Edge & IoT devices, and AI workloads. It enables encrypted point-to-point connections using the open source WireGuard protocol, which means only devices on your private network can communicate with each other.
+[Tailscale](https://tailscale.com/) is a zero-trust, identity-based connectivity platform that replaces your legacy VPN, SASE, and PAM and connects remote teams, multi-cloud environments, CI/CD pipelines, Edge & IoT devices, and AI workloads. It enables encrypted point-to-point connections using the open-source WireGuard protocol, which means only devices on your private network can communicate with each other.
 
 Tailscale creates a peer-to-peer mesh network (known as a *tailnet*). However, you can still use Tailscale like a traditional VPN by routing all traffic through an exit node (not supported in tailscale-rs).
 

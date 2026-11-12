@@ -15,7 +15,7 @@
 - [Userspace netstack (TCP and UDP)]()
 - [HTTP]()
 - [SSH]()
-- [Using tailscale-rs from other langauges]()
+- [Using tailscale-rs from other languages]()
   - [C/C++]()
   - [Python]()
   - [Elixir]()
@@ -28,12 +28,11 @@
 # Reference
 
 - [API docs]()
-- [Supported features and future roadmap](reference/roadmap.md)
 - [Build-time options]()
+- [FAQ](reference/faq.md)
+- [Supported features and future roadmap](reference/roadmap.md)
 - [Architecture]()
 - [Tracing and logging]()
 - [Utility crates]()
   - [ts-actor]()
   - [data structures]()
-
-[FAQ](faq.md)
