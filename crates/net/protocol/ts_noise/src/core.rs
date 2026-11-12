@@ -16,6 +16,10 @@ use aead::AeadInPlace;
 use blake2::{Blake2s256, Digest};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 use hkdf::SimpleHkdf;
+use ml_kem::{
+    B32, Decapsulate, Encapsulate,
+    ml_kem_768::{DecapsulationKey, EncapsulationKey},
+};
 use zerocopy::IntoBytes;
 use zeroize::ZeroizeOnDrop;
 
@@ -131,6 +135,16 @@ impl State {
         self
     }
 
+    /// Mix a key into the key derivation state.
+    ///
+    /// This is the MixKey() operation in the Noise spec.
+    fn mix_key(mut self, key: &[u8]) -> State {
+        let [ck, k] = must_hkdf(&self.chaining_key, key);
+        self.chaining_key = ck;
+        self.cipher = Some(Aead::new(k));
+        self
+    }
+
     /// Mix a public key into the handshake state.
     ///
     /// This should only be used to mix in the ephemeral public key in psk handshake variants,
@@ -140,24 +154,19 @@ impl State {
     /// This is the MixHash(ephemeral)+MixKey(ephemeral) operations in the Noise spec.
     pub fn mix_hash_and_key(mut self, public: &x25519_dalek::PublicKey) -> State {
         self = self.mix_hash(public.as_ref());
-        let [ck] = must_hkdf(&self.chaining_key, public.as_ref());
-        self.chaining_key = ck;
-        self
+        self.mix_key(public.as_ref())
     }
 
     /// Perform an X25519 operation, and mix the result into the handshake state.
     ///
     /// This is the MixKey(DH(private, public)) operation in the Noise spec.
     pub fn mix_dh(
-        mut self,
+        self,
         private: &x25519_dalek::StaticSecret,
         public: &x25519_dalek::PublicKey,
     ) -> State {
         let shared = private.diffie_hellman(public);
-        let [ck, k] = must_hkdf(&self.chaining_key, shared.as_ref());
-        self.chaining_key = ck;
-        self.cipher = Some(Aead::new(k));
-        self
+        self.mix_key(shared.as_ref())
     }
 
     /// Mix a pre-shared symmetric key into the handshake state.
@@ -168,6 +177,54 @@ impl State {
         self.chaining_key = ck;
         self.cipher = Some(Aead::new(k));
         self.mix_hash(&h)
+    }
+
+    /// Encapsulate a shared secret to the given KEM key.
+    ///
+    /// Fails if the key is not a valid ML-KEM encapsulation key.
+    ///
+    /// `m` is the random bits that ML-KEM will use to produce the shared secret and ciphertext.
+    /// It MUST be `None` outside of tests that are checking against known vectors.
+    ///
+    /// # Panics
+    ///
+    /// If an encryption key is not available in the current handshake state. This indicates that
+    /// the caller's handshake implementation is incorrect.
+    ///
+    /// If `m` is not `None`, outside `#[cfg(test)]`.
+    pub fn encaps_kem(
+        self,
+        key: EncapsulationKey,
+        m: Option<B32>,
+        ciphertext: &mut [u8; 1088],
+        tag: &mut AeadTag,
+    ) -> State {
+        let (ct, s) = match m {
+            #[cfg(test)]
+            Some(m) => key.encapsulate_deterministic(&m),
+            #[cfg(not(test))]
+            Some(_) => panic!("cannot provide random bits for KEM encapsulation outside of tests"),
+            None => key.encapsulate(),
+        };
+        ciphertext.copy_from_slice(ct.as_ref());
+        self.seal(ciphertext, tag).mix_key(s.as_ref())
+    }
+
+    /// Decapsulate a shared secret with the given KEM key.
+    ///
+    /// # Panics
+    ///
+    /// If a decryption key is not available in the current handshake state. This indicates that
+    /// the caller's handshake implementation is incorrect.
+    pub fn decaps_kem(
+        self,
+        key: DecapsulationKey,
+        ciphertext: &mut [u8; 1088],
+        tag: &AeadTag,
+    ) -> Option<State> {
+        let ret = self.open(ciphertext, tag)?;
+        let s = key.decapsulate_slice(ciphertext).ok()?;
+        Some(ret.mix_key(s.as_ref()))
     }
 
     /// Seal `cleartext` in place.
