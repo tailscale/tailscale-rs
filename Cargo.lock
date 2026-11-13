@@ -6295,6 +6295,7 @@ name = "ts_ffi"
 version = "0.7.1"
 dependencies = [
  "cbindgen",
+ "glob",
  "tailscale",
  "tokio",
  "tracing",
