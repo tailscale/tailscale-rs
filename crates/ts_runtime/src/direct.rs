@@ -43,14 +43,7 @@ use ts_dataplane::async_tokio::{FromUnderlay, ToUnderlay, Tx};
 use ts_packet::PacketMut;
 use ts_transport::{DynEndpoint, UnderlayTransportId};
 
-use crate::{
-    dataplane::DataplaneActor,
-    disco::SendDisco,
-    env::Env,
-    netmon,
-    peer_tracker::{PeerDb, PeerState},
-    stunner::StunAddress,
-};
+use crate::{dataplane::DataplaneActor, disco::SendDisco, env::Env, netmon, stunner::StunAddress};
 
 pub struct DirectActor {
     transport_id: UnderlayTransportId,
@@ -59,8 +52,6 @@ pub struct DirectActor {
     sock6: Option<Arc<UdpSocket>>,
 
     tx: Tx<FromUnderlay>,
-
-    peers: Arc<PeerDb>,
 
     stun_addr: Option<SocketAddr>,
     addrs_v4: Vec<Endpoint>,
@@ -128,7 +119,6 @@ impl kameo::Actor for DirectActor {
 
         slf.attach_stream(UnboundedReceiverStream::new(rx).map(UdpTx), (), ());
 
-        env.subscribe::<Arc<PeerState>>(&slf).await?;
         env.subscribe::<StunAddress>(&slf).await?;
         env.subscribe::<Arc<netmon::State>>(&slf).await?;
         env.subscribe::<SendDisco>(&slf).await?;
@@ -140,7 +130,6 @@ impl kameo::Actor for DirectActor {
             sock4,
             sock6,
             env,
-            peers: Default::default(),
             stun_addr: None,
             addrs_v4: vec![],
             addrs_v6: vec![],
@@ -201,14 +190,6 @@ fn udp_rx(sock: impl Borrow<UdpSocket>) -> impl Stream<Item = UdpRx> {
         Ok(Some((v.into_iter().into_group_map(), (sock, buf))))
     })
     .map(UdpRx)
-}
-
-impl Message<Arc<PeerState>> for DirectActor {
-    type Reply = ();
-
-    async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
-        self.peers = msg.peers.clone();
-    }
 }
 
 impl Message<SendDisco> for DirectActor {

@@ -25,6 +25,8 @@ impl kameo::Actor for SourceFilterUpdater {
     }
 }
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("source filter");
+
 #[derive(Clone)]
 pub struct SourceFilterState(pub Arc<Table<PeerId>>);
 
@@ -33,16 +35,19 @@ impl Message<Arc<PeerState>> for SourceFilterUpdater {
 
     async fn handle(
         &mut self,
-        state_update: Arc<PeerState>,
+        _state_update: Arc<PeerState>,
         _ctx: &mut Context<Self, Self::Reply>,
     ) {
         let mut src_filter = Table::default();
 
-        for (id, node) in state_update.peers.peers() {
-            for route in node.accepted_routes.iter() {
-                src_filter.insert(route.to_owned(), *id);
+        // Note(nrc): for_each method would make this easier
+        self.env.kv_store().Peers.with_iter(KV_OWNER, |iter| {
+            for (id, node) in iter {
+                for route in node.accepted_routes.iter() {
+                    src_filter.insert(route.to_owned(), *id);
+                }
             }
-        }
+        });
 
         tracing::trace!(updated_source_filter = ?src_filter);
 

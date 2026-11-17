@@ -1,37 +1,65 @@
 //! Peer delta update tracking.
 
-use std::{collections::HashSet, net::IpAddr, sync::Arc};
+use std::{
+    collections::HashSet,
+    net::IpAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 
 use kameo::{
     actor::ActorRef,
     message::{Context, Message},
     reply::ReplySender,
 };
+use ts_bart::RoutingTable;
 use ts_control::Node;
 use ts_transport::PeerId;
 
-use crate::{Error, env::Env};
-
-mod peer_db;
-
-pub use peer_db::PeerDb;
+use crate::{Error, env::Env, kv};
 
 /// Actor that tracks peer delta updates and emits new states.
 pub struct PeerTracker {
-    peer_db: PeerDb,
     seen_state_update: bool,
     pending_requests: Vec<Pending>,
     env: Env,
 }
 
+pub(crate) const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("peer tracker");
+
 impl PeerTracker {
-    fn peer_by_name_opt(&self, name: &str) -> Option<&Node> {
+    fn peer_by_name_opt(&self, name: &str) -> Option<Node> {
         let name = name.trim_end_matches('.');
-        self.peer_db.get(&name).map(|(_id, node)| node)
+        let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
+        let indexes = txn.Peers.indexes();
+
+        indexes
+            .fqdn
+            .get(name)
+            .or_else(|| indexes.hostname.get(name))
+            .map(|(_, node)| node)
     }
 
-    fn peer_by_tailnet_ip_opt(&self, ip: IpAddr) -> Option<&Node> {
-        self.peer_db.get(&ip).map(|(_id, node)| node)
+    fn peer_by_tailnet_ip_opt(&self, ip: IpAddr) -> Option<Node> {
+        let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
+
+        let id = txn.PeerIpIndex.with(|v| v.lookup(ip).copied())??;
+        txn.Peers.get(&id)
+    }
+
+    /// Get the nodes with the closest matching route.
+    pub fn get_route(&self, route: ipnet::IpNet) -> Vec<Node> {
+        let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
+
+        let Some(Some(ids)) = txn.PeerRouteIndex.with(|v| v.lookup_prefix(route).cloned()) else {
+            return Vec::new();
+        };
+
+        ids.into_iter()
+            .map(|id| txn.Peers.get(&id).unwrap())
+            .collect()
     }
 }
 
@@ -44,7 +72,6 @@ impl kameo::Actor for PeerTracker {
         env.register(None, &slf).await?;
 
         Ok(Self {
-            peer_db: PeerDb::default(),
             pending_requests: Default::default(),
             seen_state_update: false,
             env,
@@ -92,7 +119,7 @@ mod msg_impl {
                 return deleg;
             }
 
-            sender.send(self.peer_by_name_opt(&name).cloned());
+            sender.send(self.peer_by_name_opt(&name));
 
             deleg
         }
@@ -129,12 +156,7 @@ mod msg_impl {
                 return deleg;
             }
 
-            sender.send(
-                self.peer_db
-                    .get_route(ip.into())
-                    .map(|(_id, node)| node.clone())
-                    .collect(),
-            );
+            sender.send(self.get_route(ip.into()));
 
             deleg
         }
@@ -158,7 +180,7 @@ mod msg_impl {
                 return deleg;
             }
 
-            sender.send(self.peer_by_tailnet_ip_opt(ip).cloned());
+            sender.send(self.peer_by_tailnet_ip_opt(ip));
 
             deleg
         }
@@ -169,11 +191,8 @@ pub use msg_impl::*;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PeerState {
-    #[allow(unused)]
     pub deletions: HashSet<PeerId>,
-    #[allow(unused)]
     pub upserts: HashSet<PeerId>,
-    pub peers: Arc<PeerDb>,
 }
 
 impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
@@ -191,84 +210,136 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
         let mut upserts = HashSet::default();
         let mut deletions = HashSet::default();
 
-        match peer_update {
-            ts_control::PeerUpdate::Full(new_nodes) => {
-                tracing::trace!("full peer update");
+        {
+            let mut txn = self.env.kv_store().begin_transaction(KV_OWNER);
 
-                let new_ids = new_nodes
-                    .iter()
-                    .map(|x| &x.stable_id)
-                    .collect::<HashSet<_>>();
+            match peer_update {
+                ts_control::PeerUpdate::Full(new_nodes) => {
+                    tracing::trace!("full peer update");
 
-                self.peer_db.retain(|id, peer| {
-                    let retain = new_ids.contains(&peer.stable_id);
+                    let new_ids = new_nodes
+                        .iter()
+                        .map(|x| &x.stable_id)
+                        .collect::<HashSet<_>>();
 
-                    if !retain {
-                        deletions.insert(id);
+                    txn.Peers.retain(|id, peer| {
+                        let retain = new_ids.contains(&peer.stable_id);
+
+                        if !retain {
+                            deletions.insert(*id);
+                        }
+
+                        retain
+                    });
+
+                    for node in new_nodes {
+                        let peer_id = upsert_peer(&mut txn, node);
+                        upserts.insert(peer_id);
+                    }
+                }
+
+                ts_control::PeerUpdate::Delta {
+                    patch,
+                    remove,
+                    upsert,
+                } => {
+                    tracing::trace!("delta peer update");
+
+                    for peer in remove {
+                        let Some(id) = txn.Peers.indexes().control_id.with(peer, |id, _node| {
+                            deletions.insert(*id);
+                            *id
+                        }) else {
+                            tracing::error!(control_node_id = peer, "removed peer was unknown");
+                            continue;
+                        };
+
+                        // Note(nrc): if we could mutate via an index, then this would be easier
+                        txn.Peers.remove(&id);
                     }
 
-                    retain
-                });
+                    for peer in upsert {
+                        let id = upsert_peer(&mut txn, peer);
 
-                for node in new_nodes {
-                    let peer_id = self.peer_db.upsert(node);
-                    upserts.insert(peer_id);
+                        upserts.insert(id);
+                    }
+
+                    for update in patch {
+                        let Some(id) =
+                            txn.Peers
+                                .indexes()
+                                .control_id
+                                .with(&update.id, |id, _node| {
+                                    upserts.insert(*id);
+                                    *id
+                                })
+                        else {
+                            tracing::warn!(?update, "no peer for update");
+                            continue;
+                        };
+
+                        // Note(nrc): if we could mutate via an index, then this would be easier
+                        txn.Peers.with_mut(&id, |node| node.apply_update(update));
+                    }
                 }
             }
 
-            ts_control::PeerUpdate::Delta {
-                patch,
-                remove,
-                upsert,
-            } => {
-                tracing::trace!("delta peer update");
+            let peer_count = txn.Peers.len();
 
-                for peer in remove {
-                    let Some((id, _node)) = self.peer_db.remove(peer) else {
-                        tracing::error!(control_node_id = peer, "removed peer was unknown");
-                        continue;
-                    };
-
-                    deletions.insert(id);
+            match txn.commit() {
+                Ok(_) => {
+                    tracing::debug!(
+                        n_upsert = upserts.len(),
+                        n_delete = deletions.len(),
+                        peer_count,
+                        "new peer state"
+                    );
                 }
-
-                for peer in upsert {
-                    let id = self.peer_db.upsert(peer);
-
-                    upserts.insert(id);
+                Err(ts_kv_store::Error::NonUniqueIndexKey(_)) => {
+                    // TODO(nrc) handle this error (replace rather than assert?)
                 }
-
-                for update in patch {
-                    if let Some(id) = self.peer_db.patch(update) {
-                        upserts.insert(id);
-                    } else {
-                        tracing::warn!(?update, "no peer for update");
-                    }
+                Err(ts_kv_store::Error::TransactionFailed) => {
+                    panic!("Committing transaction failed");
                 }
             }
         }
-
-        tracing::debug!(
-            n_upsert = upserts.len(),
-            n_delete = deletions.len(),
-            peer_count = self.peer_db.peers().len(),
-            "new peer state"
-        );
 
         self.service_pending_requests();
 
         if let Err(e) = self
             .env
-            .publish(Arc::new(PeerState {
-                upserts,
-                deletions,
-                peers: Arc::new(self.peer_db.clone()),
-            }))
+            .publish(Arc::new(PeerState { upserts, deletions }))
             .await
         {
             tracing::error!(error = %e, "publishing peer state update");
         }
     }
+}
+
+// Note(nrc): should this be internal to the store?
+fn next_peer_id() -> PeerId {
+    static NEXT_PEER_ID: AtomicU32 = AtomicU32::new(0);
+
+    PeerId(NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+fn upsert_peer(txn: &mut kv::Transaction, peer: &Node) -> PeerId {
+    let Some(id) = txn
+        .Peers
+        .indexes()
+        .stable_id
+        .with(&peer.stable_id, |id, _| *id)
+    else {
+        let id = next_peer_id();
+        txn.Peers.insert(id, peer.clone());
+        return id;
+    };
+
+    // Note(nrc): if we could mutate via an index, then this would be easier
+    txn.Peers
+        .with_mut(&id, |node| *node = peer.clone())
+        .unwrap();
+    id
 }
 
 impl PeerTracker {
@@ -289,18 +360,13 @@ impl PeerTracker {
         for req in core::mem::take(&mut self.pending_requests) {
             match req {
                 Pending::PeerByName(PeerByName { name }, reply) => {
-                    reply.send(self.peer_by_name_opt(&name).cloned());
+                    reply.send(self.peer_by_name_opt(&name));
                 }
                 Pending::TailnetIp(PeerByTailnetIp { ip }, reply) => {
-                    reply.send(self.peer_by_tailnet_ip_opt(ip).cloned());
+                    reply.send(self.peer_by_tailnet_ip_opt(ip));
                 }
                 Pending::AcceptedRoute(PeerByAcceptedRoute { ip }, reply) => {
-                    reply.send(
-                        self.peer_db
-                            .get_route(ip.into())
-                            .map(|(_id, node)| node.clone())
-                            .collect(),
-                    );
+                    reply.send(self.get_route(ip.into()));
                 }
             }
         }

@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -24,7 +24,6 @@ use crate::{
     derp_latency::DerpLatencyMeasurement,
     env::Env,
     multiderp::{Multiderp, SetRegionTransportId},
-    peer_tracker::{PeerDb, PeerState},
     task::ErasedTask,
 };
 
@@ -98,7 +97,6 @@ impl kameo::Actor for Uniderp {
             region_id: args.region_id,
             region: args.region,
             transport_id,
-            peer_db: Arc::new(RwLock::new(None)),
             home_derp_rx,
             to_dataplane,
             keys: args.env.keys.node_keys.clone(),
@@ -110,7 +108,6 @@ impl kameo::Actor for Uniderp {
         args.env
             .subscribe::<Arc<ts_control::StateUpdate>>(&slf)
             .await?;
-        args.env.subscribe::<Arc<PeerState>>(&slf).await?;
         args.env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
 
         args.env
@@ -188,15 +185,6 @@ impl Message<Arc<ts_control::StateUpdate>> for Uniderp {
     }
 }
 
-impl Message<Arc<PeerState>> for Uniderp {
-    type Reply = ();
-
-    async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
-        let mut db = self.runner_state.peer_db.write().unwrap();
-        *db = Some(msg.peers.clone());
-    }
-}
-
 impl Message<DerpLatencyMeasurement> for Uniderp {
     type Reply = ();
 
@@ -224,7 +212,6 @@ struct Runner {
     home_derp_rx: watch::Receiver<bool>,
     to_dataplane: Tx<FromUnderlay>,
     from_dataplane: Arc<Mutex<Rx<ToUnderlay>>>,
-    peer_db: Arc<RwLock<Option<Arc<PeerDb>>>>,
     keys: NodeKeyPair,
 }
 

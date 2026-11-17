@@ -88,6 +88,8 @@ pub struct Params {
     pub(crate) env: Env,
 }
 
+pub(crate) const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("control");
+
 #[doc(hidden)]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ControlRunnerError {

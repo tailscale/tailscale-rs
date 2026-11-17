@@ -22,7 +22,6 @@ use crate::{
     dataplane::{DataplaneActor, SendUnderlay},
     disco::SendDisco,
     multiderp::uniderp::Uniderp,
-    peer_tracker::{PeerDb, PeerState},
 };
 
 /// Consumes derp map updates and spawns an actor per region that runs an underlay transport.
@@ -36,7 +35,6 @@ pub struct Multiderp {
     region_map: HashMap<RegionId, UnderlayTransportId>,
     env: Env,
     debounce_state: DebounceState,
-    peer_state: Arc<PeerDb>,
 }
 
 impl kameo::Actor for Multiderp {
@@ -45,7 +43,6 @@ impl kameo::Actor for Multiderp {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
-        env.subscribe::<Arc<PeerState>>(&slf).await?;
         env.subscribe::<SendDisco>(&slf).await?;
 
         env.register(None, &slf).await?;
@@ -54,7 +51,6 @@ impl kameo::Actor for Multiderp {
             env,
             region_map: Default::default(),
             debounce_state: Default::default(),
-            peer_state: Default::default(),
         })
     }
 
@@ -130,6 +126,8 @@ impl Multiderp {
     }
 }
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("multiderp");
+
 impl Message<Arc<ts_control::StateUpdate>> for Multiderp {
     type Reply = ();
 
@@ -202,14 +200,6 @@ impl Message<DebouncedPublish> for Multiderp {
     }
 }
 
-impl Message<Arc<PeerState>> for Multiderp {
-    type Reply = ();
-
-    async fn handle(&mut self, state: Arc<PeerState>, _: &mut Context<Self, Self::Reply>) {
-        self.peer_state = state.peers.clone();
-    }
-}
-
 impl Message<SendDisco> for Multiderp {
     type Reply = ();
 
@@ -218,17 +208,24 @@ impl Message<SendDisco> for Multiderp {
             return;
         };
 
-        let Some((_, peer)) = self.peer_state.get(&nodekey) else {
+        let Some(derp_region) =
+            self.env
+                .kv_store()
+                .Peers
+                .indexes()
+                .node_key
+                .with(KV_OWNER, &nodekey, |_, peer| peer.derp_region)
+        else {
             tracing::trace!(%nodekey, "no known peer");
             return;
         };
 
-        let Some(derp_region) = &peer.derp_region else {
+        let Some(derp_region) = derp_region else {
             tracing::trace!(%nodekey, "peer had no derp region");
             return;
         };
 
-        let Some(transport_id) = self.region_map.get(derp_region) else {
+        let Some(transport_id) = self.region_map.get(&derp_region) else {
             tracing::trace!(%nodekey, ?derp_region, "derp region had no transport");
             return;
         };
