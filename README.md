@@ -2,6 +2,7 @@
 
 [![docs.rs](https://img.shields.io/docsrs/tailscale)](https://docs.rs/tailscale)
 [![crates.io version](https://img.shields.io/crates/v/tailscale)](https://crates.io/crates/tailscale)
+[![discord channel](https://img.shields.io/badge/discord-%23tailscale--rs-8A2BE2?logo=discord)](https://discord.com/channels/1379528469859532931/1494030561092698162)
 
 https://tailscale.com
 
@@ -69,8 +70,7 @@ and to see where the community runs with it, but please be aware of a few import
 - There are no compatibility guarantees at the moment. We may break dependent code in order to get things right,
   although we will try to avoid doing so gratuitously.
 - Direct connections via NAT traversal is a work in progress. Communication may fall back to DERP relaying in more
-  cases,
-  with a corresponding hit to latency and throughput.
+  cases, with a corresponding hit to latency and throughput.
 - Core networking functionality is implemented. Many other features are still either in progress or not implemented yet.
   See [Status](#status) for details.
 
