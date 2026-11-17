@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use tokio::io::AsyncReadExt;
 use ts_keys::PersistState;
 
 const CONTROL_URL_VAR: &str = "TS_CONTROL_URL";
@@ -176,7 +177,7 @@ where
             crate::Error::KeyFileWrite
         })?;
 
-    match tokio::fs::read(path).await {
+    match read_file(path).await {
         Ok(contents) => match serde_json::from_slice::<KeyState>(&contents) {
             Ok(state) => return Ok(state),
             Err(e) => match bad_format_behavior {
@@ -205,22 +206,120 @@ where
     Ok(value)
 }
 
+/// Comparable to [`tokio::fs::read`], but checks permission bits if on unix.
+async fn read_file(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+    let mut f = tokio::fs::File::open(path).await?;
+
+    #[cfg(unix)]
+    {
+        unix_check_perms(&mut f).await?;
+    }
+
+    let mut contents = vec![];
+    f.read_to_end(&mut contents).await?;
+
+    Ok(contents)
+}
+
 async fn try_write(
     path: impl AsRef<Path>,
     value: &impl serde::Serialize,
 ) -> Result<(), crate::Error> {
-    tokio::fs::write(
-        path,
-        serde_json::to_vec(value).map_err(|e| {
-            tracing::error!(error = %e, "serializing key state");
-            crate::Error::KeyFileWrite
-        })?,
-    )
-    .await
-    .map_err(|e| {
+    use tokio::io::AsyncWriteExt;
+
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+
+    #[cfg(unix)]
+    {
+        opts.mode(0o600);
+    }
+
+    let mut f = opts.open(path).await.map_err(|e| {
+        tracing::error!(error = %e, "opening key file for write");
+        crate::Error::KeyFileWrite
+    })?;
+
+    let contents = serde_json::to_vec(value).map_err(|e| {
+        tracing::error!(error = %e, "serializing key state");
+        crate::Error::KeyFileWrite
+    })?;
+
+    f.write_all(&contents).await.map_err(|e| {
         tracing::error!(error = %e, "saving key state");
         crate::Error::KeyFileWrite
     })?;
 
     Ok(())
+}
+
+/// Check perms on the key file, emitting a warning (and returning `false`) if not `0600`.
+#[cfg(unix)]
+async fn unix_check_perms(f: &mut tokio::fs::File) -> tokio::io::Result<bool> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let meta = f.metadata().await?;
+    let mode = meta.permissions().mode() & 0o777;
+
+    if mode == 0o600 {
+        return Ok(true);
+    }
+
+    let perm_fmt = format_args!("{mode:o}");
+    tracing::warn!(
+        perms = &perm_fmt,
+        "tailscale-rs keyfile has dangerous permissions (expected 0600)"
+    );
+
+    Ok(false)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test]
+    async fn roundtrip() {
+        let state = KeyFile::default();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        try_write(tmp.path(), &state).await.unwrap();
+
+        let loaded = load_or_init::<KeyFile>(tmp.path(), BadFormatBehavior::Error)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            loaded.key_state.machine_key.as_bytes(),
+            state.key_state.machine_key.as_bytes()
+        );
+        assert_eq!(
+            loaded.key_state.node_key.as_bytes(),
+            state.key_state.node_key.as_bytes()
+        );
+        assert_eq!(
+            loaded.key_state.network_lock_key.as_bytes(),
+            state.key_state.network_lock_key.as_bytes()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_perms() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+
+        let path = tmp.path().to_path_buf();
+        let mut f = tokio::fs::File::from_std(tmp.into_file());
+
+        try_write(&path, &"abc").await.unwrap();
+        assert!(unix_check_perms(&mut f).await.unwrap());
+
+        let mut perms = f.metadata().await.unwrap().permissions();
+        perms.set_mode(0o664);
+        f.set_permissions(perms).await.unwrap();
+
+        assert!(!unix_check_perms(&mut f).await.unwrap());
+    }
 }
