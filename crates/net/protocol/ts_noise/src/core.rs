@@ -218,7 +218,7 @@ impl State {
     /// the caller's handshake implementation is incorrect.
     pub fn decaps_kem(
         self,
-        key: DecapsulationKey,
+        key: &DecapsulationKey,
         ciphertext: &mut [u8; 1088],
         tag: &AeadTag,
     ) -> Option<State> {
