@@ -900,7 +900,7 @@ impl<D: schema::TableDesc> Table<D> {
                 // Recorded before handing out the value so that it is rolled back by `gc_txn` even
                 // if the caller panics while using it.
                 record_mut_ref(modified, k, txn_id);
-                indexes.on_remove(v, txn_id);
+                indexes.on_remove(k, v, txn_id);
                 Some((k, v))
             })
     }
@@ -1000,7 +1000,7 @@ impl<D: schema::TableDesc> Table<D> {
         // Recorded before calling `f` so that if `f` panics, the (already cloned) value is still
         // rolled back by `gc_txn`.
         record_mut_ref(&mut self.modified, key, txn_id);
-        self.indexes.on_remove(value, txn_id);
+        self.indexes.on_remove(key, value, txn_id);
         let result = f(value);
         self.indexes.on_insert(key, value, txn_id);
         Some(result)
@@ -1008,7 +1008,7 @@ impl<D: schema::TableDesc> Table<D> {
 
     pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
         if let Some(old_value) = self.delete_mask.lookup(&self.data, &key, txn_id) {
-            self.indexes.on_remove(old_value, txn_id);
+            self.indexes.on_remove(&key, old_value, txn_id);
         }
         self.indexes.on_insert(&key, &value, txn_id);
 
@@ -1027,7 +1027,7 @@ impl<D: schema::TableDesc> Table<D> {
         // `self.data` (e.g., if `key` has already been removed in this transaction) may share
         // an index key with a different row, whose index entry must be kept.
         if let Some(value) = self.delete_mask.lookup(&self.data, key, txn_id) {
-            self.indexes.on_remove(value, txn_id);
+            self.indexes.on_remove(key, value, txn_id);
         }
         self.delete_mask.remove(key, txn_id, &self.data);
     }

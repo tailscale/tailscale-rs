@@ -882,7 +882,7 @@ impl<'txn, TableStorage: GeneratedStorage> StorageGuard<TableStorage>
 /// Write access to a transaction's data.
 ///
 /// If a panic unwinds out of the operation (e.g., from a user closure, or a non-unique index key
-/// with `assert_unique`), the operation may have been left partially done (e.g., a row's old index
+/// with `assert`), the operation may have been left partially done (e.g., a row's old index
 /// entries removed, but its new ones not added), so the transaction is marked as failed and cannot
 /// be committed. Usually, the panic also drops the transaction (rolling it back), but that is not
 /// the case if the panic is caught.

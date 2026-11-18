@@ -189,7 +189,10 @@ pub trait IndexStorage<K: Hash + Eq, V: Any + Send + Sync>: Default {
         Q: ?Sized + Hash + Eq + ToOwned<Owned = K>;
 
     /// An item has been removed from the base table.
-    fn on_remove(&mut self, value: &V, txn_id: TxnId);
+    fn on_remove<Q>(&mut self, key: &Q, value: &V, txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq;
 }
 
 impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
@@ -204,7 +207,12 @@ impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
     {
     }
 
-    fn on_remove(&mut self, _value: &V, _txn_id: TxnId) {}
+    fn on_remove<Q>(&mut self, _key: &Q, _value: &V, _txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+    }
 }
 
 /// A storage implementation.
@@ -333,11 +341,11 @@ pub trait GeneratedStore:
 ///
 /// # Indexes
 ///
-/// The syntax of an index is `index(field: Type (= closure)? (; assert_unique)?)` where `field` is
-/// the name of the index and `Type` is the type of the index key. By default, `field` is also the
-/// name of a field in the value type of the base table, whose value is used as the index key;
-/// `closure` can be specified to compute the index key instead. You can specify multiple indexes
-/// for each table, separated with a semicolon. E.g.,
+/// The syntax of an index is `index(field: Type (= closure)? (; (poison | assert | replace | ignore))?)`
+/// where `field` is the name of the index and `Type` is the type of the index key. By default,
+/// `field` is also the name of a field in the value type of the base table, whose value is used as
+/// the index key; `closure` can be specified to compute the index key instead. You can specify
+/// multiple indexes for each table, separated with a semicolon. E.g.,
 ///
 /// ```rust
 /// # use ts_kv_store::store;
@@ -349,7 +357,7 @@ pub trait GeneratedStore:
 ///       &'static str => Node;
 ///       NODES_OWNER;
 ///       index(a: u32);
-///       index(b: String; assert_unique);
+///       index(b: String; assert);
 ///       index(c: String = |node: &Node| [format!("{}-{}", node.a, node.b)]);
 ///     )
 ///   }
@@ -361,12 +369,18 @@ pub trait GeneratedStore:
 /// `impl IntoIterator<Item = I>` (where `I` is the index key type), for example an `Option<I>` for
 /// zero or one index keys per value.
 ///
-/// Index fields must uniquely identify a row in the base table. If multiple rows in the base table
-/// have the same key in the index, then by default the index will be 'poisoned' and accessing the
-/// index or trying to commit a transaction where an index is poisoned will return an error (`NonUniqueIndexKey`).
-/// By adding `assert_unique` to an index declaration (after the index field, separated with a semicolon),
-/// attempting to store multiple rows with the same index key will cause a panic.
+/// The final keyword defines the behaviour if multiple rows in the base table have the same key in
+/// the index:
 ///
+/// - `poison` (the default behaviour): the index will be 'poisoned' and accessing the index or trying
+///   to commit a transaction where an index is poisoned will return an error (`NonUniqueIndexKey`).
+/// - `assert`: panics immediately.
+/// - `replace`: the old entry in the index is replaced with the new entry.
+/// - `ignore`: the old entry in the index is preserved and the new entry is ignored.
+///
+/// Note that if an index has `replace` or `ignore` behaviour, then it is possible to corrupt the
+/// index by removing entries or mutating the indexed field.
+/// 
 /// # Notifications
 ///
 /// The `notify(...)` argument is used to control notifications about the table or singleton. Accepted
@@ -724,10 +738,17 @@ macro_rules! store {
                     )*
                 }
 
-                fn on_remove(&mut self, _value: &$value_ty, _txn_id: $crate::transactions::TxnId) {
+                fn on_remove<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId)
+                where
+                    $key_ty: ::core::borrow::Borrow<Q>,
+                    Q: ?::core::marker::Sized + ::core::hash::Hash + ::core::cmp::Eq,
+                {
                     $({
-                        for value in index::$name::Storage::$field(_value) {
-                            self.$field.delete(&value, _txn_id);
+                        for index_key in index::$name::Storage::$field(_value) {
+                            // The entry may belong to another row (see `replace` and `ignore`).
+                            if self.$field.get::<$field_ty>(&index_key, _txn_id).is_some_and(|k| ::core::borrow::Borrow::<Q>::borrow(k) == _key) {
+                                self.$field.delete(&index_key, _txn_id);
+                            }
                         }
                     })*
                 }
@@ -1009,27 +1030,52 @@ macro_rules! on_insert_each {
                     $txn_id,
                 );
             } else {
-                $crate::on_non_unique_index_key!($name, $field, $self, $txn_id $(; $unique)?);
+                $crate::on_non_unique_index_key!($name, $field, $self, $key, index_key, $txn_id $(; $unique)?);
             }
         }
     };
 }
 
-/// Handle a non-unique index key: panic for an index declared with `assert_unique`, otherwise
-/// poison the index.
+/// Handle a non-unique index key according to the index's declared behaviour (see `store!`).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! on_non_unique_index_key {
-    ($name:ident, $field:ident, $self:ident, $txn_id:ident; assert_unique) => {
+    (
+        $name:ident,
+        $field:ident,
+        $self:ident,
+        $key:ident,
+        $index_key:ident,
+        $txn_id:ident $(; poison)?
+    ) => {
+        $self.$field.set_poisoned($txn_id)
+    };
+    (
+        $name:ident, $field:ident, $self:ident, $key:ident, $index_key:ident, $txn_id:ident; assert
+    ) => {
         ::core::panic!(
             "Index key is non-unique for index `{}` of table `{}`",
             ::core::stringify!($field),
             ::core::stringify!($name),
         )
     };
-    ($name:ident, $field:ident, $self:ident, $txn_id:ident) => {
-        $self.$field.set_poisoned($txn_id)
+    (
+        $name:ident,
+        $field:ident,
+        $self:ident,
+        $key:ident,
+        $index_key:ident,
+        $txn_id:ident; replace
+    ) => {
+        $self.$field.insert(
+            $index_key,
+            $crate::__alloc::borrow::ToOwned::to_owned($key),
+            $txn_id,
+        )
     };
+    (
+        $name:ident, $field:ident, $self:ident, $key:ident, $index_key:ident, $txn_id:ident; ignore
+    ) => {};
 }
 
 #[doc(hidden)]
@@ -1181,7 +1227,7 @@ mod test {
         store!(
             tables: {
                 Foo(&'static str => String; OWNER; index(len: usize = |v: &String| [v.len()])),
-                Bar(u32 => BarT; OWNER; index(a: String; assert_unique)),
+                Bar(u32 => BarT; OWNER; index(a: String; assert)),
             }
         );
 

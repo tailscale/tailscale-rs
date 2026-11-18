@@ -322,7 +322,7 @@ impl<D: PrimaryDesc> Table<D> {
     ///
     /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) (without inserting)
     /// if the insert would make an index non-unique. Panics instead if that index is declared with
-    /// `assert_unique`.
+    /// `assert`.
     pub fn try_insert(&self, owner: Owner, key: D::Key, value: D::Value) -> Result<()> {
         self.in_txn(owner, |txn| txn.insert(key, value))
     }
@@ -825,7 +825,7 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
     ///
     /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) (without inserting)
     /// if the insert would make an index non-unique. Panics instead if that index is declared with
-    /// `assert_unique`.
+    /// `assert`.
     pub fn try_insert(&self, key: D::Key, value: D::Value) -> Result<()> {
         self.inner.try_insert(self.owner, key, value)
     }

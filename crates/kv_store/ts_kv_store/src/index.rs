@@ -1273,8 +1273,10 @@ mod test_poison {
 
     store!(
         tables: {
-            Users(u32 => Row; OWNER; index(name: String); index(email: String)),
-            AssertingUsers(u32 => Row; OWNER; index(name: String; assert_unique)),
+            Users(u32 => Row; OWNER; index(name: String); index(email: String; poison)),
+            AssertingUsers(u32 => Row; OWNER; index(name: String; assert)),
+            ReplacingUsers(u32 => Row; OWNER; index(name: String; replace)),
+            IgnoringUsers(u32 => Row; OWNER; index(name: String; ignore)),
         }
     );
 
@@ -1449,7 +1451,7 @@ mod test_poison {
     }
 
     #[test]
-    fn assert_unique_distinct_keys_ok() {
+    fn assert_distinct_keys_ok() {
         let store = KvStore::new();
         store
             .AssertingUsers
@@ -1469,8 +1471,54 @@ mod test_poison {
     }
 
     #[test]
+    fn replace_keeps_newest_row() {
+        let store = KvStore::new();
+        store
+            .ReplacingUsers
+            .insert(OWNER, 1, row("Alice", "alice1@x.com"));
+        store
+            .ReplacingUsers
+            .insert(OWNER, 2, row("Alice", "alice2@x.com"));
+        let index = store.with_owner(OWNER).ReplacingUsers.indexes().name;
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (2, row("Alice", "alice2@x.com"))
+        );
+
+        // Deleting the replaced row does not remove the newer row's entry.
+        store.ReplacingUsers.delete(OWNER, &1);
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (2, row("Alice", "alice2@x.com"))
+        );
+    }
+
+    #[test]
+    fn ignore_keeps_oldest_row() {
+        let store = KvStore::new();
+        store
+            .IgnoringUsers
+            .insert(OWNER, 1, row("Alice", "alice1@x.com"));
+        store
+            .IgnoringUsers
+            .insert(OWNER, 2, row("Alice", "alice2@x.com"));
+        let index = store.with_owner(OWNER).IgnoringUsers.indexes().name;
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
+
+        // Deleting the ignored row does not remove the older row's entry.
+        store.IgnoringUsers.delete(OWNER, &2);
+        assert_eq!(
+            index.get("Alice").unwrap(),
+            (1, row("Alice", "alice1@x.com"))
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "non-unique")]
-    fn assert_unique_duplicate_base_insert_panics() {
+    fn assert_duplicate_base_insert_panics() {
         let store = KvStore::new();
         store
             .AssertingUsers
@@ -1631,7 +1679,7 @@ mod test_poison {
     }
 
     #[test]
-    fn txn_assert_unique_caught_panic_fails_commit() {
+    fn txn_assert_caught_panic_fails_commit() {
         let store = KvStore::new();
         store
             .AssertingUsers

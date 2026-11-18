@@ -17,11 +17,11 @@ ts_kv_store::store! {
         Peers(
             PeerId => Node;
             peer_tracker::KV_OWNER;
-            index(node_key: NodePublicKey; assert_unique);
-            index(stable_id: StableNodeId; assert_unique);
-            index(control_id: ts_control::NodeId = |node: &Node| Some(node.id); assert_unique);
-            index(hostname: String);
-            index(fqdn: String = |node: &Node| node.fqdn_opt(false); assert_unique);
+            index(node_key: NodePublicKey; assert);
+            index(stable_id: StableNodeId; assert);
+            index(control_id: ts_control::NodeId = |node: &Node| Some(node.id); replace);
+            index(hostname: String; replace);
+            index(fqdn: String = |node: &Node| node.fqdn_opt(false); assert);
             index(disco_key: DiscoPublicKey = |node: &Node| node.disco_key);
         ),
 

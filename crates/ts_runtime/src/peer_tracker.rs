@@ -295,8 +295,9 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                         "new peer state"
                     );
                 }
-                Err(ts_kv_store::Error::NonUniqueIndexKey(_)) => {
-                    // TODO(nrc) handle this error (replace rather than assert?)
+                Err(e @ ts_kv_store::Error::NonUniqueIndexKey(_)) => {
+                    tracing::error!(error = %e, "discarding peer update");
+                    return;
                 }
                 Err(ts_kv_store::Error::TransactionFailed) => {
                     panic!("Committing transaction failed");
