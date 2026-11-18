@@ -563,15 +563,27 @@ impl<D: PrimaryDesc> Table<D> {
     ///
     /// Returns the error from committing, if there is one.
     fn in_txn<T>(&self, owner: Owner, f: impl FnOnce(&mut TableTransaction<D>) -> T) -> Result<T> {
-        let txn = Rc::new(self.store.begin_generic_transaction(owner));
-        // SAFETY: this is the only view created from `txn`, so it cannot overlap any other view.
-        let mut view = unsafe { TableTransaction::new(Rc::clone(&txn)) };
-        let result = f(&mut view);
-        drop(view);
-        // `view` was the only other reference to `txn`.
-        Rc::into_inner(txn).unwrap().commit()?;
-        Ok(result)
+        table_in_txn(&self.store, owner, f)
     }
+}
+
+/// Apply `f` to a view of table `D` in a new transaction which contains only that operation, then
+/// commit it.
+///
+/// Returns the error from committing, if there is one.
+pub(crate) fn table_in_txn<D: PrimaryDesc, T>(
+    store: &KvStore<D::Storage>,
+    owner: Owner,
+    f: impl FnOnce(&mut TableTransaction<D>) -> T,
+) -> Result<T> {
+    let txn = Rc::new(store.begin_generic_transaction(owner));
+    // SAFETY: this is the only view created from `txn`, so it cannot overlap any other view.
+    let mut view = unsafe { TableTransaction::new(Rc::clone(&txn)) };
+    let result = f(&mut view);
+    drop(view);
+    // `view` was the only other reference to `txn`.
+    Rc::into_inner(txn).unwrap().commit()?;
+    Ok(result)
 }
 
 impl<D: schema::Indexable> Table<D> {

@@ -149,13 +149,18 @@ pub trait Indexable: PrimaryDesc {
     /// An object containing this table's indexes (with an owner).
     type IndexesWithOwner: From<(Arc<crate::KvStore<Self::Storage>>, Owner)>;
 
-    /// An object containing this table's indexes.
-    type TransactionIndexes<'guard, 'txn>: From<&'txn crate::TableTransaction<'guard, Self>>
+    /// An object giving read/write access to this table's indexes in a transaction.
+    type TransactionIndexes<'guard, 'txn>: From<&'txn mut crate::TableTransaction<'guard, Self>>
     where
         'guard: 'txn;
 
-    /// An object containing this table's indexes.
-    type RoTransactionIndexes<'guard, 'txn>: From<&'txn crate::RoTableTransaction<'guard, Self>>
+    /// An object giving read-only access to this table's indexes in a read/write transaction.
+    type RoTransactionIndexes<'guard, 'txn>: From<&'txn crate::TableTransaction<'guard, Self>>
+    where
+        'guard: 'txn;
+
+    /// An object giving read-only access to this table's indexes in a read-only transaction.
+    type RoRoTransactionIndexes<'guard, 'txn>: From<&'txn crate::RoTableTransaction<'guard, Self>>
     where
         'guard: 'txn;
 }
@@ -311,6 +316,7 @@ pub trait GeneratedStore:
 ///     Edges(u32 => Box<dyn Edge + Send + Sync>; EDGES_OWNER),
 ///   }
 /// );
+/// # fn main() {}
 /// ```
 ///
 /// # Singelton defaults
@@ -331,12 +337,14 @@ pub trait GeneratedStore:
 ///   }
 /// );
 ///
-/// let store = KvStore::new();
-/// assert_eq!(store.Count.get(OWNER), 0);
-/// store.Count.insert(OWNER, 42);
-/// assert_eq!(store.Count.get(OWNER), 42);
-/// store.Count.delete(OWNER);
-/// assert_eq!(store.Count.get(OWNER), 0);
+/// fn main() {
+///     let store = KvStore::new();
+///     assert_eq!(store.Count.get(OWNER), 0);
+///     store.Count.insert(OWNER, 42);
+///     assert_eq!(store.Count.get(OWNER), 42);
+///     store.Count.delete(OWNER);
+///     assert_eq!(store.Count.get(OWNER), 0);
+/// }
 /// ```
 ///
 /// # Indexes
@@ -350,7 +358,7 @@ pub trait GeneratedStore:
 /// ```rust
 /// # use ts_kv_store::store;
 /// # const NODES_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("foo");
-/// # pub struct Node { a: u32, b: String };
+/// # pub struct Node { a: u32, b: String }
 /// store!(
 ///   tables: {
 ///     Nodes(
@@ -362,6 +370,7 @@ pub trait GeneratedStore:
 ///     )
 ///   }
 /// );
+/// # fn main() {}
 /// ```
 ///
 /// This will create indexes `a`, `b`, and `c` on nodes. `c`'s index key is
@@ -489,7 +498,8 @@ macro_rules! store {
                 type Indexes = index::$name::Indexes;
                 type IndexesWithOwner = index::$name::IndexesWithOwner;
                 type TransactionIndexes<'guard, 'txn> = index::$name::TransactionIndexes<'guard, 'txn> where 'guard: 'txn;
-                type RoTransactionIndexes<'guard, 'txn> = index::$name::RoTransactionIndexes<'txn> where 'guard: 'txn;
+                type RoTransactionIndexes<'guard, 'txn> = index::$name::RoTransactionIndexes<'txn, $crate::transactions::TransactionInner<'guard, TableStorage>> where 'guard: 'txn;
+                type RoRoTransactionIndexes<'guard, 'txn> = index::$name::RoTransactionIndexes<'txn, $crate::storage::Storage<TableStorage>> where 'guard: 'txn;
             }
 
             $(
@@ -650,28 +660,27 @@ macro_rules! store {
                         )*
                     }
 
-                    /// Access to the table's indexes within a transaction, with a field for each index.
+                    /// Read/write access to the table's indexes within a transaction, with a
+                    /// method for each index. Each method mutably borrows this struct, so only one
+                    /// index can be used at a time.
                     ///
                     /// Returned by `TableTransaction::indexes`.
                     pub struct TransactionIndexes<'guard, 'txn> {
                         #[doc(hidden)]
-                        pub(in super::super) __txn: ::core::marker::PhantomData<(&'txn (), &'guard ())>,
-                        $(
-                            #[allow(dead_code)]
-                            pub $field: $crate::IndexTransaction<'guard, 'txn, $field>,
-                        )*
+                        pub(in super::super) __base:
+                            &'txn mut $crate::TableTransaction<'guard, super::super::$name>,
                     }
 
-                    /// Access to the table's indexes within a read-only transaction, with a field
+                    /// Read-only access to the table's indexes within a transaction, with a field
                     /// for each index.
                     ///
-                    /// Returned by `RoTableTransaction::indexes`.
-                    pub struct RoTransactionIndexes<'txn> {
+                    /// Returned by `TableTransaction::ro_indexes` and `RoTableTransaction::indexes`.
+                    pub struct RoTransactionIndexes<'txn, G> {
                         #[doc(hidden)]
-                        pub(in super::super) __txn: ::core::marker::PhantomData<&'txn ()>,
+                        pub(in super::super) __txn: ::core::marker::PhantomData<&'txn G>,
                         $(
                             #[allow(dead_code)]
-                            pub $field: $crate::RoIndexTransaction<'txn, $field>,
+                            pub $field: $crate::IndexGuard<'txn, $field, G>,
                         )*
                     }
                 }
@@ -695,20 +704,36 @@ macro_rules! store {
                 }
             }
 
-            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::TableTransaction<'guard, $name>> for index::$name::TransactionIndexes<'guard, 'txn> {
+            impl<'guard, 'txn> ::core::convert::From<&'txn mut $crate::TableTransaction<'guard, $name>> for index::$name::TransactionIndexes<'guard, 'txn> {
+                fn from(base: &'txn mut $crate::TableTransaction<'guard, $name>) -> Self {
+                    index::$name::TransactionIndexes { __base: base }
+                }
+            }
+
+            impl<'guard, 'txn> index::$name::TransactionIndexes<'guard, 'txn> {
+                $(
+                    /// Read/write access to the table via this index.
+                    #[allow(dead_code)]
+                    pub fn $field(&mut self) -> $crate::IndexTransaction<'guard, '_, index::$name::$field> {
+                        $crate::IndexTransaction::new(self.__base)
+                    }
+                )*
+            }
+
+            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::TableTransaction<'guard, $name>> for index::$name::RoTransactionIndexes<'txn, $crate::transactions::TransactionInner<'guard, TableStorage>> {
                 fn from(_base: &'txn $crate::TableTransaction<'guard, $name>) -> Self {
-                    index::$name::TransactionIndexes {
+                    index::$name::RoTransactionIndexes {
                         __txn: ::core::marker::PhantomData,
-                        $($field: $crate::IndexTransaction::new(_base),)*
+                        $($field: ::core::convert::From::from(_base),)*
                     }
                 }
             }
 
-            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::RoTableTransaction<'guard, $name>> for index::$name::RoTransactionIndexes<'txn> {
+            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::RoTableTransaction<'guard, $name>> for index::$name::RoTransactionIndexes<'txn, $crate::storage::Storage<TableStorage>> {
                 fn from(_base: &'txn $crate::RoTableTransaction<'guard, $name>) -> Self {
                     index::$name::RoTransactionIndexes {
                         __txn: ::core::marker::PhantomData,
-                        $($field: $crate::RoIndexTransaction::new(_base),)*
+                        $($field: ::core::convert::From::from(_base),)*
                     }
                 }
             }
@@ -1173,8 +1198,9 @@ mod test {
 
     const OWNER: Owner = Owner("owner");
 
-    #[test]
-    fn single() {
+    mod single {
+        use super::*;
+
         store!(
             kvs: {
                 Foo(Box<u64>; OWNER; notify(Clone)),
@@ -1184,46 +1210,53 @@ mod test {
             }
         );
 
-        let store = KvStore::new();
-        store.Foo.insert(OWNER, Box::new(42));
-        assert_eq!(store.Foo.get(OWNER).unwrap(), Box::new(42));
+        #[test]
+        fn single() {
+            let store = KvStore::new();
+            store.Foo.insert(OWNER, Box::new(42));
+            assert_eq!(store.Foo.get(OWNER).unwrap(), Box::new(42));
+        }
     }
 
-    #[test]
-    fn table() {
-        store!(tables: { Foo(&'static str => String; OWNER; notify(Clone)), Bar(u32 => Vec<String>; OWNER)});
-
-        let store = KvStore::new();
-
-        store.Foo.insert(OWNER, "hello", "world".to_owned());
-        assert_eq!(store.Foo.get(OWNER, "hello").unwrap(), "world");
-
-        store
-            .Bar
-            .insert(OWNER, 5, vec!["boo".to_owned(), "bang".to_owned()]);
-        assert_eq!(
-            store.Bar.get(OWNER, &5).unwrap(),
-            vec!["boo".to_owned(), "bang".to_owned()]
-        );
-    }
-
-    #[test]
-    fn send_and_sync() {
-        fn require_send<T: Send>(_t: T) {}
-        fn require_sync<T: Sync>(_t: T) {}
+    mod table {
+        use super::*;
 
         store!(tables: { Foo(&'static str => String; OWNER; notify(Clone)), Bar(u32 => Vec<String>; OWNER)});
 
-        require_send(KvStore::new());
-        require_sync(KvStore::new());
+        #[test]
+        fn table() {
+            let store = KvStore::new();
+
+            store.Foo.insert(OWNER, "hello", "world".to_owned());
+            assert_eq!(store.Foo.get(OWNER, "hello").unwrap(), "world");
+
+            store
+                .Bar
+                .insert(OWNER, 5, vec!["boo".to_owned(), "bang".to_owned()]);
+            assert_eq!(
+                store.Bar.get(OWNER, &5).unwrap(),
+                vec!["boo".to_owned(), "bang".to_owned()]
+            );
+        }
+
+        #[test]
+        fn send_and_sync() {
+            fn require_send<T: Send>(_t: T) {}
+            fn require_sync<T: Sync>(_t: T) {}
+
+            require_send(KvStore::new());
+            require_sync(KvStore::new());
+        }
     }
 
-    #[test]
-    fn table_with_indexes() {
+    mod table_with_indexes {
+        use super::*;
+
         #[derive(Clone, Debug)]
         pub struct BarT {
             a: String,
         }
+
         store!(
             tables: {
                 Foo(&'static str => String; OWNER; index(len: usize = |v: &String| [v.len()])),
@@ -1231,19 +1264,22 @@ mod test {
             }
         );
 
-        let store = KvStore::new();
-        store.Bar.insert(
-            OWNER,
-            5,
-            BarT {
-                a: "hello".to_owned(),
-            },
-        );
-        let value = store.Bar.indexes().a.get(OWNER, "hello").unwrap();
-        assert_eq!(value.1.a, "hello");
+        #[test]
+        fn table_with_indexes() {
+            let store = KvStore::new();
+            store.Bar.insert(
+                OWNER,
+                5,
+                BarT {
+                    a: "hello".to_owned(),
+                },
+            );
+            let value = store.Bar.indexes().a.get(OWNER, "hello").unwrap();
+            assert_eq!(value.1.a, "hello");
 
-        store.Foo.insert(OWNER, "foo", "hello".to_owned());
-        let value = store.Foo.indexes().len.get(OWNER, &5).unwrap();
-        assert_eq!(value, ("foo", "hello".to_owned()));
+            store.Foo.insert(OWNER, "foo", "hello".to_owned());
+            let value = store.Foo.indexes().len.get(OWNER, &5).unwrap();
+            assert_eq!(value, ("foo", "hello".to_owned()));
+        }
     }
 }

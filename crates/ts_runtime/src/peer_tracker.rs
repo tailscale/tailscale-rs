@@ -246,16 +246,11 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                     tracing::trace!("delta peer update");
 
                     for peer in remove {
-                        let Some(id) = txn.Peers.indexes().control_id.with(peer, |id, _node| {
-                            deletions.insert(*id);
-                            *id
-                        }) else {
+                        let Some(id) = txn.Peers.indexes().control_id().delete(peer) else {
                             tracing::error!(control_node_id = peer, "removed peer was unknown");
                             continue;
                         };
-
-                        // Note(nrc): if we could mutate via an index, then this would be easier
-                        txn.Peers.remove(&id);
+                        deletions.insert(id);
                     }
 
                     for peer in upsert {
@@ -265,21 +260,18 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
                     }
 
                     for update in patch {
-                        let Some(id) =
-                            txn.Peers
-                                .indexes()
-                                .control_id
-                                .with(&update.id, |id, _node| {
-                                    upserts.insert(*id);
-                                    *id
-                                })
-                        else {
+                        if txn
+                            .Peers
+                            .indexes()
+                            .control_id()
+                            .with_mut(&update.id, |id, node| {
+                                node.apply_update(update);
+                                upserts.insert(*id);
+                            })
+                            .is_none()
+                        {
                             tracing::warn!(?update, "no peer for update");
-                            continue;
                         };
-
-                        // Note(nrc): if we could mutate via an index, then this would be easier
-                        txn.Peers.with_mut(&id, |node| node.apply_update(update));
                     }
                 }
             }
@@ -318,28 +310,23 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
 }
 
 // Note(nrc): should this be internal to the store?
-fn next_peer_id() -> PeerId {
+fn upsert_peer(txn: &mut kv::Transaction, peer: &Node) -> PeerId {
     static NEXT_PEER_ID: AtomicU32 = AtomicU32::new(0);
 
-    PeerId(NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed))
-}
-
-fn upsert_peer(txn: &mut kv::Transaction, peer: &Node) -> PeerId {
-    let Some(id) = txn
+    if let Some(id) = txn
         .Peers
         .indexes()
-        .stable_id
-        .with(&peer.stable_id, |id, _| *id)
-    else {
-        let id = next_peer_id();
-        txn.Peers.insert(id, peer.clone());
+        .stable_id()
+        .with_mut(&peer.stable_id, |id, node| {
+            *node = peer.clone();
+            *id
+        })
+    {
         return id;
-    };
+    }
 
-    // Note(nrc): if we could mutate via an index, then this would be easier
-    txn.Peers
-        .with_mut(&id, |node| *node = peer.clone())
-        .unwrap();
+    let id = PeerId(NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed));
+    txn.Peers.insert(id, peer.clone());
     id
 }
 

@@ -589,18 +589,33 @@ impl<'a, D: PrimaryDesc> IntoIterator for &'a TableTransaction<'_, D> {
 impl<'guard, D: schema::Indexable> TableTransaction<'guard, D> {
     /// Access the table via its indexes.
     ///
-    /// Returns a struct with a field for each index declared for the table; each
-    /// field is an [`IndexTransaction`](crate::IndexTransaction) which gives access to the table
-    /// using that index's key, as part of this transaction.
+    /// Returns a struct with a method for each index declared for the table; each method returns
+    /// an [`IndexTransaction`](crate::IndexTransaction) which gives read/write access to the
+    /// table using that index's key, as part of this transaction.
     ///
     /// # Example:
     ///
     /// ```rust,ignore
-    /// let value = txn.Foo.indexes().bar.get(key).unwrap();
+    /// txn.Foo.indexes().bar().with_mut(key, |v| v.baz = 42);
     /// ```
     ///
     /// Where `Foo` is a table and `bar` is an index over `Foo` using the `bar` field as foreign key.
-    pub fn indexes(&self) -> D::TransactionIndexes<'guard, '_> {
+    pub fn indexes(&mut self) -> D::TransactionIndexes<'guard, '_> {
+        self.into()
+    }
+
+    /// Access the table via its indexes, with read-only access.
+    ///
+    /// Returns a struct with a field for each index declared for the table; each
+    /// field is a [`RoIndexTransaction`](crate::RoIndexTransaction) which gives read-only access
+    /// to the table using that index's key, as part of this transaction.
+    ///
+    /// # Example:
+    ///
+    /// ```rust,ignore
+    /// let value = txn.Foo.ro_indexes().bar.get(key).unwrap();
+    /// ```
+    pub fn ro_indexes(&self) -> D::RoTransactionIndexes<'guard, '_> {
         self.into()
     }
 }
@@ -721,7 +736,7 @@ impl<'guard, D: schema::Indexable> RoTableTransaction<'guard, D> {
     /// ```
     ///
     /// Where `Foo` is a table and `bar` is an index over `Foo` using the `bar` field as foreign key.
-    pub fn indexes(&self) -> D::RoTransactionIndexes<'guard, '_> {
+    pub fn indexes(&self) -> D::RoRoTransactionIndexes<'guard, '_> {
         self.into()
     }
 }

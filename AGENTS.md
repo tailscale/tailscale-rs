@@ -44,12 +44,15 @@
   subsystem, e.g. `ts_util: add runtime-checked Fn{,Mut} converters` or `runtime/stun: use
   correct socket`. Keep the body short and explain why.
 - Record breaking or significant user-facing changes under `Unreleased` in CHANGELOG.md, in the
-  same change.
+  same change. Changes to internal crates (such as ts_kv_store) do not need entries in the change
+  log.
 
 ## Code style
 
 - In tests, match on existing or macro-generated types directly (with small helper functions if
   needed) rather than adding new types just for assertions.
+- Where possible, keep `#[doc(hidden)]` internals (e.g. `ts_kv_store`'s `TransactionInner`) out of
+  the type parameters users must write for public types; add a type alias instead.
 - For time-dependent async tests, use Tokio paused time (`#[tokio::test(start_paused = true)]`
   with the `test-util` dev-dependency feature), and shrink timeout/retry constants under
   `#[cfg(test)]` so those paths run quickly and deterministically.

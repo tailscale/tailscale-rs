@@ -235,6 +235,26 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
             .and_then(|base_key| Some(f(base_key, base.get(base_key, txn_id)?))))
     }
 
+    /// Like `with`, but only looks up the key from the index (not the value in the base table).
+    fn with_base_key<Q, T>(
+        self,
+        key: &Q,
+        f: impl FnOnce(&BaseKey<Self::IndexDesc>) -> T,
+    ) -> Result<Option<T>>
+    where
+        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        let guard = self.read_lock();
+        // SAFETY (for all uses of `guard`): `guard` is from `read_lock` (see the trait's
+        // contract).
+        unsafe { check_consistent::<Self::IndexDesc>(&*guard) }?;
+        let txn_id = guard.txn_id();
+        Ok(unsafe { guard.table::<Self::IndexDesc>() }
+            .get(key, txn_id)
+            .map(f))
+    }
+
     #[allow(clippy::type_complexity)]
     fn with_iter<T>(
         self,

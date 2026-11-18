@@ -69,8 +69,8 @@
 //!
 //! An index is a table in the store that is derived from its base table and provides direct access
 //! to elements in the base table. Indexes are maintained by the store and are atomically updated
-//! when the base table is modified. Indexes only give immutable access to data (this is not a
-//! requirement for the properties of the store and could be extended in the future).
+//! when the base table is modified. Indexes give mutable access to data via the raw API and in
+//! read/write transactions. In a transaction, both mutable and read-only indexes are available.
 //!
 //! For example, consider a table `Base` which maps `u64` keys to `Foo` values where `Foo` has a
 //! field `bar: Url` (and `bar` is a unique identifier for a `Foo` in `Base`). The schema would look
@@ -202,7 +202,9 @@ pub mod storage;
 pub mod transactions;
 
 #[doc(inline)]
-pub use index::{Index, IndexGuard, IndexTransaction, IndexWithOwner, RoIndexTransaction};
+pub use index::{
+    Index, IndexGuard, IndexTransaction, IndexWithOwner, RoRoIndexTransaction, RoIndexTransaction,
+};
 pub use iter::{IndexIter, TableIter};
 #[doc(inline)]
 pub use pub_sub::{
