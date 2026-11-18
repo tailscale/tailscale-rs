@@ -7,7 +7,8 @@ use core::{
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
-    Error, KvStore, Owner, Result, iter,
+    Error, KvStore, Owner, Result,
+    iter::{self, TableIter},
     operations::{
         Ops, OpsMut, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut,
     },
@@ -537,7 +538,7 @@ impl<'guard, D: PrimaryDesc> TableTransaction<'guard, D> {
     }
 
     /// Iterate all key/value pairs in the table.
-    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &D::Value)> {
+    pub fn iter(&self) -> TableIter<'_, D> {
         // SAFETY: `self` is borrowed for as long as the iterator is live.
         unsafe { iter::table_iter::<D>(self.read_lock()) }
     }
@@ -573,6 +574,15 @@ impl<'guard, D: PrimaryDesc> TableTransaction<'guard, D> {
     {
         let owner = self.owner();
         TabularOpsMut::with_values_mut(self, owner, f)
+    }
+}
+
+impl<'a, D: PrimaryDesc> IntoIterator for &'a TableTransaction<'_, D> {
+    type Item = (&'a D::Key, &'a D::Value);
+    type IntoIter = TableIter<'a, D>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -671,7 +681,7 @@ impl<'guard, D: schema::TableDesc> RoTableTransaction<'guard, D> {
     }
 
     /// Iterate all the key/value pairs in the table.
-    pub fn iter(&self) -> impl Iterator<Item = (&D::Key, &D::Value)> {
+    pub fn iter(&self) -> TableIter<'_, D> {
         // SAFETY: `Ops::read_lock` returns a read lock on the whole store, so there are no mutable
         // references into it.
         unsafe { iter::table_iter::<D>(self.read_lock()) }
@@ -685,6 +695,15 @@ impl<'guard, D: schema::TableDesc> RoTableTransaction<'guard, D> {
     /// Iterate all the values in the table.
     pub fn values(&self) -> impl Iterator<Item = &D::Value> {
         self.iter().map(|(_, v)| v)
+    }
+}
+
+impl<'a, D: schema::TableDesc> IntoIterator for &'a RoTableTransaction<'_, D> {
+    type Item = (&'a D::Key, &'a D::Value);
+    type IntoIter = TableIter<'a, D>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -2232,7 +2251,6 @@ mod test {
         txn.Count.insert(1);
         assert_eq!(iter.next(), Some((&"a", &"x".to_owned())));
         assert_eq!(iter.next(), None);
-        drop(iter);
         txn.commit().unwrap();
 
         assert_eq!(store.Counters.get(OWNER, &1), Some(1));

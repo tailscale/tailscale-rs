@@ -40,8 +40,7 @@ impl RouteUpdater {
 
         let mut routes = PeerRoutesInner::default();
 
-        // Note(nrc): impl IntoIterator
-        for (id, peer) in peers.iter() {
+        for (id, peer) in peers {
             let span = tracing::trace_span!(
                 "peer_route_update",
                 peer_key = %peer.node_key,

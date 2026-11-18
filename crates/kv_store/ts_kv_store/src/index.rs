@@ -3,7 +3,8 @@ use core::{borrow::Borrow, hash::Hash, marker::PhantomData};
 use std::sync::RwLockReadGuard;
 
 use crate::{
-    KvStore, Owner, Result, RoTableTransaction, TableTransaction, iter,
+    KvStore, Owner, Result, RoTableTransaction, TableTransaction,
+    iter::{self, IndexIter},
     operations::{BaseKey, BaseValue, IndexKey, IndexValue, IndexedOps, Ops, StorageGuard},
     schema::{Desc, IndexDesc},
     storage::Storage,
@@ -401,7 +402,7 @@ impl<D: IndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
     }
 
     /// Iterate all the keys in the index and values in the base table.
-    pub fn iter(&self) -> impl Iterator<Item = (&IndexKey<D>, &BaseKey<D>, &BaseValue<D>)>
+    pub fn iter(&self) -> IndexIter<'_, D>
     where
         IndexValue<D>: Eq + Hash,
     {
@@ -415,6 +416,18 @@ impl<D: IndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
         IndexValue<D>: Eq + Hash,
     {
         self.iter().map(|(k, ..)| k)
+    }
+}
+
+impl<'a, D: IndexDesc, G: StorageGuard<D::Storage>> IntoIterator for &'a IndexGuard<'_, D, G>
+where
+    IndexValue<D>: Eq + Hash,
+{
+    type Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>);
+    type IntoIter = IndexIter<'a, D>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     Error, Notifier, Result,
+    iter::TableIter,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
     schema::{self, IndexStorage, PrimaryDesc, TableDesc},
     transactions::TxnId,
@@ -862,16 +863,18 @@ impl<D: schema::TableDesc> Table<D> {
     }
 
     /// Iterate the key-value pairs in the table, as visible to the transaction with id `txn_id`.
-    pub(crate) fn iter(&self, txn_id: TxnId) -> impl Iterator<Item = (&D::Key, &D::Value)> {
+    pub(crate) fn iter(&self, txn_id: TxnId) -> TableIter<'_, D> {
         let (data, removed) = match &self.delete_mask {
             DeleteMask::None => (&self.data, None),
             DeleteMask::Some(_, removed) => (&self.data, Some(removed)),
             DeleteMask::All(_, pending) => (pending, None),
         };
 
-        data.iter()
-            .filter(move |(k, _)| removed.is_none_or(|removed| !removed.contains(*k)))
-            .filter_map(move |(k, v)| Some((k, v.get(txn_id)?)))
+        TableIter {
+            data: data.iter(),
+            removed,
+            txn_id,
+        }
     }
 
     /// Get a mutable iterator over the table.

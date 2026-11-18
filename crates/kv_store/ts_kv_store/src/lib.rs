@@ -203,6 +203,7 @@ pub mod transactions;
 
 #[doc(inline)]
 pub use index::{Index, IndexGuard, IndexTransaction, IndexWithOwner, RoIndexTransaction};
+pub use iter::{IndexIter, TableIter};
 #[doc(inline)]
 pub use pub_sub::{
     Event, NoOpNotifier, Notifications, Notifier, SingletonEvent, Subscriber, Subscription,

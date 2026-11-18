@@ -380,7 +380,7 @@ pub trait GeneratedStore:
 ///
 /// Note that if an index has `replace` or `ignore` behaviour, then it is possible to corrupt the
 /// index by removing entries or mutating the indexed field.
-/// 
+///
 /// # Notifications
 ///
 /// The `notify(...)` argument is used to control notifications about the table or singleton. Accepted
