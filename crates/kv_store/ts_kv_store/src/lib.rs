@@ -202,9 +202,7 @@ pub mod storage;
 pub mod transactions;
 
 #[doc(inline)]
-pub use index::{
-    Index, IndexGuard, IndexTransaction, IndexWithOwner, RoRoIndexTransaction, RoIndexTransaction,
-};
+pub use index::{Index, IndexGuard, IndexTransaction, RoIndexTransaction, RoRoIndexTransaction};
 pub use iter::{IndexIter, TableIter};
 #[doc(inline)]
 pub use pub_sub::{

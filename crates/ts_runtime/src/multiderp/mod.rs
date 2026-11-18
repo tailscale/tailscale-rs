@@ -208,13 +208,13 @@ impl Message<SendDisco> for Multiderp {
             return;
         };
 
-        let Some(derp_region) =
-            self.env
-                .kv_store()
-                .Peers
-                .indexes()
-                .node_key
-                .with(KV_OWNER, &nodekey, |_, peer| peer.derp_region)
+        let Some(derp_region) = self
+            .env
+            .kv_store()
+            .Peers
+            .indexes(KV_OWNER)
+            .node_key
+            .with(&nodekey, |_, peer| peer.derp_region)
         else {
             tracing::trace!(%nodekey, "no known peer");
             return;

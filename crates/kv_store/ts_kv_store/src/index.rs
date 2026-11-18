@@ -16,239 +16,19 @@ use crate::{
 /// `D` describes the index table, its base table is `D::BaseTable`.
 pub struct Index<D: IndexDesc> {
     store: Arc<KvStore<D::Storage>>,
+    owner: Owner,
 }
 
 impl<D: IndexDesc> Index<D> {
     /// Create an index accessor for `store`.
     #[doc(hidden)]
-    pub fn new(store: Arc<KvStore<D::Storage>>) -> Self {
-        Index { store }
+    pub fn new(store: Arc<KvStore<D::Storage>>, owner: Owner) -> Self {
+        Index { store, owner }
     }
 
     /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
     pub fn check_consistent(&self) -> Result<()> {
         <&Self as IndexedOps<_>>::check_consistent(self)
-    }
-
-    /// Get a row of the table from the store by cloning the value.
-    ///
-    /// Returns `Ok(None)` if there is no value for the specified key. Returns an error if the index
-    /// is inconsistent (see [`Self::check_consistent`]).
-    pub fn try_get<Q>(&self, owner: Owner, key: &Q) -> Result<Option<(BaseKey<D>, BaseValue<D>)>>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::get(self, key, owner)
-    }
-
-    /// Get a row of the table from the store by cloning the value.
-    ///
-    /// Returns `None` if there is no value for the specified key.
-    ///
-    /// Panics if the index is inconsistent (see [`Self::check_consistent`]).
-    pub fn get<Q>(&self, owner: Owner, key: &Q) -> Option<(BaseKey<D>, BaseValue<D>)>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.try_get(owner, key).unwrap()
-    }
-
-    /// Get immutable access to a row of the table in the store by reference.
-    ///
-    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
-    /// Returns an error (and does not call `f`) if the index is inconsistent (see
-    /// [`Self::check_consistent`]).
-    pub fn try_with<Q, T>(
-        &self,
-        owner: Owner,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T,
-    ) -> Result<Option<T>>
-    where
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, owner)
-    }
-
-    /// Get immutable access to a row of the table in the store by reference.
-    ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    ///
-    /// Panics if the index is inconsistent (see [`Self::check_consistent`]).
-    pub fn with<Q, T>(
-        &self,
-        owner: Owner,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T,
-    ) -> Option<T>
-    where
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.try_with(owner, key, f).unwrap()
-    }
-
-    /// Iterate over all key/value pairs in the table.
-    ///
-    /// Access is scoped by a closure (rather than returning an iterator) because the store is
-    /// locked while iterating, and so references into the store must not outlive the iterator.
-    /// Use a (read-only) transaction to get an iterator.
-    pub fn with_iter<F, T>(&self, _owner: Owner, f: F) -> T
-    where
-        IndexValue<D>: Eq + Hash,
-        F: for<'a> FnOnce(
-            &mut dyn Iterator<Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>)>,
-        ) -> T,
-    {
-        <&Self as IndexedOps<_>>::with_iter(self, f)
-    }
-
-    /// Iterate over all keys in the table.
-    pub fn with_keys<F, T>(&self, _owner: Owner, f: F) -> T
-    where
-        IndexValue<D>: Eq + Hash,
-        F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<D>>) -> T,
-    {
-        <&Self as IndexedOps<_>>::with_keys(self, f)
-    }
-
-    /// Iterate over all values in the table.
-    pub fn with_values<F, T>(&self, _owner: Owner, f: F) -> T
-    where
-        IndexValue<D>: Eq + Hash,
-        F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a BaseKey<D>, &'a BaseValue<D>)>) -> T,
-    {
-        <&Self as IndexedOps<_>>::with_values(self, f)
-    }
-
-    /// Get mutable access to a row of the table. `f` is passed the row's key in the base table and
-    /// its value.
-    ///
-    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
-    /// Returns [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey) if `f` makes a unique
-    /// index key non-unique, in which case the mutation is not applied.
-    pub fn try_with_mut<Q, T>(
-        &self,
-        owner: Owner,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &mut BaseValue<D>) -> T,
-    ) -> Result<Option<T>>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone + PartialEq,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.in_txn(owner, |index| index.try_with_mut(key, f))?
-    }
-
-    /// Get mutable access to a row of the table. `f` is passed the row's key in the base table and
-    /// its value.
-    ///
-    /// Returns `None` (and does not call `f`) if there is no value for the specified key.
-    ///
-    /// Panics if `f` makes a unique index key non-unique.
-    pub fn with_mut<Q, T>(
-        &self,
-        owner: Owner,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &mut BaseValue<D>) -> T,
-    ) -> Option<T>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone + PartialEq,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.try_with_mut(owner, key, f).unwrap()
-    }
-
-    /// Delete a row from the table, returning its key in the base table.
-    ///
-    /// Returns `None` if there is no value for the specified key.
-    pub fn delete<Q>(&self, owner: Owner, key: &Q) -> Option<BaseKey<D>>
-    where
-        BaseKey<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.in_txn(owner, |index| index.delete(key)).unwrap()
-    }
-
-    /// Apply `f` to a view of a new transaction which contains only that operation, then commit it.
-    ///
-    /// Returns the error from committing, if there is one.
-    fn in_txn<T>(
-        &self,
-        owner: Owner,
-        f: impl FnOnce(&mut IndexTransaction<'_, '_, D>) -> T,
-    ) -> Result<T> {
-        crate::raw::table_in_txn(&self.store, owner, |txn| f(&mut IndexTransaction::new(txn)))
-    }
-}
-
-impl<'store, D: IndexDesc> Ops<D::Storage> for &'store Index<D> {
-    type ReadLock = RwLockReadGuard<'store, Storage<D::Storage>>;
-
-    fn read_lock(self) -> Self::ReadLock {
-        self.store.get_read_lock()
-    }
-}
-
-// SAFETY: `Ops::read_lock` returns a read lock on the whole store, so there are no mutable references into it.
-unsafe impl<D: IndexDesc> IndexedOps<D::Storage> for &Index<D> {
-    type IndexDesc = D;
-}
-
-/// Non-transactional accessor for a table of key/values pairs via an index, with a fixed owner.
-///
-/// `D` describes the index table, its base table is `D::BaseTable`.
-pub struct IndexWithOwner<D: IndexDesc> {
-    inner: Index<D>,
-    owner: Owner,
-}
-
-impl<D: IndexDesc> IndexWithOwner<D> {
-    #[doc(hidden)]
-    pub fn new(store: Arc<KvStore<D::Storage>>, owner: Owner) -> Self {
-        IndexWithOwner {
-            inner: Index::new(store),
-            owner,
-        }
-    }
-
-    /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
-    pub fn check_consistent(&self) -> Result<()> {
-        self.inner.check_consistent()
-    }
-
-    /// Get a row of the table from the store by cloning the value.
-    ///
-    /// Returns `Ok(None)` if there is no value for the specified key. Returns an error if the index
-    /// is inconsistent (see [`Self::check_consistent`]).
-    pub fn try_get<Q>(&self, key: &Q) -> Result<Option<(BaseKey<D>, BaseValue<D>)>>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.inner.try_get(self.owner, key)
     }
 
     /// Get a row of the table from the store by cloning the value.
@@ -264,25 +44,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_get(key).unwrap()
-    }
-
-    /// Get immutable access to a row of the table in the store by reference.
-    ///
-    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
-    /// Returns an error (and does not call `f`) if the index is inconsistent (see
-    /// [`Self::check_consistent`]).
-    pub fn try_with<Q, T>(
-        &self,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T,
-    ) -> Result<Option<T>>
-    where
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        self.inner.try_with(self.owner, key, f)
+        <&Self as IndexedOps<_>>::get(self, key, self.owner).unwrap()
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -296,7 +58,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_with(key, f).unwrap()
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner).unwrap()
     }
 
     /// Iterate over all key/value pairs in the table.
@@ -311,7 +73,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
             &mut dyn Iterator<Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>)>,
         ) -> T,
     {
-        self.inner.with_iter(self.owner, f)
+        <&Self as IndexedOps<_>>::with_iter(self, f)
     }
 
     /// Iterate over all keys in the table.
@@ -320,7 +82,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         IndexValue<D>: Eq + Hash,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<D>>) -> T,
     {
-        self.inner.with_keys(self.owner, f)
+        <&Self as IndexedOps<_>>::with_keys(self, f)
     }
 
     /// Iterate over all values in the table.
@@ -329,7 +91,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         IndexValue<D>: Eq + Hash,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a BaseKey<D>, &'a BaseValue<D>)>) -> T,
     {
-        self.inner.with_values(self.owner, f)
+        <&Self as IndexedOps<_>>::with_values(self, f)
     }
 
     /// Get mutable access to a row of the table. `f` is passed the row's key in the base table and
@@ -350,7 +112,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.inner.try_with_mut(self.owner, key, f)
+        self.in_txn(|index| index.with_mut(key, f))
     }
 
     /// Get mutable access to a row of the table. `f` is passed the row's key in the base table and
@@ -371,7 +133,7 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.inner.with_mut(self.owner, key, f)
+        self.try_with_mut(key, f).unwrap()
     }
 
     /// Delete a row from the table, returning its key in the base table.
@@ -384,8 +146,30 @@ impl<D: IndexDesc> IndexWithOwner<D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.inner.delete(self.owner, key)
+        self.in_txn(|index| index.delete(key)).unwrap()
     }
+
+    /// Apply `f` to a view of a new transaction which contains only that operation, then commit it.
+    ///
+    /// Returns the error from committing, if there is one.
+    fn in_txn<T>(&self, f: impl FnOnce(&mut IndexTransaction<'_, '_, D>) -> T) -> Result<T> {
+        crate::raw::table_in_txn(&self.store, self.owner, |txn| {
+            f(&mut IndexTransaction::new(txn))
+        })
+    }
+}
+
+impl<'store, D: IndexDesc> Ops<D::Storage> for &'store Index<D> {
+    type ReadLock = RwLockReadGuard<'store, Storage<D::Storage>>;
+
+    fn read_lock(self) -> Self::ReadLock {
+        self.store.get_read_lock()
+    }
+}
+
+// SAFETY: `Ops::read_lock` returns a read lock on the whole store, so there are no mutable references into it.
+unsafe impl<D: IndexDesc> IndexedOps<D::Storage> for &Index<D> {
+    type IndexDesc = D;
 }
 
 /// Read-only, transactional accessor for a table of key/values pairs via an index.
@@ -463,21 +247,6 @@ impl<D: IndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
 
     /// Get a row of the table from the store by cloning the value.
     ///
-    /// Returns `Ok(None)` if there is no value for the specified key. Returns an error if the index
-    /// is inconsistent (see [`Self::check_consistent`]).
-    pub fn try_get<Q>(&self, key: &Q) -> Result<Option<(BaseKey<D>, BaseValue<D>)>>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.owner)
-    }
-
-    /// Get a row of the table from the store by cloning the value.
-    ///
     /// Returns `None` if there is no value for the specified key.
     ///
     /// Panics if the index is inconsistent (see [`Self::check_consistent`]).
@@ -489,25 +258,7 @@ impl<D: IndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_get(key).unwrap()
-    }
-
-    /// Get immutable access to a row of the table in the store by reference.
-    ///
-    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
-    /// Returns an error (and does not call `f`) if the index is inconsistent (see
-    /// [`Self::check_consistent`]).
-    pub fn try_with<Q, T>(
-        &self,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T,
-    ) -> Result<Option<T>>
-    where
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner)
+        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.owner).unwrap()
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -521,7 +272,7 @@ impl<D: IndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_with(key, f).unwrap()
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner).unwrap()
     }
 
     /// Iterate all the keys in the index and values in the base table.
@@ -592,21 +343,6 @@ impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
 
     /// Get a row of the table from the store by cloning the value.
     ///
-    /// Returns `Ok(None)` if there is no value for the specified key. Returns an error if the index
-    /// is inconsistent (see [`Self::check_consistent`]).
-    pub fn try_get<Q>(&self, key: &Q) -> Result<Option<(BaseKey<D>, BaseValue<D>)>>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.base.owner())
-    }
-
-    /// Get a row of the table from the store by cloning the value.
-    ///
     /// Returns `None` if there is no value for the specified key.
     ///
     /// Panics if the index is inconsistent (see [`Self::check_consistent`]).
@@ -618,25 +354,7 @@ impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_get(key).unwrap()
-    }
-
-    /// Get immutable access to a row of the table in the store by reference.
-    ///
-    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
-    /// Returns an error (and does not call `f`) if the index is inconsistent (see
-    /// [`Self::check_consistent`]).
-    pub fn try_with<Q, T>(
-        &self,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T,
-    ) -> Result<Option<T>>
-    where
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.base.owner())
+        <&Self as IndexedOps<_>>::get::<Q>(self, key, self.base.owner()).unwrap()
     }
 
     /// Get immutable access to a row of the table in the store by reference.
@@ -650,7 +368,7 @@ impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_with(key, f).unwrap()
+        <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.base.owner()).unwrap()
     }
 
     /// Iterate all the keys in the index and values in the base table.
@@ -674,37 +392,12 @@ impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
     /// Get mutable access to a row of the table. `f` is passed the row's key in the base table and
     /// its value.
     ///
-    /// Returns `Ok(None)` (and does not call `f`) if there is no value for the specified key.
-    /// Returns an error (and does not call `f`) if the index is inconsistent.
-    ///
-    /// If `f` makes a unique index key non-unique, the mutation is applied and the index is
-    /// poisoned: later accesses via the index, and committing the transaction, will return
-    /// [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey).
-    pub fn try_with_mut<Q, T>(
-        &mut self,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<D>, &mut BaseValue<D>) -> T,
-    ) -> Result<Option<T>>
-    where
-        BaseKey<D>: Clone,
-        BaseValue<D>: Clone + PartialEq,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        let Some(base_key) = self.base_key(key)? else {
-            return Ok(None);
-        };
-        Ok(self.base.with_mut(&base_key, |v| f(&base_key, v)))
-    }
-
-    /// Get mutable access to a row of the table. `f` is passed the row's key in the base table and
-    /// its value.
-    ///
     /// Returns `None` (and does not call `f`) if there is no value for the specified key.
     ///
-    /// Panics if the index is inconsistent. See [`Self::try_with_mut`] for the behaviour if `f`
-    /// makes a unique index key non-unique.
+    /// Panics if the index is inconsistent. If `f` makes a unique index key non-unique, the
+    /// mutation is applied and the index is poisoned: later accesses via the index will panic, and
+    /// committing the transaction will return
+    /// [`Error::NonUniqueIndexKey`](crate::Error::NonUniqueIndexKey).
     pub fn with_mut<Q, T>(
         &mut self,
         key: &Q,
@@ -717,25 +410,10 @@ impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_with_mut(key, f).unwrap()
-    }
-
-    /// Delete a row from the table, returning its key in the base table.
-    ///
-    /// Returns `Ok(None)` if there is no value for the specified key. Returns an error (and does
-    /// not delete) if the index is inconsistent.
-    pub fn try_delete<Q>(&mut self, key: &Q) -> Result<Option<BaseKey<D>>>
-    where
-        BaseKey<D>: Clone,
-        IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-        IndexValue<D>: Eq + Hash,
-    {
-        let base_key = self.base_key(key)?;
-        if let Some(base_key) = &base_key {
-            self.base.delete(base_key);
-        }
-        Ok(base_key)
+        let Some(base_key) = self.base_key(key).unwrap() else {
+            return None;
+        };
+        self.base.with_mut(&base_key, |v| f(&base_key, v))
     }
 
     /// Delete a row from the table, returning its key in the base table.
@@ -750,7 +428,11 @@ impl<'guard, 'txn, D: IndexDesc> IndexTransaction<'guard, 'txn, D> {
         Q: ?Sized + Hash + Eq,
         IndexValue<D>: Eq + Hash,
     {
-        self.try_delete(key).unwrap()
+        let base_key = self.base_key(key).unwrap();
+        if let Some(base_key) = &base_key {
+            self.base.delete(base_key);
+        }
+        base_key
     }
 }
 
@@ -803,7 +485,7 @@ mod test {
     #[test]
     fn index_get_returns_none_when_absent() {
         let store = KvStore::new();
-        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
+        assert!(store.Users.indexes(OWNER).name.get("Alice").is_none());
     }
 
     #[test]
@@ -819,7 +501,7 @@ mod test {
     fn index_with_returns_none_and_does_not_call_f_when_absent() {
         let store = KvStore::new();
         let mut called = false;
-        let result = store.Users.indexes().name.with(OWNER, "Alice", |_, _| {
+        let result = store.Users.indexes(OWNER).name.with("Alice", |_, _| {
             called = true;
         });
         assert!(result.is_none());
@@ -830,7 +512,7 @@ mod test {
     fn index_with_returns_result_of_f() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
-        let len = store.Users.indexes().name.with(OWNER, "Alice", |k, v| {
+        let len = store.Users.indexes(OWNER).name.with("Alice", |k, v| {
             assert_eq!(*k, 1);
             v.name.len()
         });
@@ -842,7 +524,7 @@ mod test {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
         store.Users.delete(OWNER, &1);
-        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
+        assert!(store.Users.indexes(OWNER).name.get("Alice").is_none());
     }
 
     #[test]
@@ -857,9 +539,11 @@ mod test {
     fn index_iter_yields_index_key_and_base_value() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
-        let items: Vec<_> = store.Users.indexes().name.with_iter(OWNER, |i| {
-            i.map(|(k, bk, v)| (k.clone(), *bk, v.clone())).collect()
-        });
+        let items: Vec<_> = store
+            .Users
+            .indexes(OWNER)
+            .name
+            .with_iter(|i| i.map(|(k, bk, v)| (k.clone(), *bk, v.clone())).collect());
         assert_eq!(items, vec![("Alice".to_owned(), 1, row("Alice"))]);
     }
 
@@ -868,9 +552,11 @@ mod test {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
         store.Users.insert(OWNER, 2, row("Bob"));
-        let mut items: Vec<_> = store.Users.indexes().name.with_iter(OWNER, |i| {
-            i.map(|(k, bk, v)| (k.clone(), *bk, v.clone())).collect()
-        });
+        let mut items: Vec<_> = store
+            .Users
+            .indexes(OWNER)
+            .name
+            .with_iter(|i| i.map(|(k, bk, v)| (k.clone(), *bk, v.clone())).collect());
         items.sort_by_key(|(k, ..)| k.clone());
         assert_eq!(
             items,
@@ -915,7 +601,7 @@ mod test {
         assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
         assert_eq!(store.Users.get(OWNER, &2), Some(row("Bob")));
         assert_eq!(
-            store.Users.indexes().name.get(OWNER, "Bob").unwrap(),
+            store.Users.indexes(OWNER).name.get("Bob").unwrap(),
             (2, row("Bob")),
         );
     }
@@ -1014,9 +700,9 @@ mod test {
         store
             .Users
             .with_iter_mut(OWNER, |i| i.next().unwrap().1.name = "Charlie".to_owned());
-        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
+        assert!(store.Users.indexes(OWNER).name.get("Alice").is_none());
         assert_eq!(
-            store.Users.indexes().name.get(OWNER, "Charlie").unwrap(),
+            store.Users.indexes(OWNER).name.get("Charlie").unwrap(),
             (1, row("Charlie")),
         );
     }
@@ -1056,9 +742,9 @@ mod test {
 
         let mut values: Vec<_> = store
             .Users
-            .indexes()
+            .indexes(OWNER)
             .name
-            .with_values(OWNER, |i| i.map(|(bk, v)| (*bk, v.clone())).collect());
+            .with_values(|i| i.map(|(bk, v)| (*bk, v.clone())).collect());
         values.sort_by_key(|(bk, _)| *bk);
         assert_eq!(values, vec![(1, row("Alice")), (2, row("Bob"))]);
 
@@ -1070,7 +756,7 @@ mod test {
     fn index_with_mut_updates_row_and_index() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice"));
-        let result = store.Users.indexes().name.with_mut(OWNER, "Alice", |k, v| {
+        let result = store.Users.indexes(OWNER).name.with_mut("Alice", |k, v| {
             v.name = "Bob".to_owned();
             (*k, v.name.len())
         });
@@ -1132,18 +818,18 @@ mod test_two_indexes {
         assert_eq!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .email
-                .get(OWNER, "a@example.com")
+                .get("a@example.com")
                 .unwrap(),
             (1, person("a@example.com", b"alice"))
         );
         assert_eq!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .username
-                .get(OWNER, b"bob".as_slice())
+                .get(b"bob".as_slice())
                 .unwrap(),
             (2, person("b@example.com", b"bob"))
         );
@@ -1159,17 +845,17 @@ mod test_two_indexes {
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .email
-                .get(OWNER, "a@example.com")
+                .get("a@example.com")
                 .is_none()
         );
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .username
-                .get(OWNER, b"alice".as_slice())
+                .get(b"alice".as_slice())
                 .is_none()
         );
     }
@@ -1184,17 +870,17 @@ mod test_two_indexes {
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .email
-                .get(OWNER, "a@example.com")
+                .get("a@example.com")
                 .is_none()
         );
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .username
-                .get(OWNER, b"alice".as_slice())
+                .get(b"alice".as_slice())
                 .is_none()
         );
     }
@@ -1213,33 +899,33 @@ mod test_two_indexes {
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .email
-                .get(OWNER, "a@example.com")
+                .get("a@example.com")
                 .is_none()
         );
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .username
-                .get(OWNER, b"alice".as_slice())
+                .get(b"alice".as_slice())
                 .is_none()
         );
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .email
-                .get(OWNER, "b@example.com")
+                .get("b@example.com")
                 .is_some()
         );
         assert!(
             store
                 .People
-                .indexes()
+                .indexes(OWNER)
                 .username
-                .get(OWNER, b"bob".as_slice())
+                .get(b"bob".as_slice())
                 .is_some()
         );
     }
@@ -1366,7 +1052,7 @@ mod test_transactional_index {
         txn.commit().unwrap();
 
         assert_eq!(
-            store.Users.indexes().name.get(OWNER, "Alice").unwrap(),
+            store.Users.indexes(OWNER).name.get("Alice").unwrap(),
             (2, row("Alice"))
         );
     }
@@ -1388,7 +1074,7 @@ mod test_transactional_index {
         txn.commit().unwrap();
 
         assert_eq!(
-            store.Users.indexes().name.get(OWNER, "Alice").unwrap(),
+            store.Users.indexes(OWNER).name.get("Alice").unwrap(),
             (2, row("Alice"))
         );
     }
@@ -1699,7 +1385,7 @@ mod test_transactional_index {
         let mut name = indexes.name();
         name.with_mut("Bob", |_, v| v.name = "Alice".to_owned());
         assert!(matches!(
-            name.try_with_mut("Alice", |_, _| ()),
+            name.check_consistent(),
             Err(Error::NonUniqueIndexKey(_))
         ));
         assert!(matches!(txn.commit(), Err(Error::NonUniqueIndexKey(_))));
@@ -1731,7 +1417,7 @@ mod test_transactional_index {
         txn.commit().unwrap();
 
         assert!(store.Users.get(OWNER, &1).is_none());
-        assert!(store.Users.indexes().name.get(OWNER, "Alice").is_none());
+        assert!(store.Users.indexes(OWNER).name.get("Alice").is_none());
     }
 }
 
@@ -1778,13 +1464,6 @@ mod test_poison {
             index_name.check_consistent(),
             Err(Error::NonUniqueIndexKey("Users by name"))
         );
-
-        let result = index_name.try_get("Alice");
-        assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
-
-        // The `panic`s ensure that the closure is not called.
-        let result = index_name.try_with("Alice", |_, _| panic!());
-        assert!(matches!(result, Err(Error::NonUniqueIndexKey(_))));
     }
 
     #[test]
@@ -1813,7 +1492,7 @@ mod test_poison {
     fn check_consistent_ok_when_unique() {
         let store = KvStore::new();
         store.Users.insert(OWNER, 1, row("Alice", "alice1@x.com"));
-        assert!(store.Users.indexes().name.check_consistent().is_ok());
+        assert!(store.Users.indexes(OWNER).name.check_consistent().is_ok());
     }
 
     #[test]
@@ -1866,7 +1545,7 @@ mod test_poison {
         // The failed commit rolled everything back: the store is clean and consistent.
         assert!(store.Users.get(OWNER, &1).is_none());
         assert!(store.Users.get(OWNER, &2).is_none());
-        assert!(store.Users.indexes().name.check_consistent().is_ok());
+        assert!(store.Users.indexes(OWNER).name.check_consistent().is_ok());
     }
 
     #[test]
@@ -1946,9 +1625,9 @@ mod test_poison {
         assert_eq!(
             store
                 .AssertingUsers
-                .indexes()
+                .indexes(OWNER)
                 .name
-                .get(OWNER, "Alice")
+                .get("Alice")
                 .unwrap(),
             (1, row("Alice", "alice1@x.com"))
         );

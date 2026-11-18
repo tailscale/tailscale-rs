@@ -143,11 +143,8 @@ pub trait PrimaryDesc: TableDesc {
 /// A table which may have indexes.
 #[doc(hidden)]
 pub trait Indexable: PrimaryDesc {
-    /// An object containing this table's indexes.
-    type Indexes: From<Arc<crate::KvStore<Self::Storage>>>;
-
     /// An object containing this table's indexes (with an owner).
-    type IndexesWithOwner: From<(Arc<crate::KvStore<Self::Storage>>, Owner)>;
+    type Indexes: From<(Arc<crate::KvStore<Self::Storage>>, Owner)>;
 
     /// An object giving read/write access to this table's indexes in a transaction.
     type TransactionIndexes<'guard, 'txn>: From<&'txn mut crate::TableTransaction<'guard, Self>>
@@ -496,7 +493,6 @@ macro_rules! store {
 
             impl $crate::schema::Indexable for $name {
                 type Indexes = index::$name::Indexes;
-                type IndexesWithOwner = index::$name::IndexesWithOwner;
                 type TransactionIndexes<'guard, 'txn> = index::$name::TransactionIndexes<'guard, 'txn> where 'guard: 'txn;
                 type RoTransactionIndexes<'guard, 'txn> = index::$name::RoTransactionIndexes<'txn, $crate::transactions::TransactionInner<'guard, TableStorage>> where 'guard: 'txn;
                 type RoRoTransactionIndexes<'guard, 'txn> = index::$name::RoTransactionIndexes<'txn, $crate::storage::Storage<TableStorage>> where 'guard: 'txn;
@@ -650,16 +646,6 @@ macro_rules! store {
                         )*
                     }
 
-                    /// Access to the table's indexes with a fixed owner, with a field for each index.
-                    ///
-                    /// Returned by `TableWithOwner::indexes`.
-                    pub struct IndexesWithOwner {
-                        $(
-                            #[allow(dead_code)]
-                            pub $field: $crate::IndexWithOwner<$field>,
-                        )*
-                    }
-
                     /// Read/write access to the table's indexes within a transaction, with a
                     /// method for each index. Each method mutably borrows this struct, so only one
                     /// index can be used at a time.
@@ -688,18 +674,10 @@ macro_rules! store {
         }
 
         $($(
-            impl ::core::convert::From<$crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>> for index::$name::Indexes {
-                fn from(_store: $crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>) -> Self {
-                    index::$name::Indexes {
-                        $($field: $crate::Index::new(::core::clone::Clone::clone(&_store)),)*
-                    }
-                }
-            }
-
-            impl ::core::convert::From<($crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)> for index::$name::IndexesWithOwner {
+            impl ::core::convert::From<($crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)> for index::$name::Indexes {
                 fn from((_store, _owner): ($crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)) -> Self {
-                    index::$name::IndexesWithOwner {
-                        $($field: $crate::IndexWithOwner::new(::core::clone::Clone::clone(&_store), _owner),)*
+                    index::$name::Indexes {
+                        $($field: $crate::Index::new(::core::clone::Clone::clone(&_store), _owner),)*
                     }
                 }
             }
@@ -1274,11 +1252,11 @@ mod test {
                     a: "hello".to_owned(),
                 },
             );
-            let value = store.Bar.indexes().a.get(OWNER, "hello").unwrap();
+            let value = store.Bar.indexes(OWNER).a.get("hello").unwrap();
             assert_eq!(value.1.a, "hello");
 
             store.Foo.insert(OWNER, "foo", "hello".to_owned());
-            let value = store.Foo.indexes().len.get(OWNER, &5).unwrap();
+            let value = store.Foo.indexes(OWNER).len.get(&5).unwrap();
             assert_eq!(value, ("foo", "hello".to_owned()));
         }
     }

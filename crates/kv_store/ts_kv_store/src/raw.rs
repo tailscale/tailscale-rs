@@ -599,8 +599,8 @@ impl<D: schema::Indexable> Table<D> {
     /// ```
     ///
     /// Where `Foo` is a table and `bar` is an index over `Foo` using the `bar` field as foreign key.
-    pub fn indexes(&self) -> D::Indexes {
-        Arc::clone(&self.store).into()
+    pub fn indexes(&self, owner: Owner) -> D::Indexes {
+        (Arc::clone(&self.store), owner).into()
     }
 }
 
@@ -1064,7 +1064,7 @@ impl<D: schema::Indexable> TableWithOwner<D> {
     /// ```
     ///
     /// Where `Foo` is a table and `bar` is an index over `Foo` using the `bar` field as foreign key.
-    pub fn indexes(&self) -> D::IndexesWithOwner {
+    pub fn indexes(&self) -> D::Indexes {
         (Arc::clone(&self.inner.store), self.owner).into()
     }
 }
