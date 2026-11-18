@@ -4,7 +4,7 @@ use core::hash::Hash;
 use std::collections::{HashSet, hash_map};
 
 use crate::{
-    operations::{BaseKey, BaseValue, IndexKey, IndexValue, StorageGuard},
+    operations::{BaseKey, BaseValue, IndexKey, StorageGuard},
     schema::{IndexDesc, TableDesc},
     storage::{Table, VersionedValue},
     transactions::TxnId,
@@ -39,7 +39,7 @@ pub struct IndexIter<'a, D: IndexDesc> {
 
 impl<'a, D: IndexDesc> Iterator for IndexIter<'a, D>
 where
-    IndexValue<D>: Hash + Eq,
+    BaseKey<D>: Hash + Eq,
 {
     type Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>);
 

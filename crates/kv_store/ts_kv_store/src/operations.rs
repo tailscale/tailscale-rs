@@ -179,7 +179,6 @@ pub(crate) type Value<T> = <T as TableDesc>::Value;
 pub(crate) type BaseKey<T> = <<T as IndexDesc>::BaseTable as TableDesc>::Key;
 pub(crate) type BaseValue<T> = <<T as IndexDesc>::BaseTable as TableDesc>::Value;
 pub(crate) type IndexKey<T> = <T as TableDesc>::Key;
-pub(crate) type IndexValue<T> = <T as TableDesc>::Value;
 
 /// Read operations on a table via an index.
 ///
@@ -204,10 +203,9 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         owner: Owner,
     ) -> Result<Option<(BaseKey<Self::IndexDesc>, BaseValue<Self::IndexDesc>)>>
     where
-        BaseKey<Self::IndexDesc>: Clone,
+        BaseKey<Self::IndexDesc>: Clone + Hash + Eq,
         BaseValue<Self::IndexDesc>: Clone,
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        IndexValue<Self::IndexDesc>: Hash + Eq,
         Q: ?Sized + Hash + Eq,
     {
         self.with(key, |k, v| (k.clone(), v.clone()), owner)
@@ -221,7 +219,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
     ) -> Result<Option<T>>
     where
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseKey<Self::IndexDesc>: Hash + Eq,
         Q: ?Sized + Hash + Eq,
     {
         let guard = self.read_lock();
@@ -269,7 +267,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         ) -> T,
     ) -> T
     where
-        IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseKey<Self::IndexDesc>: Hash + Eq,
     {
         let guard = self.read_lock();
         // SAFETY: `guard` is from `read_lock` (see the trait's contract).
@@ -281,7 +279,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<Self::IndexDesc>>) -> T,
     ) -> T
     where
-        IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseKey<Self::IndexDesc>: Hash + Eq,
     {
         self.with_iter(|iter| f(&mut iter.map(|(k, ..)| k)))
     }
@@ -294,7 +292,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         ) -> T,
     ) -> T
     where
-        IndexValue<Self::IndexDesc>: Hash + Eq,
+        BaseKey<Self::IndexDesc>: Hash + Eq,
     {
         self.with_iter(|iter| f(&mut iter.map(|(_, bk, v)| (bk, v))))
     }

@@ -309,25 +309,15 @@ impl Message<Arc<ts_control::StateUpdate>> for PeerTracker {
     }
 }
 
-// Note(nrc): should this be internal to the store?
 fn upsert_peer(txn: &mut kv::Transaction, peer: &Node) -> PeerId {
     static NEXT_PEER_ID: AtomicU32 = AtomicU32::new(0);
 
-    if let Some(id) = txn
-        .Peers
+    txn.Peers
         .indexes()
         .stable_id()
-        .with_mut(&peer.stable_id, |id, node| {
-            *node = peer.clone();
-            *id
+        .upsert(&peer.stable_id, peer, || {
+            PeerId(NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed))
         })
-    {
-        return id;
-    }
-
-    let id = PeerId(NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed));
-    txn.Peers.insert(id, peer.clone());
-    id
 }
 
 impl PeerTracker {
