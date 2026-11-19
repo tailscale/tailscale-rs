@@ -12,7 +12,7 @@ use core::{borrow::Borrow, hash::Hash, ops::Deref};
 
 use crate::{
     GeneratedStorage, Owner, Result, iter,
-    schema::{self, Desc, IndexDesc, PrimaryDesc, SingletonDesc, TableDesc},
+    schema::{self, Desc, IndexDesc, MultiIndexDesc, PrimaryDesc, SingletonDesc, TableDesc},
     storage::{SingletonSlot, Storage, Table},
     transactions::{TransactionRef, TxnId},
 };
@@ -180,6 +180,9 @@ pub(crate) type BaseKey<T> = <<T as IndexDesc>::BaseTable as TableDesc>::Key;
 pub(crate) type BaseValue<T> = <<T as IndexDesc>::BaseTable as TableDesc>::Value;
 pub(crate) type IndexKey<T> = <T as TableDesc>::Key;
 
+pub(crate) type BaseKeyMulti<T> = <<T as MultiIndexDesc>::BaseTable as TableDesc>::Key;
+pub(crate) type BaseValueMulti<T> = <<T as MultiIndexDesc>::BaseTable as TableDesc>::Value;
+
 /// Read operations on a table via an index.
 ///
 /// # Safety
@@ -295,6 +298,118 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         BaseKey<Self::IndexDesc>: Hash + Eq,
     {
         self.with_iter(|iter| f(&mut iter.map(|(_, bk, v)| (bk, v))))
+    }
+}
+
+/// Read operations on a table via a multi-index.
+///
+/// # Safety
+///
+/// While a guard returned by `Ops::read_lock` is live, there must be no live mutable reference to the
+/// table described by `Self::IndexDesc`, or to its base table.
+pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
+    Ops<TableStorage>
+{
+    type IndexDesc: MultiIndexDesc<Storage = TableStorage>;
+
+    #[allow(clippy::type_complexity)]
+    fn get<Q>(
+        self,
+        key: &Q,
+        owner: Owner,
+    ) -> Vec<(
+        BaseKeyMulti<Self::IndexDesc>,
+        BaseValueMulti<Self::IndexDesc>,
+    )>
+    where
+        BaseValueMulti<Self::IndexDesc>: Clone,
+        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        self.with(
+            key,
+            |it| it.map(|(k, v)| (k.clone(), v.clone())).collect(),
+            owner,
+        )
+        .unwrap_or_default()
+    }
+
+    fn with<Q, T, F>(self, key: &Q, f: F, _owner: Owner) -> Option<T>
+    where
+        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+        F: FnOnce(
+            &mut dyn Iterator<
+                Item = (
+                    &BaseKeyMulti<Self::IndexDesc>,
+                    &BaseValueMulti<Self::IndexDesc>,
+                ),
+            >,
+        ) -> T,
+    {
+        let guard = self.read_lock();
+        let txn_id = guard.txn_id();
+        // SAFETY (for all uses of `guard`): `guard` is from `read_lock` (see the trait's contract).
+        let base = unsafe { guard.table::<<Self::IndexDesc as MultiIndexDesc>::BaseTable>() };
+        unsafe { guard.table::<Self::IndexDesc>() }
+            .get(key, txn_id)
+            .map(|base_keys| {
+                f(&mut iter::BaseRows::<Self::IndexDesc>::new(
+                    base_keys, base, txn_id,
+                ))
+            })
+    }
+
+    /// Clone the base keys for `key`.
+    fn base_keys<Q>(self, key: &Q) -> Vec<BaseKeyMulti<Self::IndexDesc>>
+    where
+        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        let guard = self.read_lock();
+        // SAFETY: `guard` is from `read_lock` (see the trait's contract).
+        unsafe { guard.table::<Self::IndexDesc>() }
+            .get(key, guard.txn_id())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn with_iter<T>(
+        self,
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<
+                Item = (
+                    &'a IndexKey<Self::IndexDesc>,
+                    iter::BaseRows<'a, Self::IndexDesc>,
+                ),
+            >,
+        ) -> T,
+    ) -> T {
+        let guard = self.read_lock();
+        // SAFETY: `guard` is from `read_lock` (see the trait's contract).
+        f(&mut unsafe { iter::multi_index_iter::<Self::IndexDesc>(&*guard) })
+    }
+
+    fn with_keys<T>(
+        self,
+        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<Self::IndexDesc>>) -> T,
+    ) -> T {
+        self.with_iter(|iter| f(&mut iter.map(|(k, _)| k)))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn with_values<T>(
+        self,
+        f: impl for<'a> FnOnce(
+            &mut dyn Iterator<
+                Item = (
+                    &'a BaseKeyMulti<Self::IndexDesc>,
+                    &'a BaseValueMulti<Self::IndexDesc>,
+                ),
+            >,
+        ) -> T,
+    ) -> T {
+        self.with_iter(|iter| f(&mut iter.flat_map(|(_, rows)| rows)))
     }
 }
 

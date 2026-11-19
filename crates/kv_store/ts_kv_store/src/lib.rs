@@ -80,11 +80,12 @@
 //! `Base` is modified by using the `bar` field of the values in `Base`.
 //!
 //! The index table is itself stored as a table (inside the base tables `indexes` field) with key
-//! type `Url` and value type `u64`.
+//! type `Url` and value type `u64` (or `Vec<u64>` for multi-indexes).
 //!
-//! Index fields must uniquely identify a row in the base table. If multiple rows in the base table
-//! have the same key in the index, then either a panic is triggered, or accessing or committing a
-//! non-unique index in a transaction will cause an error. See the schema macro docs for more.
+//! By default, index fields must uniquely identify a row in the base table. If multiple rows in the
+//! base table have the same key in the index, then either a panic is triggered, or accessing or
+//! committing a non-unique index in a transaction will cause an error. There are other non-error
+//! behaviours too, see the schema macro docs for details.
 //!
 //! # Async access
 //!
@@ -202,8 +203,11 @@ pub mod storage;
 pub mod transactions;
 
 #[doc(inline)]
-pub use index::{Index, IndexGuard, IndexTransaction, RoIndexTransaction, RoRoIndexTransaction};
-pub use iter::{IndexIter, TableIter};
+pub use index::{
+    Index, IndexGuard, IndexTransaction, MultiIndex, MultiIndexGuard, MultiIndexTransaction,
+    RoIndexTransaction, RoRoIndexTransaction,
+};
+pub use iter::{BaseRows, IndexIter, MultiIndexIter, TableIter};
 #[doc(inline)]
 pub use pub_sub::{
     Event, NoOpNotifier, Notifications, Notifier, SingletonEvent, Subscriber, Subscription,

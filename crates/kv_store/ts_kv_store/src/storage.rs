@@ -6,7 +6,7 @@ use crate::{
     Error, Notifier, Result,
     iter::TableIter,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
-    schema::{self, IndexStorage, PrimaryDesc, TableDesc},
+    schema::{self, IndexStorage, MultiIndexDesc, PrimaryDesc, TableDesc},
     transactions::TxnId,
 };
 
@@ -1039,6 +1039,48 @@ impl<D: schema::TableDesc> Table<D> {
         self.delete_mask.clear(txn_id);
         self.poisoned.set(false, txn_id);
         self.indexes.clear(txn_id);
+    }
+}
+
+impl<D: MultiIndexDesc> Table<D> {
+    /// Add `base_key` to the base keys for `index_key`.
+    pub fn insert_base_key<Q>(&mut self, index_key: D::Key, base_key: &Q, txn_id: TxnId)
+    where
+        <D::BaseTable as TableDesc>::Key: Borrow<Q>,
+        Q: ?Sized + Eq + ToOwned<Owned = <D::BaseTable as TableDesc>::Key>,
+    {
+        let found = self.with_mut(
+            &index_key,
+            |keys| {
+                if !keys.iter().any(|k| k.borrow() == base_key) {
+                    keys.push(base_key.to_owned());
+                }
+            },
+            txn_id,
+        );
+        if found.is_none() {
+            self.insert(index_key, vec![base_key.to_owned()], txn_id);
+        }
+    }
+
+    /// Remove `base_key` from the base keys for `index_key`, removing `index_key` if it has no
+    /// base keys left.
+    pub fn remove_base_key<Q>(&mut self, index_key: &D::Key, base_key: &Q, txn_id: TxnId)
+    where
+        <D::BaseTable as TableDesc>::Key: Borrow<Q>,
+        Q: ?Sized + Eq,
+    {
+        let empty = self.with_mut(
+            index_key,
+            |keys| {
+                keys.retain(|k| k.borrow() != base_key);
+                keys.is_empty()
+            },
+            txn_id,
+        );
+        if empty == Some(true) {
+            self.delete(index_key, txn_id);
+        }
     }
 }
 
