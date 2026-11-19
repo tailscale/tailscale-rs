@@ -1,13 +1,10 @@
 //! Iterate over tables or indexes.
 
-use core::{hash::Hash, slice};
 use std::collections::{HashSet, hash_map};
 
 use crate::{
-    operations::{
-        BaseKey, BaseKeyMulti, BaseValue, BaseValueMulti, IndexKey, IndexKeyMulti, StorageGuard,
-    },
-    schema::{IndexDesc, IndexRead, MultiIndexDesc, TableDesc},
+    operations::{BaseKey, BaseValue, IndexKey, StorageGuard},
+    schema::{IndexRead, MultiIndexDesc, MultiIndexRead, PrimaryTableDesc, TableDesc, UniqueIndexDesc},
     storage::{Table, VersionedValue},
     transactions::TxnId,
 };
@@ -34,16 +31,13 @@ impl<'a, D: TableDesc> Iterator for TableIter<'a, D> {
 
 /// Iterator over the index `D`, yielding each index key with the corresponding base table key and
 /// value.
-pub struct IndexIter<'a, D: IndexDesc> {
+pub struct IndexIter<'a, D: UniqueIndexDesc> {
     index: <D::IndexStorage as IndexRead<IndexKey<D>, BaseKey<D>>>::Iter<'a>,
     base: &'a Table<D::BaseTable>,
     txn_id: TxnId,
 }
 
-impl<'a, D: IndexDesc> Iterator for IndexIter<'a, D>
-where
-    BaseKey<D>: Hash + Eq,
-{
+impl<'a, D: UniqueIndexDesc> Iterator for IndexIter<'a, D> {
     type Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -55,42 +49,39 @@ where
 /// Iterator over the multi-index `D`, yielding each index key with an iterator over the
 /// corresponding rows of the base table.
 pub struct MultiIndexIter<'a, D: MultiIndexDesc> {
-    index: TableIter<'a, D>,
+    index: <D::IndexStorage as MultiIndexRead<IndexKey<D>, BaseKey<D>>>::Iter<'a>,
     base: &'a Table<D::BaseTable>,
+    txn_id: TxnId,
 }
 
 impl<'a, D: MultiIndexDesc> Iterator for MultiIndexIter<'a, D> {
-    type Item = (&'a IndexKeyMulti<D>, BaseRows<'a, D>);
+    type Item = (&'a IndexKey<D>, BaseRows<'a, D>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let (k, base_keys) = self.index.next()?;
-        Some((k, BaseRows::new(base_keys, self.base, self.index.txn_id)))
+        Some((k, BaseRows::new(base_keys, self.base, self.txn_id)))
     }
 }
 
 /// Iterator over the base table keys and values for a single key of the multi-index `D`.
 pub struct BaseRows<'a, D: MultiIndexDesc> {
-    keys: slice::Iter<'a, BaseKeyMulti<D>>,
+    keys: <D::IndexStorage as MultiIndexRead<IndexKey<D>, BaseKey<D>>>::BaseKeys<'a>,
     base: &'a Table<D::BaseTable>,
     txn_id: TxnId,
 }
 
 impl<'a, D: MultiIndexDesc> BaseRows<'a, D> {
     pub(crate) fn new(
-        keys: &'a [BaseKeyMulti<D>],
+        keys: <D::IndexStorage as MultiIndexRead<IndexKey<D>, BaseKey<D>>>::BaseKeys<'a>,
         base: &'a Table<D::BaseTable>,
         txn_id: TxnId,
     ) -> Self {
-        BaseRows {
-            keys: keys.iter(),
-            base,
-            txn_id,
-        }
+        BaseRows { keys, base, txn_id }
     }
 }
 
 impl<'a, D: MultiIndexDesc> Iterator for BaseRows<'a, D> {
-    type Item = (&'a BaseKeyMulti<D>, &'a BaseValueMulti<D>);
+    type Item = (&'a BaseKey<D>, &'a BaseValue<D>);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.keys
@@ -104,7 +95,7 @@ impl<'a, D: MultiIndexDesc> Iterator for BaseRows<'a, D> {
 ///
 /// There must be no live mutable reference to the table described by `D` while the returned
 /// iterator is live.
-pub(crate) unsafe fn table_iter<D: TableDesc>(
+pub(crate) unsafe fn table_iter<D: PrimaryTableDesc>(
     guard: &impl StorageGuard<D::Storage>,
 ) -> TableIter<'_, D> {
     // SAFETY: by the function's contract.
@@ -117,7 +108,7 @@ pub(crate) unsafe fn table_iter<D: TableDesc>(
 ///
 /// There must be no live mutable reference to the index described by `D` or to `D::BaseTable`
 /// while the returned iterator is live.
-pub(crate) unsafe fn index_iter<D: IndexDesc>(
+pub(crate) unsafe fn index_iter<D: UniqueIndexDesc>(
     guard: &impl StorageGuard<D::Storage>,
 ) -> IndexIter<'_, D> {
     let txn_id = guard.txn_id();
@@ -134,14 +125,16 @@ pub(crate) unsafe fn index_iter<D: IndexDesc>(
 ///
 /// # Safety
 ///
-/// There must be no live mutable reference to the tables described by `D` or `D::BaseTable` while
-/// the returned iterator is live.
+/// There must be no live mutable reference to the index described by `D` or to `D::BaseTable`
+/// while the returned iterator is live.
 pub(crate) unsafe fn multi_index_iter<D: MultiIndexDesc>(
     guard: &impl StorageGuard<D::Storage>,
 ) -> MultiIndexIter<'_, D> {
-    // SAFETY (for both tables): by the function's contract.
+    let txn_id = guard.txn_id();
+    // SAFETY (for the index and the table): by the function's contract.
     MultiIndexIter {
-        index: unsafe { table_iter::<D>(guard) },
+        index: unsafe { guard.index::<D>() }.iter(txn_id),
         base: unsafe { guard.table::<D::BaseTable>() },
+        txn_id,
     }
 }

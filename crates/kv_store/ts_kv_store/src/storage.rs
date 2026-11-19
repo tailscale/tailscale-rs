@@ -1,12 +1,15 @@
 use alloc::sync::Weak;
-use core::{borrow::Borrow, hash::Hash};
+use core::{borrow::Borrow, hash::Hash, iter::Map, marker::PhantomData, slice};
 use std::collections::{HashMap, HashSet};
 
 use crate::{
     Error, Notifier, Result,
     iter::TableIter,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
-    schema::{self, CustomIndex, IndexRead, IndexWrite, MultiIndexDesc, PrimaryDesc, TableDesc},
+    schema::{
+        self, BaseKeyWrite, CustomIndex, CustomMultiIndex, IndexLifecycle, IndexRead, IndexWrite,
+        MultiIndexRead, PrimaryTableDesc, TableDesc,
+    },
     transactions::TxnId,
 };
 
@@ -305,6 +308,102 @@ impl<T: Default> SingletonSlot for DefaultValue<T> {
 #[derive(Debug, Default)]
 pub struct CustomIndexStorage<T>(pub T);
 
+/// Storage for a custom multi-index.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct CustomMultiIndexStorage<T>(pub T);
+
+impl<K: Hash + Eq, B, T: CustomIndex<K, B>> IndexLifecycle<K, B> for CustomIndexStorage<T> {
+    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
+        self.0.check_consistent(txn_id)
+    }
+
+    fn commit(&mut self, txn_id: TxnId) {
+        self.0.commit(txn_id);
+    }
+
+    fn clear(&mut self, txn_id: TxnId) {
+        self.0.clear(txn_id);
+    }
+
+    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (K, &'a B)>)
+    where
+        B: 'a,
+    {
+        if !self.0.rollback(txn_id) {
+            self.0.rebuild(committed);
+        }
+    }
+}
+
+impl<K: Hash + Eq, B, T: CustomIndex<K, B>> BaseKeyWrite<K, B> for CustomIndexStorage<T> {
+    fn insert_base_key<Q>(&mut self, index_key: K, base_key: &Q, txn_id: TxnId)
+    where
+        B: Borrow<Q>,
+        Q: ?Sized + Eq + ToOwned<Owned = B>,
+    {
+        self.0.insert(index_key, base_key.to_owned(), txn_id);
+    }
+
+    fn remove_base_key<Q>(&mut self, index_key: &K, base_key: &Q, txn_id: TxnId)
+    where
+        B: Borrow<Q>,
+        Q: ?Sized + Eq,
+    {
+        // The entry may belong to another row.
+        if self
+            .0
+            .get(index_key, txn_id)
+            .is_some_and(|k| k.borrow() == base_key)
+        {
+            self.0.remove(index_key, txn_id);
+        }
+    }
+}
+
+impl<K: Hash + Eq, B, T: CustomMultiIndex<K, B>> IndexLifecycle<K, B>
+    for CustomMultiIndexStorage<T>
+{
+    fn check_consistent(&self, _txn_id: TxnId) -> Result<()> {
+        Ok(())
+    }
+
+    fn commit(&mut self, txn_id: TxnId) {
+        self.0.commit(txn_id);
+    }
+
+    fn clear(&mut self, txn_id: TxnId) {
+        self.0.clear(txn_id);
+    }
+
+    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (K, &'a B)>)
+    where
+        B: 'a,
+    {
+        if !self.0.rollback(txn_id) {
+            self.0.rebuild(committed);
+        }
+    }
+}
+
+impl<K: Hash + Eq, B, T: CustomMultiIndex<K, B>> BaseKeyWrite<K, B> for CustomMultiIndexStorage<T> {
+    fn insert_base_key<Q>(&mut self, index_key: K, base_key: &Q, txn_id: TxnId)
+    where
+        B: Borrow<Q>,
+        Q: ?Sized + Eq + ToOwned<Owned = B>,
+    {
+        self.0.insert(index_key, base_key.to_owned(), txn_id);
+    }
+
+    fn remove_base_key<Q>(&mut self, index_key: &K, base_key: &Q, txn_id: TxnId)
+    where
+        B: Borrow<Q>,
+        Q: ?Sized + Eq,
+    {
+        self.0.remove(index_key, base_key, txn_id);
+    }
+}
+
 impl<K: Hash + Eq, B, T: CustomIndex<K, B>> IndexRead<K, B> for CustomIndexStorage<T> {
     type Iter<'a>
         = T::Iter<'a>
@@ -313,20 +412,49 @@ impl<K: Hash + Eq, B, T: CustomIndex<K, B>> IndexRead<K, B> for CustomIndexStora
         K: 'a,
         B: 'a;
 
-    fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<&B>
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&B>
     where
         K: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        self.0.get(key)
+        self.0.get(key, txn_id)
     }
 
-    fn iter(&self, _txn_id: TxnId) -> T::Iter<'_> {
-        self.0.iter()
+    fn iter(&self, txn_id: TxnId) -> T::Iter<'_> {
+        self.0.iter(txn_id)
     }
 
-    fn check_consistent(&self, _txn_id: TxnId) -> Result<()> {
-        self.0.check_consistent()
+    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
+        self.0.check_consistent(txn_id)
+    }
+}
+
+impl<K: Hash + Eq, B, T: CustomMultiIndex<K, B>> MultiIndexRead<K, B>
+    for CustomMultiIndexStorage<T>
+{
+    type BaseKeys<'a>
+        = T::BaseKeys<'a>
+    where
+        T: 'a,
+        B: 'a;
+
+    type Iter<'a>
+        = T::Iter<'a>
+    where
+        T: 'a,
+        K: 'a,
+        B: 'a;
+
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<T::BaseKeys<'_>>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        self.0.get(key, txn_id)
+    }
+
+    fn iter(&self, txn_id: TxnId) -> T::Iter<'_> {
+        self.0.iter(txn_id)
     }
 }
 
@@ -421,7 +549,7 @@ impl<T> VersionedValue<T> {
         }
     }
 
-    fn was_mutated<D: TableDesc<Value = T>>(&self) -> bool {
+    fn was_mutated<D: PrimaryTableDesc<Value = T>>(&self) -> bool {
         match (&self.slot_a, &self.slot_b) {
             (Some((_, a)), Some((_, b))) => !D::value_eq(a, b),
             _ => false,
@@ -636,10 +764,6 @@ pub struct Table<D: schema::TableDesc> {
     /// This is maintained by updating it when a transaction is committed. No action is required on
     /// roll-back because `cleared` is not changed during a transaction.
     cleared: bool,
-    /// A flag indicating if the table has become inconsistent.
-    ///
-    /// Currently this is used for indexes if multiple primary keys are stored for a single index key.
-    poisoned: VersionedValue<bool>,
     /// All indexes of this table (empty if there are no indexes or this table is itself an index).
     pub indexes: D::IndexStorage,
 }
@@ -651,27 +775,12 @@ impl<D: schema::TableDesc> Default for Table<D> {
             delete_mask: DeleteMask::None,
             modified: None,
             cleared: true,
-            poisoned: VersionedValue::new(false, TxnId::FIRST),
             indexes: D::IndexStorage::default(),
         }
     }
 }
 
 impl<D: schema::TableDesc> Table<D> {
-    pub fn set_poisoned(&mut self, txn_id: TxnId) {
-        self.poisoned.set(true, txn_id);
-    }
-
-    /// Returns an error if this table is poisoned.
-    pub(crate) fn check_poisoned(&self, txn_id: TxnId) -> Result<()> {
-        // Could use `ok_or` from MSRV 1.98
-        if self.poisoned.get(txn_id).copied().unwrap_or(false) {
-            Err(Error::NonUniqueIndexKey(D::NAME))
-        } else {
-            Ok(())
-        }
-    }
-
     /// Rebuild all indexes for a specific key in this table.
     fn rebuild_indexes_for_key(&mut self, key: &D::Key, txn_id: TxnId) {
         if let Some(v) = self.delete_mask.lookup(&self.data, key, txn_id) {
@@ -682,7 +791,6 @@ impl<D: schema::TableDesc> Table<D> {
     /// Cleanup a rolled-back transaction.
     pub fn gc_txn(&mut self, txn_id: TxnId) {
         self.delete_mask = DeleteMask::None;
-        self.poisoned.gc_txn(txn_id);
 
         let Some(modified) = &self.modified else {
             return;
@@ -729,8 +837,7 @@ impl<D: schema::TableDesc> Table<D> {
     /// Check if this table's transaction state is consistent for commit.
     ///
     /// Must be called (and succeed) before calling `commit_primary_table` or
-    /// `commit_without_notifications`. Will error if an index has been
-    /// poisoned during the transaction. Because of the global lock, the transaction
+    /// `commit_without_notifications`. Because of the global lock, the transaction
     /// should not conflict. But if we were to allow transactions to be timed-out (or multiple
     /// mutating transaction), or in the presence of unsafe code, then inconsistency could happen.
     pub fn check_txn_consistency(&self, txn_id: TxnId) -> Result<()> {
@@ -739,8 +846,6 @@ impl<D: schema::TableDesc> Table<D> {
         {
             return Err(Error::TransactionFailed);
         }
-
-        self.check_poisoned(txn_id)?;
 
         if !self.delete_mask.check_txn_id(txn_id) {
             return Err(Error::TransactionFailed);
@@ -762,7 +867,7 @@ impl<D: schema::TableDesc> Table<D> {
         collect_notifications: bool,
     ) -> HashMap<D::Key, WatchedEvent<D::NotificationValue>>
     where
-        D: PrimaryDesc,
+        D: PrimaryTableDesc,
     {
         // The modified set is only used for notifications, so don't pay for filtering the mutable
         // refs if there is nobody to notify.
@@ -847,7 +952,7 @@ impl<D: schema::TableDesc> Table<D> {
         txn_id: TxnId,
     ) -> (D::Key, WatchedEvent<D::NotificationValue>)
     where
-        D: PrimaryDesc,
+        D: PrimaryTableDesc,
     {
         let value = self.data.get(&key).unwrap().get(txn_id).unwrap();
         let value = D::clone_value_for_notification(value);
@@ -859,7 +964,7 @@ impl<D: schema::TableDesc> Table<D> {
     /// Precondition: `self.check_txn_consistency` returns `Ok`.
     ///
     /// Panics if `self.check_txn_consistency` would return an error.
-    pub fn commit_without_notifications(&mut self, txn_id: TxnId) {
+    pub(crate) fn commit_without_notifications(&mut self, txn_id: TxnId) {
         assert!(self.delete_mask.check_txn_id(txn_id));
 
         match core::mem::take(&mut self.delete_mask) {
@@ -879,7 +984,10 @@ impl<D: schema::TableDesc> Table<D> {
 
     /// Takes a set of keys which may have been mutated and removes any keys where the values are unchanged
     /// in the most recent transaction.
-    fn filter_mutated_refs(&self, refs: &mut HashSet<D::Key>) {
+    fn filter_mutated_refs(&self, refs: &mut HashSet<D::Key>)
+    where
+        D: PrimaryTableDesc,
+    {
         match &self.delete_mask {
             DeleteMask::None => {}
             DeleteMask::All(..) => {
@@ -1033,7 +1141,6 @@ impl<D: schema::TableDesc> Table<D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        self.check_poisoned(txn_id).ok()?;
         self.delete_mask.lookup(&self.data, key, txn_id)
     }
 
@@ -1058,7 +1165,7 @@ impl<D: schema::TableDesc> Table<D> {
         Some(result)
     }
 
-    pub fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
+    pub(crate) fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
         if let Some(old_value) = self.delete_mask.lookup(&self.data, &key, txn_id) {
             self.indexes.on_remove(&key, old_value, txn_id);
         }
@@ -1070,7 +1177,7 @@ impl<D: schema::TableDesc> Table<D> {
         }
     }
 
-    pub fn delete<Q>(&mut self, key: &Q, txn_id: TxnId)
+    pub(crate) fn delete<Q>(&mut self, key: &Q, txn_id: TxnId)
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
@@ -1084,63 +1191,215 @@ impl<D: schema::TableDesc> Table<D> {
         self.delete_mask.remove(key, txn_id, &self.data);
     }
 
-    pub fn clear(&mut self, txn_id: TxnId) {
+    pub(crate) fn clear(&mut self, txn_id: TxnId) {
         self.delete_mask.clear(txn_id);
-        self.poisoned.set(false, txn_id);
         self.indexes.clear(txn_id);
     }
 }
 
-impl<D: TableDesc> IndexRead<D::Key, D::Value> for Table<D> {
-    type Iter<'a> = TableIter<'a, D>;
+/// A built-in unique index, which handles non-unique index keys according to `P`.
+#[doc(hidden)]
+pub struct UniqueIndex<D: TableDesc, P> {
+    table: Table<D>,
+    /// Set if a non-unique index key was inserted (with the `poison` policy).
+    poisoned: VersionedValue<bool>,
+    _policy: PhantomData<P>,
+}
+
+impl<D: TableDesc, P> Default for UniqueIndex<D, P> {
+    fn default() -> Self {
+        UniqueIndex {
+            table: Table::default(),
+            poisoned: VersionedValue::new(false, TxnId::FIRST),
+            _policy: PhantomData,
+        }
+    }
+}
+
+impl<D: TableDesc, P> UniqueIndex<D, P> {
+    fn is_poisoned(&self, txn_id: TxnId) -> bool {
+        self.poisoned.get(txn_id).copied().unwrap_or(false)
+    }
+}
+
+/// The policies for handling non-unique index keys, named by their keywords in `store!`.
+#[doc(hidden)]
+#[allow(non_camel_case_types)]
+pub mod policy {
+    use super::{TableDesc, TxnId, UniqueIndex};
+
+    /// How a [`UniqueIndex`] handles an index key which is already present (see `store!`).
+    #[doc(hidden)]
+    pub trait UniquePolicy: Sized {
+        /// `key` is already present in `index`, and is being inserted again with `base_key`.
+        fn on_non_unique<D: TableDesc>(
+            index: &mut UniqueIndex<D, Self>,
+            key: D::Key,
+            base_key: D::Value,
+            txn_id: TxnId,
+        );
+    }
+
+    /// The `poison` policy.
+    pub struct poison;
+
+    impl UniquePolicy for poison {
+        fn on_non_unique<D: TableDesc>(
+            index: &mut UniqueIndex<D, Self>,
+            _: D::Key,
+            _: D::Value,
+            txn_id: TxnId,
+        ) {
+            index.poisoned.set(true, txn_id);
+        }
+    }
+
+    /// The `assert` policy.
+    pub struct assert;
+
+    impl UniquePolicy for assert {
+        fn on_non_unique<D: TableDesc>(
+            _: &mut UniqueIndex<D, Self>,
+            _: D::Key,
+            _: D::Value,
+            _: TxnId,
+        ) {
+            panic!("Index key is non-unique for index `{}`", D::NAME);
+        }
+    }
+
+    /// The `replace` policy.
+    pub struct replace;
+
+    impl UniquePolicy for replace {
+        fn on_non_unique<D: TableDesc>(
+            index: &mut UniqueIndex<D, Self>,
+            key: D::Key,
+            base_key: D::Value,
+            txn_id: TxnId,
+        ) {
+            index.table.insert(key, base_key, txn_id);
+        }
+    }
+
+    /// The `ignore` policy.
+    pub struct ignore;
+
+    impl UniquePolicy for ignore {
+        fn on_non_unique<D: TableDesc>(
+            _: &mut UniqueIndex<D, Self>,
+            _: D::Key,
+            _: D::Value,
+            _: TxnId,
+        ) {
+        }
+    }
+}
+
+impl<D: TableDesc, P: policy::UniquePolicy> CustomIndex<D::Key, D::Value> for UniqueIndex<D, P> {
+    type Iter<'a>
+        = TableIter<'a, D>
+    where
+        P: 'a;
 
     fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        self.get(key, txn_id)
+        if self.is_poisoned(txn_id) {
+            return None;
+        }
+        self.table.get(key, txn_id)
     }
 
     fn iter(&self, txn_id: TxnId) -> TableIter<'_, D> {
-        Table::iter(self, txn_id)
+        self.table.iter(txn_id)
     }
 
-    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
-        self.check_poisoned(txn_id)
-    }
-}
-
-impl<D: MultiIndexDesc> Table<D> {
-    /// Add `base_key` to the base keys for `index_key`.
-    pub fn insert_base_key<Q>(&mut self, index_key: D::Key, base_key: &Q, txn_id: TxnId)
-    where
-        <D::BaseTable as TableDesc>::Key: Borrow<Q>,
-        Q: ?Sized + Eq + ToOwned<Owned = <D::BaseTable as TableDesc>::Key>,
-    {
-        let found = self.with_mut(
-            &index_key,
-            |keys| {
-                if !keys.iter().any(|k| k.borrow() == base_key) {
-                    keys.push(base_key.to_owned());
-                }
-            },
-            txn_id,
-        );
-        if found.is_none() {
-            self.insert(index_key, vec![base_key.to_owned()], txn_id);
+    fn insert(&mut self, key: D::Key, base_key: D::Value, txn_id: TxnId) {
+        if self.get(&key, txn_id).is_none() {
+            self.table.insert(key, base_key, txn_id);
+        } else {
+            P::on_non_unique(self, key, base_key, txn_id);
         }
     }
 
-    /// Remove `base_key` from the base keys for `index_key`, removing `index_key` if it has no
-    /// base keys left.
-    pub fn remove_base_key<Q>(&mut self, index_key: &D::Key, base_key: &Q, txn_id: TxnId)
+    fn remove(&mut self, key: &D::Key, txn_id: TxnId) {
+        self.table.delete(key, txn_id);
+    }
+
+    fn clear(&mut self, txn_id: TxnId) {
+        self.table.clear(txn_id);
+        self.poisoned.set(false, txn_id);
+    }
+
+    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
+        self.table.check_txn_consistency(txn_id)?;
+        if self.is_poisoned(txn_id) {
+            return Err(Error::NonUniqueIndexKey(D::NAME));
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self, txn_id: TxnId) {
+        self.table.commit_without_notifications(txn_id);
+    }
+
+    fn rollback(&mut self, txn_id: TxnId) -> bool {
+        self.table.gc_txn(txn_id);
+        self.poisoned.gc_txn(txn_id);
+        true
+    }
+
+    fn rebuild<'a>(&mut self, _: impl Iterator<Item = (D::Key, &'a D::Value)>)
     where
-        <D::BaseTable as TableDesc>::Key: Borrow<Q>,
-        Q: ?Sized + Eq,
+        D::Value: 'a,
+    {
+        unreachable!("rollback always succeeds");
+    }
+}
+
+impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> CustomMultiIndex<D::Key, B> for Table<D> {
+    type BaseKeys<'a>
+        = slice::Iter<'a, B>
+    where
+        B: 'a;
+
+    type Iter<'a>
+        = Map<TableIter<'a, D>, fn((&'a D::Key, &'a Vec<B>)) -> (&'a D::Key, slice::Iter<'a, B>)>
+    where
+        B: 'a;
+
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<slice::Iter<'_, B>>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        Table::get(self, key, txn_id).map(|keys| keys.iter())
+    }
+
+    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_> {
+        Table::iter(self, txn_id).map(|(k, v)| (k, v.iter()))
+    }
+
+    fn insert(&mut self, key: D::Key, base_key: B, txn_id: TxnId) {
+        match Table::get(self, &key, txn_id) {
+            Some(keys) if keys.contains(&base_key) => {}
+            Some(_) => {
+                self.with_mut(&key, |keys| keys.push(base_key), txn_id);
+            }
+            None => Table::insert(self, key, vec![base_key], txn_id),
+        }
+    }
+
+    fn remove<R>(&mut self, key: &D::Key, base_key: &R, txn_id: TxnId)
+    where
+        B: Borrow<R>,
+        R: ?Sized + Eq,
     {
         let empty = self.with_mut(
-            index_key,
+            key,
             |keys| {
                 keys.retain(|k| k.borrow() != base_key);
                 keys.is_empty()
@@ -1148,8 +1407,28 @@ impl<D: MultiIndexDesc> Table<D> {
             txn_id,
         );
         if empty == Some(true) {
-            self.delete(index_key, txn_id);
+            self.delete(key, txn_id);
         }
+    }
+
+    fn clear(&mut self, txn_id: TxnId) {
+        Table::clear(self, txn_id);
+    }
+
+    fn commit(&mut self, txn_id: TxnId) {
+        self.commit_without_notifications(txn_id);
+    }
+
+    fn rollback(&mut self, txn_id: TxnId) -> bool {
+        self.gc_txn(txn_id);
+        true
+    }
+
+    fn rebuild<'a>(&mut self, _: impl Iterator<Item = (D::Key, &'a B)>)
+    where
+        B: 'a,
+    {
+        unreachable!("rollback always succeeds");
     }
 }
 

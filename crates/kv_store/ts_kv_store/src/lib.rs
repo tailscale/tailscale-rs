@@ -182,6 +182,8 @@
 //! never gives it up (e.g., by panicking without calling destructors, or leaking the transaction
 //! handle), then the KV store cannot be recovered.
 
+#![allow(clippy::type_complexity)]
+
 extern crate alloc;
 #[doc(hidden)]
 pub extern crate alloc as __alloc;

@@ -28,7 +28,7 @@ use std::{
 
 use crate::{
     Owner, SubscriptionResult,
-    schema::{Desc, GeneratedStorage, PrimaryDesc, SingletonDesc},
+    schema::{Desc, GeneratedStorage, PrimaryTableDesc, SingletonDesc},
     storage::{SingletonSlot, Storage},
 };
 
@@ -96,7 +96,7 @@ impl<Notification: Clone> Default for Notifications<Notification> {
 /// upsert event (`KeyUpsert` or `TableUpsert`). A subscription to a single key only sees changes
 /// to that key; a subscription to the whole table (or store) sees changes to every key.
 #[non_exhaustive]
-pub enum Event<D: PrimaryDesc> {
+pub enum Event<D: PrimaryTableDesc> {
     /// The table has been cleared.
     TableClear,
     /// Keys have been inserted or mutated, and either more than one key changed or the table was
@@ -119,7 +119,7 @@ pub enum SingletonEvent<D: SingletonDesc> {
     Remove,
 }
 
-impl<D: PrimaryDesc> fmt::Debug for Event<D>
+impl<D: PrimaryTableDesc> fmt::Debug for Event<D>
 where
     D::Key: fmt::Debug,
 {
@@ -134,7 +134,7 @@ where
     }
 }
 
-impl<D: PrimaryDesc> Clone for Event<D> {
+impl<D: PrimaryTableDesc> Clone for Event<D> {
     fn clone(&self) -> Self {
         match self {
             Self::TableClear => Self::TableClear,
@@ -146,7 +146,7 @@ impl<D: PrimaryDesc> Clone for Event<D> {
     }
 }
 
-impl<D: PrimaryDesc> PartialEq for Event<D>
+impl<D: PrimaryTableDesc> PartialEq for Event<D>
 where
     D::NotificationValue: PartialEq,
 {
@@ -162,7 +162,7 @@ where
     }
 }
 
-impl<D: PrimaryDesc> Eq for Event<D> where D::NotificationValue: PartialEq {}
+impl<D: PrimaryTableDesc> Eq for Event<D> where D::NotificationValue: PartialEq {}
 
 impl<D: SingletonDesc> fmt::Debug for SingletonEvent<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -292,7 +292,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     ///
     /// May be an over-approximation (i.e., there may be false positives but not false
     /// negatives, as long as the global lock on the store is held).
-    pub fn has_subscribers<D: PrimaryDesc>(&self) -> bool {
+    pub fn has_subscribers<D: PrimaryTableDesc>(&self) -> bool {
         if !self.all.lock().unwrap().is_empty() {
             return true;
         }
@@ -307,7 +307,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Process events for `D` and add to `notifications`.
-    pub fn collect_events<D: PrimaryDesc>(
+    pub fn collect_events<D: PrimaryTableDesc>(
         &self,
         notifications: &mut Notifications<NotificationType<D>>,
         events: HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
@@ -461,7 +461,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Associate a subscription ID with a single key of a table.
-    pub(crate) fn create_table_subscription<D: PrimaryDesc>(
+    pub(crate) fn create_table_subscription<D: PrimaryTableDesc>(
         &self,
         key: D::Key,
         subscriber: Subscriber,
@@ -481,7 +481,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Associate a subscription ID with a table (watching all keys).
-    pub(crate) fn create_table_subscription_all<D: PrimaryDesc>(
+    pub(crate) fn create_table_subscription_all<D: PrimaryTableDesc>(
         &self,
         subscriber: Subscriber,
     ) -> SubscriptionResult
@@ -496,7 +496,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Pass the subscriptions for the table `D` to `f`, creating them if there are none.
-    fn with_table_subscriptions<D: PrimaryDesc>(
+    fn with_table_subscriptions<D: PrimaryTableDesc>(
         &self,
         f: impl FnOnce(&mut TableSubscriptions<D::Key>),
     ) where
@@ -510,7 +510,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Remove a subscription from a specific table (whether single-key or whole-table).
-    pub(crate) fn remove_table_subscription<D: PrimaryDesc>(&self, subscription: Subscription) {
+    pub(crate) fn remove_table_subscription<D: PrimaryTableDesc>(&self, subscription: Subscription) {
         let mut tables = self.tables.lock().unwrap();
         let Some(subs) = tables.get_mut(&TypeId::of::<D>()) else {
             return;
@@ -545,7 +545,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
 }
 
 /// Send a notification for the current value of `key` to `subscription`.
-pub(crate) fn send_current<D: PrimaryDesc>(
+pub(crate) fn send_current<D: PrimaryTableDesc>(
     subs: &Subscriptions<<D::Storage as GeneratedStorage>::Notification>,
     storage: &Storage<D::Storage>,
     key: D::Key,
@@ -669,7 +669,7 @@ impl<N: Clone> Notifications<N> {
 /// into the public event type and wrapping it in the table's notification type.
 ///
 /// `filter` is used when a subscriber is just watching a single key in the table, not all of them.
-fn process_events<D: PrimaryDesc>(
+fn process_events<D: PrimaryTableDesc>(
     events: &HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
     filter: Option<&D::Key>,
 ) -> Vec<NotificationType<D>> {
