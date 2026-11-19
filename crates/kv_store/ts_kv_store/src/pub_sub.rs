@@ -510,7 +510,10 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 
     /// Remove a subscription from a specific table (whether single-key or whole-table).
-    pub(crate) fn remove_table_subscription<D: PrimaryTableDesc>(&self, subscription: Subscription) {
+    pub(crate) fn remove_table_subscription<D: PrimaryTableDesc>(
+        &self,
+        subscription: Subscription,
+    ) {
         let mut tables = self.tables.lock().unwrap();
         let Some(subs) = tables.get_mut(&TypeId::of::<D>()) else {
             return;

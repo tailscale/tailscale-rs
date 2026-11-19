@@ -13,8 +13,9 @@ use core::{borrow::Borrow, hash::Hash, ops::Deref};
 use crate::{
     GeneratedStorage, Owner, Result, iter,
     schema::{
-        self, Desc, IndexDesc, IndexRead, MultiIndexDesc, MultiIndexRead, PrimaryTableDesc,
-        SingletonDesc, TableDesc, UniqueIndexDesc,
+        self, Desc, IndexDesc, MultiIndexDesc, PrimaryTableDesc, SingletonDesc, TableDesc,
+        UniqueIndexDesc,
+        index::{IndexRead, MultiIndexRead},
     },
     storage::{SingletonSlot, Storage, Table},
     transactions::{TransactionRef, TxnId},

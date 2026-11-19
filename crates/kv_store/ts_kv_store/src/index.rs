@@ -2602,7 +2602,7 @@ mod test_custom_index {
 
     use crate::{
         Owner,
-        schema::{CustomIndex, CustomMultiIndex},
+        schema::index::{CustomIndex, CustomMultiIndex},
         store,
         transactions::TxnId,
     };

@@ -4,7 +4,10 @@ use std::collections::{HashSet, hash_map};
 
 use crate::{
     operations::{BaseKey, BaseValue, IndexKey, StorageGuard},
-    schema::{IndexRead, MultiIndexDesc, MultiIndexRead, PrimaryTableDesc, TableDesc, UniqueIndexDesc},
+    schema::{
+        MultiIndexDesc, PrimaryTableDesc, TableDesc, UniqueIndexDesc,
+        index::{IndexRead, MultiIndexRead},
+    },
     storage::{Table, VersionedValue},
     transactions::TxnId,
 };

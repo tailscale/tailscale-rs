@@ -1,540 +1,3 @@
-//! Traits and macros for defining the KvStore schema.
-
-use alloc::sync::Arc;
-use core::{any::Any, borrow::Borrow, hash::Hash, ops::Deref};
-
-use crate::{
-    Owner, Result,
-    pub_sub::Subscriptions,
-    storage::{DefaultValue, SingletonSlot, Table, VersionedValue},
-    transactions::TxnId,
-};
-
-/// Describes a kind of data in the store, either a singleton or table.
-#[doc(hidden)]
-pub trait Desc: Sized + 'static {
-    /// The data's owner.
-    const OWNER: Owner;
-    /// The storage for this data.
-    type Storage: GeneratedStorage;
-}
-
-/// A singleton key/value.
-///
-/// Prefer to use the macros in this module rather than this trait directly.
-///
-/// # Safety
-///
-/// `value_ptr` must return a pointer derived from its argument `storage` without
-/// creating a reference to `*storage`, and which does not overlap any other singleton's value or any
-/// table in `Self::Storage`. The transactional API relies on this to give each
-/// view of a transaction exclusive access to its own data.
-#[doc(hidden)]
-pub unsafe trait SingletonDesc: Desc {
-    /// The type of the value.
-    type Value: Any + Send + Sync;
-    /// How the value is stored (determines whether the singleton is optional, or uses a default).
-    type Slot: SingletonSlot<Value = Self::Value>;
-    /// The type of the notification for this singleton (either `Self::Value` or `()`).
-    type NotificationValue: Clone;
-
-    /// Get a reference to the field storing this singleton in `storage`.
-    fn get_ref(storage: &Self::Storage) -> &Self::Slot;
-
-    /// Project a pointer to the storage to a pointer to the field storing this singleton, without
-    /// creating a reference to the storage.
-    ///
-    /// # Safety
-    ///
-    /// `storage` must be valid for reads and writes (i.e., dereferenceable).
-    unsafe fn value_ptr(storage: *mut Self::Storage) -> *mut Self::Slot;
-
-    /// Convert a reference to this singleton's value to its notification value.
-    fn notification_value(value: &Self::Value) -> &Self::NotificationValue;
-
-    /// Create a notification from an event.
-    fn make_notification(
-        event: crate::SingletonEvent<Self>,
-    ) -> <Self::Storage as GeneratedStorage>::Notification;
-}
-
-/// A singleton which may have no value (i.e., which is declared without `default`).
-#[doc(hidden)]
-pub trait OptionalSingletonDesc:
-    SingletonDesc<Slot = VersionedValue<Option<<Self as SingletonDesc>::Value>>>
-{
-}
-
-impl<S> OptionalSingletonDesc for S where
-    S: SingletonDesc<Slot = VersionedValue<Option<<S as SingletonDesc>::Value>>>
-{
-}
-
-/// A singleton declared with `default`, which always has a value.
-#[doc(hidden)]
-pub trait DefaultSingletonDesc:
-    SingletonDesc<Slot = DefaultValue<<Self as SingletonDesc>::Value>, Value: Default>
-{
-}
-
-impl<S> DefaultSingletonDesc for S where
-    S: SingletonDesc<Slot = DefaultValue<<S as SingletonDesc>::Value>, Value: Default>
-{
-}
-
-/// Describes tabular key/values in the store.
-///
-/// Prefer to use the macros in this module rather than this trait directly.
-#[doc(hidden)]
-pub trait TableDesc: Desc {
-    /// The name of the table.
-    const NAME: &'static str;
-
-    /// The type of the key.
-    type Key: Hash + Eq + Clone;
-    /// The type of the value.
-    type Value: Any + Send + Sync;
-    /// The storage type for this table's indexes.
-    type IndexStorage: IndexWrite<Self::Key, Self::Value>;
-}
-
-/// A primary table (i.e., not an index).
-///
-/// Among other things, only these tables can generate notifications to subscribers.
-///
-/// # Safety
-///
-/// `table_ptr` must return a pointer derived from its argument `storage` without creating a
-/// reference to `*storage`, and which does not overlap any singleton's value or any other table in
-/// `Self::Storage`. The transactional API relies on this to give each view of a transaction
-/// exclusive access to its own data.
-#[doc(hidden)]
-pub unsafe trait PrimaryTableDesc: TableDesc {
-    /// The type of the notification for this table (either `Self::Value` or `()`).
-    type NotificationValue: Clone;
-
-    /// Get a reference to the table in `storage`.
-    fn get_table(storage: &Self::Storage) -> &Table<Self>;
-
-    /// Project a pointer to the storage to a pointer to this table, without creating a reference
-    /// to the storage.
-    ///
-    /// # Safety
-    ///
-    /// `storage` must be valid for reads and writes (i.e., dereferenceable).
-    unsafe fn table_ptr(storage: *mut Self::Storage) -> *mut Table<Self>;
-
-    /// Compare two references to this table's value type, returns `true` if the value type impls
-    /// `PartialEq` and the values are equal.
-    ///
-    /// **Panics** if `Self::Value` does not impl `PartialEq`.
-    fn value_eq(a: &Self::Value, b: &Self::Value) -> bool;
-
-    /// Create a notification from an event.
-    fn make_notification(
-        event: crate::Event<Self>,
-    ) -> <Self::Storage as GeneratedStorage>::Notification;
-
-    /// Create a value for a notification, possibly by cloning `value`.
-    fn clone_value_for_notification(value: &Self::Value) -> Self::NotificationValue;
-}
-
-/// A table which may have indexes.
-#[doc(hidden)]
-pub trait Indexable: PrimaryTableDesc {
-    /// An object containing this table's indexes (with an owner).
-    type Indexes: From<(Arc<crate::KvStore<Self::Storage>>, Owner)>;
-
-    /// An object giving read/write access to this table's indexes in a transaction.
-    type TransactionIndexes<'guard, 'txn>: From<&'txn mut crate::TableTransaction<'guard, Self>>
-    where
-        'guard: 'txn;
-
-    /// An object giving read-only access to this table's indexes in a read/write transaction.
-    type RoTransactionIndexes<'guard, 'txn>: From<&'txn crate::TableTransaction<'guard, Self>>
-    where
-        'guard: 'txn;
-
-    /// An object giving read-only access to this table's indexes in a read-only transaction.
-    type RoRoTransactionIndexes<'guard, 'txn>: From<&'txn crate::RoTableTransaction<'guard, Self>>
-    where
-        'guard: 'txn;
-}
-
-/// An index of a table.
-///
-/// # Safety
-///
-/// `index_ptr` must return a pointer derived from its argument `storage` without creating a
-/// reference to `*storage`, which is contained in the table of `Self::BaseTable` (as returned by its
-/// `table_ptr`), and which does not overlap any other index.
-#[doc(hidden)]
-pub unsafe trait IndexDesc: Desc {
-    /// The type of the index key.
-    type Key: Hash + Eq;
-    /// The table which is indexed.
-    type BaseTable: PrimaryTableDesc + TableDesc<Storage = Self::Storage>;
-    /// How the index is stored.
-    type IndexStorage;
-
-    /// Get a reference to the index in `storage`.
-    fn get_index(storage: &Self::Storage) -> &Self::IndexStorage;
-
-    /// Project a pointer to the storage to a pointer to this index, without creating a reference
-    /// to the storage.
-    ///
-    /// # Safety
-    ///
-    /// `storage` must be valid for reads and writes (i.e., dereferenceable).
-    unsafe fn index_ptr(storage: *mut Self::Storage) -> *mut Self::IndexStorage;
-}
-
-/// An index where each index key maps to a single row of the base table.
-#[doc(hidden)]
-pub trait UniqueIndexDesc:
-    IndexDesc<
-    IndexStorage: IndexRead<
-        <Self as IndexDesc>::Key,
-        <<Self as IndexDesc>::BaseTable as TableDesc>::Key,
-    >,
->
-{
-}
-
-impl<D> UniqueIndexDesc for D where
-    D: IndexDesc<
-        IndexStorage: IndexRead<
-            <D as IndexDesc>::Key,
-            <<D as IndexDesc>::BaseTable as TableDesc>::Key,
-        >,
-    >
-{
-}
-
-/// An index where each index key may map to multiple rows of the base table.
-#[doc(hidden)]
-pub trait MultiIndexDesc:
-    IndexDesc<
-    IndexStorage: MultiIndexRead<
-        <Self as IndexDesc>::Key,
-        <<Self as IndexDesc>::BaseTable as TableDesc>::Key,
-    >,
->
-{
-}
-
-impl<D> MultiIndexDesc for D where
-    D: IndexDesc<
-        IndexStorage: MultiIndexRead<
-            <D as IndexDesc>::Key,
-            <<D as IndexDesc>::BaseTable as TableDesc>::Key,
-        >,
-    >
-{
-}
-
-/// Read access to an index which maps keys of type `K` to base table keys of type `B`.
-#[doc(hidden)]
-pub trait IndexRead<K, B> {
-    /// Iterator over the index's key/base key pairs.
-    type Iter<'a>: Iterator<Item = (&'a K, &'a B)>
-    where
-        Self: 'a,
-        K: 'a,
-        B: 'a;
-
-    /// The base key for `key`, as visible to `txn_id`.
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&B>
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
-
-    /// Iterate the index, as visible to `txn_id`.
-    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_>;
-
-    /// Returns an error if the index is inconsistent (e.g., poisoned).
-    fn check_consistent(&self, txn_id: TxnId) -> Result<()>;
-}
-
-/// Read access to an index which maps keys of type `K` to zero or more base table keys of type `B`.
-#[doc(hidden)]
-pub trait MultiIndexRead<K, B> {
-    /// Iterator over the base keys for an index key.
-    type BaseKeys<'a>: Iterator<Item = &'a B>
-    where
-        Self: 'a,
-        B: 'a;
-
-    /// Iterator over the index's keys and their base keys.
-    type Iter<'a>: Iterator<Item = (&'a K, Self::BaseKeys<'a>)>
-    where
-        Self: 'a,
-        K: 'a,
-        B: 'a;
-
-    /// The base keys for `key`, as visible to `txn_id`.
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
-
-    /// Iterate the index, as visible to `txn_id`.
-    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_>;
-}
-
-/// Transaction lifecycle operations on the storage of an index which maps keys of type `K` to keys
-/// of the base table of type `B`.
-#[doc(hidden)]
-pub trait IndexLifecycle<K, B> {
-    /// Returns an error if transaction `txn_id` cannot be committed.
-    fn check_consistent(&self, txn_id: TxnId) -> Result<()>;
-
-    /// Commit transaction `txn_id`.
-    fn commit(&mut self, txn_id: TxnId);
-
-    /// Clear the whole index in transaction `txn_id`.
-    fn clear(&mut self, txn_id: TxnId);
-
-    /// Rollback transaction `txn_id`. `committed` yields the index key and base key of every entry
-    /// as of the last committed transaction.
-    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (K, &'a B)>)
-    where
-        B: 'a;
-}
-
-/// Maintains an index (other than a built-in unique index) as base table rows are added and removed.
-#[doc(hidden)]
-pub trait BaseKeyWrite<K, B> {
-    /// Map `index_key` to `base_key`.
-    fn insert_base_key<Q>(&mut self, index_key: K, base_key: &Q, txn_id: TxnId)
-    where
-        B: Borrow<Q>,
-        Q: ?Sized + Eq + ToOwned<Owned = B>;
-
-    /// Remove the mapping from `index_key` to `base_key`, if there is one.
-    fn remove_base_key<Q>(&mut self, index_key: &K, base_key: &Q, txn_id: TxnId)
-    where
-        B: Borrow<Q>,
-        Q: ?Sized + Eq;
-}
-
-/// Operations on the indexes of a table.
-#[doc(hidden)]
-pub trait IndexWrite<K: Hash + Eq, V: Any + Send + Sync>: Default {
-    /// Whether there are any indexes, i.e., whether the methods of this trait do anything. If
-    /// `false`, callers may skip work which only serves to maintain indexes.
-    const HAS_INDEXES: bool = true;
-
-    /// Clear the whole index.
-    fn clear(&mut self, txn_id: TxnId);
-
-    /// An item has been inserted into the base table.
-    fn on_insert<Q>(&mut self, key: &Q, value: &V, txn_id: TxnId)
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq + ToOwned<Owned = K>;
-
-    /// An item has been removed from the base table.
-    fn on_remove<Q>(&mut self, key: &Q, value: &V, txn_id: TxnId)
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
-}
-
-impl<K: Hash + Eq, V: Any + Send + Sync> IndexWrite<K, V> for () {
-    const HAS_INDEXES: bool = false;
-
-    fn clear(&mut self, _txn_id: TxnId) {}
-
-    fn on_insert<Q>(&mut self, _key: &Q, _value: &V, _txn_id: TxnId)
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-    {
-    }
-
-    fn on_remove<Q>(&mut self, _key: &Q, _value: &V, _txn_id: TxnId)
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-    {
-    }
-}
-
-/// A user-implemented index which maps index keys (`K`) to keys of the base table (`B`).
-///
-/// Custom indexes are not externally versioned: mutations are applied immediately, and the store calls
-/// `commit` or `rollback` when the transaction which made them is committed or rolled back. Only
-/// one transaction can mutate the store at a time, and readers are excluded while it is live.
-///
-/// See the docs for the [`store`](crate::store) macro for how to declare a custom index.
-pub trait CustomIndex<K: Hash + Eq, B>: Default {
-    /// Iterator over the index's key/base key pairs.
-    type Iter<'a>: Iterator<Item = (&'a K, &'a B)>
-    where
-        Self: 'a,
-        K: 'a,
-        B: 'a;
-
-    /// The base key for `key`, as visible to `txn_id`, if there is one.
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&B>
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
-
-    /// Iterate the index's key/base key pairs, as visible to `txn_id`.
-    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_>;
-
-    /// Map `key` to `base_key` in transaction `txn_id`.
-    ///
-    /// `key` may already be present in the index (mapped to a different base key). The
-    /// implementation may handle this however it likes, e.g., by replacing the existing entry, or
-    /// by poisoning the index (see `check_consistent`).
-    fn insert(&mut self, key: K, base_key: B, txn_id: TxnId);
-
-    /// Remove `key` from the index in transaction `txn_id`.
-    fn remove(&mut self, key: &K, txn_id: TxnId);
-
-    /// Remove all entries from the index in transaction `txn_id`.
-    fn clear(&mut self, txn_id: TxnId);
-
-    /// Returns an error if the index, as visible to `txn_id`, is inconsistent (e.g., because it
-    /// has non-unique keys).
-    ///
-    /// Accessing an inconsistent index returns an error or panics, and a transaction cannot be
-    /// committed while an index is inconsistent.
-    fn check_consistent(&self, txn_id: TxnId) -> Result<()>;
-
-    /// Transaction `txn_id` has been committed.
-    fn commit(&mut self, txn_id: TxnId);
-
-    /// Rollback transaction `txn_id`.
-    ///
-    /// Returns `true` if the transaction could be rolled back. Returning `false` is not considered
-    /// an error condition, and implementers may always return false, in which case the store calls
-    /// `rebuild`.
-    fn rollback(&mut self, txn_id: TxnId) -> bool;
-
-    /// Rebuild the whole index from `data` (the index key and base key of every entry, as of the
-    /// last committed transaction). Implementers may choose to clear and reindex, or to do
-    /// something more incremental.
-    fn rebuild<'a>(&mut self, data: impl Iterator<Item = (K, &'a B)>)
-    where
-        B: 'a;
-}
-
-/// A user-implemented index which maps each index key (`K`) to zero or more keys of the base table
-/// (`B`).
-///
-/// Like [`CustomIndex`], except that the index may have many base keys for each index key, it
-/// has the API of a multi-index, and it cannot be inconsistent.
-pub trait CustomMultiIndex<K: Hash + Eq, B>: Default {
-    /// Iterator over the base keys for an index key.
-    type BaseKeys<'a>: Iterator<Item = &'a B>
-    where
-        Self: 'a,
-        B: 'a;
-
-    /// Iterator over the index's keys and their base keys.
-    type Iter<'a>: Iterator<Item = (&'a K, Self::BaseKeys<'a>)>
-    where
-        Self: 'a,
-        K: 'a,
-        B: 'a;
-
-    /// The base keys for `key`, as visible to `txn_id`, if there are any.
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
-
-    /// Iterate the index's keys and their base keys, as visible to `txn_id`.
-    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_>;
-
-    /// Add `base_key` to the base keys for `key` in transaction `txn_id`.
-    fn insert(&mut self, key: K, base_key: B, txn_id: TxnId);
-
-    /// Remove `base_key` from the base keys for `key` in transaction `txn_id`.
-    fn remove<R>(&mut self, key: &K, base_key: &R, txn_id: TxnId)
-    where
-        B: Borrow<R>,
-        R: ?Sized + Eq;
-
-    /// Remove all entries from the index in transaction `txn_id`.
-    fn clear(&mut self, txn_id: TxnId);
-
-    /// See [`CustomIndex::commit`].
-    fn commit(&mut self, txn_id: TxnId);
-
-    /// See [`CustomIndex::rollback`].
-    fn rollback(&mut self, txn_id: TxnId) -> bool;
-
-    /// See [`CustomIndex::rebuild`].
-    fn rebuild<'a>(&mut self, data: impl Iterator<Item = (K, &'a B)>)
-    where
-        B: 'a;
-}
-
-/// A storage implementation.
-///
-/// This should be considered a sealed trait and not implemented except by the macros in this module.
-/// Unfortunately it has to be public because of macro visibility hygiene.
-#[doc(hidden)]
-pub trait GeneratedStorage: Default + Send + Sync + 'static {
-    /// An enum of all notification types.
-    type Notification: Clone + Send + 'static;
-    /// The type of transactions for a store.
-    ///
-    /// Will contain a field for each singleton and table.
-    type Transaction<'a>: Into<crate::Transaction<'a, Self>>
-    where
-        Self: 'a;
-    /// A read-only version of `Transaction`.
-    type RoTransaction<'a>: Into<crate::RoTransaction<'a, Self>>
-    where
-        Self: 'a;
-
-    /// Commit a transaction by applying all tables' transaction state to their permanent data.
-    ///
-    /// This operation must be atomic. I.e., it will only fail without any tables committed, and if it
-    /// succeeds, then all masks have committed.
-    fn commit_txn(
-        &mut self,
-        txn_id: TxnId,
-        notifications: &mut crate::Notifications<Self::Notification>,
-        subscriptions: &Subscriptions<Self::Notification>,
-    ) -> crate::Result<()>;
-
-    /// Delete any uncommitted per-transaction state associated with `txn_id` held in tables.
-    fn gc_txn(&mut self, txn_id: TxnId);
-
-    /// Create a schema-specific transaction from a general transaction object.
-    fn make_txn<'a>(store_txn: crate::Transaction<'a, Self>) -> Self::Transaction<'a>;
-
-    /// Create a schema-specific read-only transaction from a general transaction object.
-    fn make_ro_txn<'a>(store_txn: crate::RoTransaction<'a, Self>) -> Self::RoTransaction<'a>;
-}
-
-/// Implemented by stores generated by the schema macros.
-pub trait GeneratedStore:
-    'static + Send + Sync + Deref<Target = crate::KvStore<Self::Storage>>
-{
-    /// The underlying storage for the store.
-    type Storage: GeneratedStorage;
-
-    /// Create a new, empty KV store as described by the schema macros, which sends
-    /// notifications of changes to `notifier`.
-    ///
-    /// The store keeps only a weak reference to `notifier`, so the caller is responsible for
-    /// keeping the notifier alive (e.g. via the subscribers it hands out). Once the last
-    /// strong reference is dropped the store stops sending notifications.
-    fn from_notifier(
-        n: alloc::sync::Weak<
-            dyn crate::Notifier<Notification = <Self::Storage as GeneratedStorage>::Notification>,
-        >,
-    ) -> Self;
-}
-
 /// Declare the schema of a key/value store. Generates the store itself with the specified tables and
 /// singletons.
 ///
@@ -650,12 +113,12 @@ pub trait GeneratedStore:
 /// ## Custom indexes
 ///
 /// A custom index is declared with `index(field: Type (= closure)?; custom(Impl))`, where `Impl` is
-/// a concrete type which implements [`CustomIndex<Type, KeyType>`](CustomIndex). `Impl` stores the
+/// a concrete type which implements [`CustomIndex<Type, KeyType>`](crate::schema::index::CustomIndex). `Impl` stores the
 /// index and decides how non-unique index keys are handled. Custom indexes have the same user-facing
 /// API as unique indexes.
 ///
 /// A custom multi-index is declared with `custom_multi(Impl)`, where `Impl` implements
-/// [`CustomMultiIndex<Type, KeyType>`](CustomMultiIndex). Custom multi-indexes have the same
+/// [`CustomMultiIndex<Type, KeyType>`](crate::schema::index::CustomMultiIndex). Custom multi-indexes have the same
 /// user-facing API as `multi` indexes.
 ///
 /// # Notifications
@@ -823,7 +286,7 @@ macro_rules! store {
                 $(
                     $(
                         self.$name.check_txn_consistency(_txn_id)?;
-                        $(<_ as $crate::schema::IndexLifecycle<$field_ty, $key_ty>>::check_consistent(&self.$name.indexes.$field, _txn_id)?;)*
+                        $(<_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::check_consistent(&self.$name.indexes.$field, _txn_id)?;)*
                     )*
                 )?
                 $(
@@ -841,7 +304,7 @@ macro_rules! store {
                         if !events.is_empty() {
                             _subscriptions.collect_events::<$name>(_notifications, events);
                         }
-                        $(<_ as $crate::schema::IndexLifecycle<$field_ty, $key_ty>>::commit(&mut self.$name.indexes.$field, _txn_id);)*
+                        $(<_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::commit(&mut self.$name.indexes.$field, _txn_id);)*
                     )*
                 )?
 
@@ -856,7 +319,7 @@ macro_rules! store {
                             // The base table must already be rolled back, so that `rows` are the
                             // committed rows.
                             let (indexes, rows) = self.$name.indexes_and_rows(_txn_id);
-                            <_ as $crate::schema::IndexLifecycle<$field_ty, $key_ty>>::rollback(
+                            <_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::rollback(
                                 &mut indexes.$field,
                                 _txn_id,
                                 rows.flat_map(|(k, v)| index::$name::Storage::$field(v).into_iter().map(move |ik| (ik, k))),
@@ -1012,9 +475,9 @@ macro_rules! store {
                 )*
             }
 
-            impl $crate::schema::IndexWrite<$key_ty, $value_ty> for index::$name::Storage {
+            impl $crate::schema::index::IndexWrite<$key_ty, $value_ty> for index::$name::Storage {
                 fn clear(&mut self, _txn_id: $crate::transactions::TxnId) {
-                    $(<_ as $crate::schema::IndexLifecycle<$field_ty, $key_ty>>::clear(&mut self.$field, _txn_id);)*
+                    $(<_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::clear(&mut self.$field, _txn_id);)*
                 }
 
                 fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId)
@@ -1024,7 +487,7 @@ macro_rules! store {
                 {
                     $({
                         for index_key in index::$name::Storage::$field(_value) {
-                            <_ as $crate::schema::BaseKeyWrite<$field_ty, $key_ty>>::insert_base_key(&mut self.$field, index_key, _key, _txn_id);
+                            <_ as $crate::schema::index::BaseKeyWrite<$field_ty, $key_ty>>::insert_base_key(&mut self.$field, index_key, _key, _txn_id);
                         }
                     })*
                 }
@@ -1036,7 +499,7 @@ macro_rules! store {
                 {
                     $({
                         for index_key in index::$name::Storage::$field(_value) {
-                            <_ as $crate::schema::BaseKeyWrite<$field_ty, $key_ty>>::remove_base_key(&mut self.$field, &index_key, _key, _txn_id);
+                            <_ as $crate::schema::index::BaseKeyWrite<$field_ty, $key_ty>>::remove_base_key(&mut self.$field, &index_key, _key, _txn_id);
                         }
                     })*
                 }
@@ -1452,98 +915,4 @@ macro_rules! notification_value {
     ($value:ident $(; notify(None))? $(; default)?) => {
         &()
     };
-}
-
-#[cfg(test)]
-mod test {
-    use alloc::sync::Arc;
-
-    use crate::Owner;
-
-    const OWNER: Owner = Owner("owner");
-
-    mod single {
-        use super::*;
-
-        store!(
-            kvs: {
-                Foo(Box<u64>; OWNER; notify(Clone)),
-                Bar(Arc<u64>; OWNER; notify(None)),
-                Baz(&'static u64; OWNER),
-                Qux(u64; OWNER),
-            }
-        );
-
-        #[test]
-        fn single() {
-            let store = KvStore::new();
-            store.Foo.insert(OWNER, Box::new(42));
-            assert_eq!(store.Foo.get(OWNER).unwrap(), Box::new(42));
-        }
-    }
-
-    mod table {
-        use super::*;
-
-        store!(tables: { Foo(&'static str => String; OWNER; notify(Clone)), Bar(u32 => Vec<String>; OWNER)});
-
-        #[test]
-        fn table() {
-            let store = KvStore::new();
-
-            store.Foo.insert(OWNER, "hello", "world".to_owned());
-            assert_eq!(store.Foo.get(OWNER, "hello").unwrap(), "world");
-
-            store
-                .Bar
-                .insert(OWNER, 5, vec!["boo".to_owned(), "bang".to_owned()]);
-            assert_eq!(
-                store.Bar.get(OWNER, &5).unwrap(),
-                vec!["boo".to_owned(), "bang".to_owned()]
-            );
-        }
-
-        #[test]
-        fn send_and_sync() {
-            fn require_send<T: Send>(_t: T) {}
-            fn require_sync<T: Sync>(_t: T) {}
-
-            require_send(KvStore::new());
-            require_sync(KvStore::new());
-        }
-    }
-
-    mod table_with_indexes {
-        use super::*;
-
-        #[derive(Clone, Debug)]
-        pub struct BarT {
-            a: String,
-        }
-
-        store!(
-            tables: {
-                Foo(&'static str => String; OWNER; index(len: usize = |v: &String| [v.len()])),
-                Bar(u32 => BarT; OWNER; index(a: String; assert)),
-            }
-        );
-
-        #[test]
-        fn table_with_indexes() {
-            let store = KvStore::new();
-            store.Bar.insert(
-                OWNER,
-                5,
-                BarT {
-                    a: "hello".to_owned(),
-                },
-            );
-            let value = store.Bar.indexes(OWNER).a.get("hello").unwrap();
-            assert_eq!(value.1.a, "hello");
-
-            store.Foo.insert(OWNER, "foo", "hello".to_owned());
-            let value = store.Foo.indexes(OWNER).len.get(&5).unwrap();
-            assert_eq!(value, ("foo", "hello".to_owned()));
-        }
-    }
 }
