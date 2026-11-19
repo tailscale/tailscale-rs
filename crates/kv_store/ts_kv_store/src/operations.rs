@@ -12,7 +12,9 @@ use core::{borrow::Borrow, hash::Hash, ops::Deref};
 
 use crate::{
     GeneratedStorage, Owner, Result, iter,
-    schema::{self, Desc, IndexDesc, MultiIndexDesc, PrimaryDesc, SingletonDesc, TableDesc},
+    schema::{
+        self, Desc, IndexDesc, IndexRead, MultiIndexDesc, PrimaryDesc, SingletonDesc, TableDesc,
+    },
     storage::{SingletonSlot, Storage, Table},
     transactions::{TransactionRef, TxnId},
 };
@@ -40,6 +42,14 @@ pub trait StorageGuard<TableStorage: GeneratedStorage>: Sized {
     /// There must be no live mutable reference to the singleton described by `S` while the
     /// returned reference is live.
     unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(&self) -> &S::Slot;
+
+    /// The storage of the index described by `D`.
+    ///
+    /// # Safety
+    ///
+    /// There must be no live mutable reference to the index described by `D` while the returned
+    /// reference is live.
+    unsafe fn index<D: IndexDesc<Storage = TableStorage>>(&self) -> &D::IndexStorage;
 }
 
 impl<TableStorage: GeneratedStorage> StorageGuard<TableStorage> for Storage<TableStorage> {
@@ -53,6 +63,10 @@ impl<TableStorage: GeneratedStorage> StorageGuard<TableStorage> for Storage<Tabl
 
     unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(&self) -> &S::Slot {
         S::get_ref(&self.tables)
+    }
+
+    unsafe fn index<D: IndexDesc<Storage = TableStorage>>(&self) -> &D::IndexStorage {
+        D::get_index(&self.tables)
     }
 }
 
@@ -178,8 +192,9 @@ pub(crate) type Key<T> = <T as TableDesc>::Key;
 pub(crate) type Value<T> = <T as TableDesc>::Value;
 pub(crate) type BaseKey<T> = <<T as IndexDesc>::BaseTable as TableDesc>::Key;
 pub(crate) type BaseValue<T> = <<T as IndexDesc>::BaseTable as TableDesc>::Value;
-pub(crate) type IndexKey<T> = <T as TableDesc>::Key;
+pub(crate) type IndexKey<T> = <T as IndexDesc>::Key;
 
+pub(crate) type IndexKeyMulti<T> = <T as TableDesc>::Key;
 pub(crate) type BaseKeyMulti<T> = <<T as MultiIndexDesc>::BaseTable as TableDesc>::Key;
 pub(crate) type BaseValueMulti<T> = <<T as MultiIndexDesc>::BaseTable as TableDesc>::Value;
 
@@ -231,7 +246,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         unsafe { check_consistent::<Self::IndexDesc>(&*guard) }?;
         let txn_id = guard.txn_id();
         let base = unsafe { guard.table::<<Self::IndexDesc as IndexDesc>::BaseTable>() };
-        Ok(unsafe { guard.table::<Self::IndexDesc>() }
+        Ok(unsafe { guard.index::<Self::IndexDesc>() }
             .get(key, txn_id)
             .and_then(|base_key| Some(f(base_key, base.get(base_key, txn_id)?))))
     }
@@ -251,7 +266,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         // contract).
         unsafe { check_consistent::<Self::IndexDesc>(&*guard) }?;
         let txn_id = guard.txn_id();
-        Ok(unsafe { guard.table::<Self::IndexDesc>() }
+        Ok(unsafe { guard.index::<Self::IndexDesc>() }
             .get(key, txn_id)
             .map(f))
     }
@@ -323,7 +338,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
     )>
     where
         BaseValueMulti<Self::IndexDesc>: Clone,
-        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        IndexKeyMulti<Self::IndexDesc>: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
         self.with(
@@ -336,7 +351,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
 
     fn with<Q, T, F>(self, key: &Q, f: F, _owner: Owner) -> Option<T>
     where
-        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        IndexKeyMulti<Self::IndexDesc>: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
         F: FnOnce(
             &mut dyn Iterator<
@@ -363,7 +378,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
     /// Clone the base keys for `key`.
     fn base_keys<Q>(self, key: &Q) -> Vec<BaseKeyMulti<Self::IndexDesc>>
     where
-        IndexKey<Self::IndexDesc>: Borrow<Q>,
+        IndexKeyMulti<Self::IndexDesc>: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
         let guard = self.read_lock();
@@ -379,7 +394,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
         f: impl for<'a> FnOnce(
             &mut dyn Iterator<
                 Item = (
-                    &'a IndexKey<Self::IndexDesc>,
+                    &'a IndexKeyMulti<Self::IndexDesc>,
                     iter::BaseRows<'a, Self::IndexDesc>,
                 ),
             >,
@@ -392,7 +407,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
 
     fn with_keys<T>(
         self,
-        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<Self::IndexDesc>>) -> T,
+        f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKeyMulti<Self::IndexDesc>>) -> T,
     ) -> T {
         self.with_iter(|iter| f(&mut iter.map(|(k, _)| k)))
     }
@@ -420,7 +435,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
 /// Precondition: there must be no live mutable reference to the table described by `D`.
 unsafe fn check_consistent<D: IndexDesc>(guard: &impl StorageGuard<D::Storage>) -> Result<()> {
     // SAFETY: guaranteed by the precondition.
-    unsafe { guard.table::<D>() }.check_poisoned(guard.txn_id())
+    unsafe { guard.index::<D>() }.check_consistent(guard.txn_id())
 }
 
 pub(crate) trait OpsMut<'txn, D: Desc>: Sized {

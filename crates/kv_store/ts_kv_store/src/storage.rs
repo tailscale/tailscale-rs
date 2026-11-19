@@ -6,7 +6,7 @@ use crate::{
     Error, Notifier, Result,
     iter::TableIter,
     pub_sub::{Notifications, Subscriptions, WatchedEvent},
-    schema::{self, IndexStorage, MultiIndexDesc, PrimaryDesc, TableDesc},
+    schema::{self, CustomIndex, IndexRead, IndexWrite, MultiIndexDesc, PrimaryDesc, TableDesc},
     transactions::TxnId,
 };
 
@@ -297,6 +297,36 @@ impl<T: Default> SingletonSlot for DefaultValue<T> {
 
     fn gc_txn(&mut self, txn_id: TxnId) {
         self.0.gc_txn(txn_id);
+    }
+}
+
+/// Storage for a custom index.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct CustomIndexStorage<T>(pub T);
+
+impl<K: Hash + Eq, B, T: CustomIndex<K, B>> IndexRead<K, B> for CustomIndexStorage<T> {
+    type Iter<'a>
+        = T::Iter<'a>
+    where
+        T: 'a,
+        K: 'a,
+        B: 'a;
+
+    fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<&B>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        self.0.get(key)
+    }
+
+    fn iter(&self, _txn_id: TxnId) -> T::Iter<'_> {
+        self.0.iter()
+    }
+
+    fn check_consistent(&self, _txn_id: TxnId) -> Result<()> {
+        self.0.check_consistent()
     }
 }
 
@@ -677,6 +707,25 @@ impl<D: schema::TableDesc> Table<D> {
         self.modified = None;
     }
 
+    /// This table's indexes and its rows visible to `txn_id`.
+    ///
+    /// Ignores any transaction state, so should only be used when there is no pending transaction
+    /// (e.g., after `gc_txn`).
+    pub fn indexes_and_rows(
+        &mut self,
+        txn_id: TxnId,
+    ) -> (
+        &mut D::IndexStorage,
+        impl Iterator<Item = (&D::Key, &D::Value)>,
+    ) {
+        debug_assert!(matches!(self.delete_mask, DeleteMask::None));
+        let rows = self
+            .data
+            .iter()
+            .filter_map(move |(k, v)| Some((k, v.get(txn_id)?)));
+        (&mut self.indexes, rows)
+    }
+
     /// Check if this table's transaction state is consistent for commit.
     ///
     /// Must be called (and succeed) before calling `commit_primary_table` or
@@ -955,7 +1004,7 @@ impl<D: schema::TableDesc> Table<D> {
     {
         let mut removed = Vec::new();
         let mut yielded = Vec::new();
-        let result = if <D::IndexStorage as IndexStorage<_, _>>::HAS_INDEXES {
+        let result = if <D::IndexStorage as IndexWrite<_, _>>::HAS_INDEXES {
             f(
                 &mut self
                     .iter_mut(txn_id)
@@ -1039,6 +1088,26 @@ impl<D: schema::TableDesc> Table<D> {
         self.delete_mask.clear(txn_id);
         self.poisoned.set(false, txn_id);
         self.indexes.clear(txn_id);
+    }
+}
+
+impl<D: TableDesc> IndexRead<D::Key, D::Value> for Table<D> {
+    type Iter<'a> = TableIter<'a, D>;
+
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        self.get(key, txn_id)
+    }
+
+    fn iter(&self, txn_id: TxnId) -> TableIter<'_, D> {
+        Table::iter(self, txn_id)
+    }
+
+    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
+        self.check_poisoned(txn_id)
     }
 }
 

@@ -13,8 +13,8 @@ use crate::{
         Ops, OpsMut, SingletonOps, SingletonOpsMut, StorageGuard, TabularOps, TabularOpsMut,
     },
     schema::{
-        self, DefaultSingletonDesc, Desc, GeneratedStorage, OptionalSingletonDesc, PrimaryDesc,
-        SingletonDesc, TableDesc,
+        self, DefaultSingletonDesc, Desc, GeneratedStorage, IndexDesc, OptionalSingletonDesc,
+        PrimaryDesc, SingletonDesc, TableDesc,
     },
     storage::{Storage, Table},
 };
@@ -920,6 +920,11 @@ impl<'txn, TableStorage: GeneratedStorage> StorageGuard<TableStorage>
     unsafe fn singleton<S: SingletonDesc<Storage = TableStorage>>(&self) -> &S::Slot {
         // SAFETY: as for `table`.
         unsafe { &*S::value_ptr(self.tables.as_ptr()) }
+    }
+
+    unsafe fn index<D: IndexDesc<Storage = TableStorage>>(&self) -> &D::IndexStorage {
+        // SAFETY: as for `table`.
+        unsafe { &*D::index_ptr(self.tables.as_ptr()) }
     }
 }
 

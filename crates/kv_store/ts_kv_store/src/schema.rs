@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use core::{any::Any, borrow::Borrow, hash::Hash, ops::Deref};
 
 use crate::{
-    Owner,
+    Owner, Result,
     pub_sub::Subscriptions,
     storage::{DefaultValue, SingletonSlot, Table, VersionedValue},
     transactions::TxnId,
@@ -103,7 +103,7 @@ pub unsafe trait TableDesc: Desc {
     /// The type of the value.
     type Value: Any + Send + Sync;
     /// The storage type for this table's indexes.
-    type IndexStorage: IndexStorage<Self::Key, Self::Value>;
+    type IndexStorage: IndexWrite<Self::Key, Self::Value>;
 
     /// Get a reference to the table in `storage`.
     fn get_table(storage: &Self::Storage) -> &Table<Self>;
@@ -162,23 +162,63 @@ pub trait Indexable: PrimaryDesc {
         'guard: 'txn;
 }
 
-/// A table used as an index.
+/// An index of a table.
 ///
 /// # Safety
 ///
-/// This index's table (as returned by `TableDesc::table_ptr`) must be contained in the table of
-/// `Self::BaseTable` (as returned by its `table_ptr`), and must not overlap any other index's table.
+/// `index_ptr` must return a pointer derived from its argument `storage` without creating a
+/// reference to `*storage`, which is contained in the table of `Self::BaseTable` (as returned by its
+/// `table_ptr`), and which does not overlap any other index.
 #[doc(hidden)]
-pub unsafe trait IndexDesc: TableDesc {
+pub unsafe trait IndexDesc: Desc {
+    /// The type of the index key.
+    type Key: Hash + Eq;
     /// The table which is indexed.
-    type BaseTable: PrimaryDesc + TableDesc<Storage = Self::Storage, Key = Self::Value>;
+    type BaseTable: PrimaryDesc + TableDesc<Storage = Self::Storage>;
+    /// How the index is stored.
+    type IndexStorage: IndexRead<Self::Key, <Self::BaseTable as TableDesc>::Key>;
+
+    /// Get a reference to the index in `storage`.
+    fn get_index(storage: &Self::Storage) -> &Self::IndexStorage;
+
+    /// Project a pointer to the storage to a pointer to this index, without creating a reference
+    /// to the storage.
+    ///
+    /// # Safety
+    ///
+    /// `storage` must be valid for reads and writes (i.e., dereferenceable).
+    unsafe fn index_ptr(storage: *mut Self::Storage) -> *mut Self::IndexStorage;
+}
+
+/// Read access to an index which maps keys of type `K` to base table keys of type `B`.
+#[doc(hidden)]
+pub trait IndexRead<K, B> {
+    /// Iterator over the index's key/base key pairs.
+    type Iter<'a>: Iterator<Item = (&'a K, &'a B)>
+    where
+        Self: 'a,
+        K: 'a,
+        B: 'a;
+
+    /// The base key for `key`, as visible to `txn_id`.
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&B>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq;
+
+    /// Iterate the index, as visible to `txn_id`.
+    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_>;
+
+    /// Returns an error if the index is inconsistent (e.g., poisoned).
+    fn check_consistent(&self, txn_id: TxnId) -> Result<()>;
 }
 
 /// A table used as an index where each index key may map to multiple rows of the base table.
 ///
 /// # Safety
 ///
-/// As for [`IndexDesc`].
+/// This index's table (as returned by `TableDesc::table_ptr`) must be contained in the table of
+/// `Self::BaseTable` (as returned by its `table_ptr`), and must not overlap any other index.
 #[doc(hidden)]
 pub unsafe trait MultiIndexDesc:
     TableDesc<Value = Vec<<Self::BaseTable as TableDesc>::Key>>
@@ -189,7 +229,7 @@ pub unsafe trait MultiIndexDesc:
 
 /// Operations on the indexes of a table.
 #[doc(hidden)]
-pub trait IndexStorage<K: Hash + Eq, V: Any + Send + Sync>: Default {
+pub trait IndexWrite<K: Hash + Eq, V: Any + Send + Sync>: Default {
     /// Whether there are any indexes, i.e., whether the methods of this trait do anything. If
     /// `false`, callers may skip work which only serves to maintain indexes.
     const HAS_INDEXES: bool = true;
@@ -210,7 +250,7 @@ pub trait IndexStorage<K: Hash + Eq, V: Any + Send + Sync>: Default {
         Q: ?Sized + Hash + Eq;
 }
 
-impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
+impl<K: Hash + Eq, V: Any + Send + Sync> IndexWrite<K, V> for () {
     const HAS_INDEXES: bool = false;
 
     fn clear(&mut self, _txn_id: TxnId) {}
@@ -228,6 +268,70 @@ impl<K: Hash + Eq, V: Any + Send + Sync> IndexStorage<K, V> for () {
         Q: ?Sized + Hash + Eq,
     {
     }
+}
+
+/// A user-implemented index which maps index keys (`K`) to keys of the base table (`B`).
+///
+/// Custom indexes are not externally versioned: mutations are applied immediately, and the store calls
+/// `commit` or `rollback` when the transaction which made them is committed or rolled back. Only
+/// one transaction can mutate the store at a time, and readers are excluded while it is live.
+///
+/// See the docs for the [`store`](crate::store) macro for how to declare a custom index.
+pub trait CustomIndex<K: Hash + Eq, B>: Default {
+    /// Iterator over the index's key/base key pairs.
+    type Iter<'a>: Iterator<Item = (&'a K, &'a B)>
+    where
+        Self: 'a,
+        K: 'a,
+        B: 'a;
+
+    /// The base key for `key`, if there is one.
+    fn get<Q>(&self, key: &Q) -> Option<&B>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq;
+
+    /// Iterate the index's key/base key pairs.
+    fn iter(&self) -> Self::Iter<'_>;
+
+    /// Map `key` to `base_key` in transaction `txn_id`.
+    ///
+    /// `key` may already be present in the index (mapped to a different base key). The
+    /// implementation may handle this however it likes, e.g., by replacing the existing entry, or
+    /// by poisoning the index (see `check_consistent`).
+    fn insert(&mut self, key: K, base_key: B, txn_id: TxnId);
+
+    /// Remove `key` from the index in transaction `txn_id`.
+    fn remove<Q>(&mut self, key: &Q, txn_id: TxnId)
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq;
+
+    /// Remove all entries from the index in transaction `txn_id`.
+    fn clear(&mut self, txn_id: TxnId);
+
+    /// Returns an error if the index is inconsistent (e.g., because it has non-unique keys).
+    ///
+    /// Accessing an inconsistent index returns an error or panics, and a transaction cannot be
+    /// committed while an index is inconsistent.
+    fn check_consistent(&self) -> Result<()>;
+
+    /// Transaction `txn_id` has been committed.
+    fn commit(&mut self, _txn_id: TxnId);
+
+    /// Rollback transaction `txn_id`.
+    ///
+    /// Returns `true` if the transaction could be rolled back. Returning `false` is not considered
+    /// an error condition, and implementers may always return false, in which case the store calls
+    /// `rebuild`.
+    fn rollback(&mut self, _txn_id: TxnId) -> bool;
+
+    /// Rebuild the whole index from `data` (the index key and base key of every entry, as of the
+    /// last committed transaction). Implementers may choose to clear and reindex, or to do
+    /// something more incremental.
+    fn rebuild<'a>(&mut self, data: impl Iterator<Item = (K, &'a B)>)
+    where
+        B: 'a;
 }
 
 /// A storage implementation.
@@ -402,6 +506,13 @@ pub trait GeneratedStore:
 /// Note that if an index has `replace` or `ignore` behaviour, then it is possible to corrupt the
 /// index by removing entries or mutating the indexed field.
 ///
+/// ## Custom indexes
+///
+/// A custom index is declared with `index(field: Type (= closure)?; custom(Impl))`, where `Impl` is
+/// a concrete type which implements [`CustomIndex<Type, KeyType>`](CustomIndex). `Impl` stores the
+/// index and decides how non-unique index keys are handled. Custom indexes have the same user-facing
+/// API as unique indexes.
+///
 /// # Notifications
 ///
 /// The `notify(...)` argument is used to control notifications about the table or singleton. Accepted
@@ -424,7 +535,7 @@ macro_rules! store {
             $name:ident (
                 $key_ty:ty => $value_ty:ty;
                 $owner:expr
-                $(; index($field:ident: $field_ty:ty $(= $get_idx:expr)? $(; $unique:ident)?))*
+                $(; index($field:ident: $field_ty:ty $(= $get_idx:expr)? $(; $unique:ident $(($cimpl:ty))?)?))*
                 $(; notify($notif:ident))?
                 $(;)?
             )
@@ -520,36 +631,21 @@ macro_rules! store {
                     type Storage = TableStorage;
                 }
 
-                // SAFETY: `table_ptr` points to the index's own field of its base table's
-                // `indexes`.
-                unsafe impl $crate::schema::TableDesc for index::$name::$field where $field_ty: ::core::clone::Clone {
-                    const NAME: &'static str = ::core::stringify!($name by $field);
-                    type Key = $field_ty;
-                    type Value = $crate::index_select!({ $key_ty } { $crate::__alloc::vec::Vec<$key_ty> } $(; $unique)?);
-                    type IndexStorage = ();
-
-                    fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self> {
-                        &storage.$name.indexes.$field
-                    }
-                    unsafe fn table_ptr(storage: *mut TableStorage) -> *mut $crate::storage::Table<Self> {
-                        // SAFETY: `storage` is dereferenceable (by the caller's contract). This
-                        // only computes a place, it does not create a reference to the storage or
-                        // the base table.
-                        unsafe { &raw mut (*storage).$name.indexes.$field }
-                    }
-                    $crate::value_eq!(Self::Value);
-                }
+                $crate::index_select!({
+                    $crate::index_table_desc!($name, $field: $field_ty => $key_ty);
+                } {
+                    $crate::index_table_desc!($name, $field: $field_ty => $crate::__alloc::vec::Vec<$key_ty>);
+                } {} $(; $unique)?);
 
                 $crate::index_select!({
-                    // SAFETY: the index's table is a field of `$name`'s table (see `table_ptr`).
-                    unsafe impl $crate::schema::IndexDesc for index::$name::$field {
-                        type BaseTable = $name;
-                    }
+                    $crate::index_desc!($name, $field: $field_ty => $crate::storage::Table<Self>);
                 } {
                     // SAFETY: the index's table is a field of `$name`'s table (see `table_ptr`).
                     unsafe impl $crate::schema::MultiIndexDesc for index::$name::$field {
                         type BaseTable = $name;
                     }
+                } {
+                    $crate::index_desc!($name, $field: $field_ty => $crate::storage::CustomIndexStorage<$($($cimpl)?)?>);
                 } $(; $unique)?);
             )*
         )*)?
@@ -588,11 +684,22 @@ macro_rules! store {
             type Transaction<'a> = Transaction<'a>;
             type RoTransaction<'a> = RoTransaction<'a>;
 
-            fn commit_txn(&mut self, _txn_id: $crate::transactions::TxnId, _notifications: &mut $crate::Notifications<Notification>, _subscriptions: &$crate::pub_sub::Subscriptions<Self::Notification>) -> $crate::Result<()> {
+            fn commit_txn(
+                &mut self,
+                _txn_id: $crate::transactions::TxnId,
+                _notifications: &mut $crate::Notifications<Notification>,
+                _subscriptions: &$crate::pub_sub::Subscriptions<Self::Notification>,
+            ) -> $crate::Result<()> {
                 $(
                     $(
                         self.$name.check_txn_consistency(_txn_id)?;
-                        $(self.$name.indexes.$field.check_txn_consistency(_txn_id)?;)*
+                        $($crate::index_select!({
+                            self.$name.indexes.$field.check_txn_consistency(_txn_id)?;
+                        } {
+                            self.$name.indexes.$field.check_txn_consistency(_txn_id)?;
+                        } {
+                            $crate::schema::CustomIndex::check_consistent(&self.$name.indexes.$field.0)?;
+                        } $(; $unique)?);)*
                     )*
                 )?
                 $(
@@ -610,7 +717,13 @@ macro_rules! store {
                         if !events.is_empty() {
                             _subscriptions.collect_events::<$name>(_notifications, events);
                         }
-                        $(self.$name.indexes.$field.commit_without_notifications(_txn_id);)*
+                        $($crate::index_select!({
+                            self.$name.indexes.$field.commit_without_notifications(_txn_id);
+                        } {
+                            self.$name.indexes.$field.commit_without_notifications(_txn_id);
+                        } {
+                            $crate::schema::CustomIndex::commit(&mut self.$name.indexes.$field.0, _txn_id);
+                        } $(; $unique)?);)*
                     )*
                 )?
 
@@ -621,7 +734,21 @@ macro_rules! store {
                 $(
                     $(
                         self.$name.gc_txn(_txn_id);
-                        $(self.$name.indexes.$field.gc_txn(_txn_id);)*
+                        $($crate::index_select!({
+                            self.$name.indexes.$field.gc_txn(_txn_id);
+                        } {
+                            self.$name.indexes.$field.gc_txn(_txn_id);
+                        } {
+                            // Must be after the base table is rolled back (above), so that `rows`
+                            // are the committed rows.
+                            let (indexes, rows) = self.$name.indexes_and_rows(_txn_id);
+                            let custom = &mut indexes.$field.0;
+                            if !$crate::schema::CustomIndex::rollback(custom, _txn_id) {
+                                $crate::schema::CustomIndex::rebuild(custom, rows.flat_map(|(k, v)| {
+                                    index::$name::Storage::$field(v).into_iter().map(move |ik| (ik, k))
+                                }));
+                            }
+                        } $(; $unique)?);)*
                     )*
                 )?
                 $(
@@ -654,7 +781,13 @@ macro_rules! store {
                     pub struct Storage {
                         $(
                             #[allow(dead_code)]
-                            pub $field: $crate::storage::Table<$field>,
+                            pub $field: $crate::index_select!({
+                                $crate::storage::Table<$field>
+                            } {
+                                $crate::storage::Table<$field>
+                            } {
+                                <$field as $crate::schema::IndexDesc>::IndexStorage
+                            } $(; $unique)?),
                         )*
                     }
 
@@ -664,7 +797,13 @@ macro_rules! store {
                     pub struct Indexes {
                         $(
                             #[allow(dead_code)]
-                            pub $field: $crate::index_select!({ $crate::Index<$field> } { $crate::MultiIndex<$field> } $(; $unique)?),
+                            pub $field: $crate::index_select!({
+                                $crate::Index<$field>
+                            } {
+                                $crate::MultiIndex<$field>
+                            } {
+                                $crate::Index<$field>
+                            } $(; $unique)?),
                         )*
                     }
 
@@ -688,7 +827,13 @@ macro_rules! store {
                         pub(in super::super) __txn: ::core::marker::PhantomData<&'txn G>,
                         $(
                             #[allow(dead_code)]
-                            pub $field: $crate::index_select!({ $crate::IndexGuard<'txn, $field, G> } { $crate::MultiIndexGuard<'txn, $field, G> } $(; $unique)?),
+                            pub $field: $crate::index_select!({
+                                $crate::IndexGuard<'txn, $field, G>
+                            } {
+                                $crate::MultiIndexGuard<'txn, $field, G>
+                            } {
+                                $crate::IndexGuard<'txn, $field, G>
+                            } $(; $unique)?),
                         )*
                     }
                 }
@@ -699,12 +844,20 @@ macro_rules! store {
             impl ::core::convert::From<($crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)> for index::$name::Indexes {
                 fn from((_store, _owner): ($crate::__alloc::sync::Arc<$crate::KvStore<TableStorage>>, $crate::Owner)) -> Self {
                     index::$name::Indexes {
-                        $($field: $crate::index_select!({ $crate::Index::new } { $crate::MultiIndex::new } $(; $unique)?)(::core::clone::Clone::clone(&_store), _owner),)*
+                        $($field: $crate::index_select!({
+                            $crate::Index::new
+                        } {
+                            $crate::MultiIndex::new
+                        } {
+                            $crate::Index::new
+                        } $(; $unique)?)(::core::clone::Clone::clone(&_store), _owner),)*
                     }
                 }
             }
 
-            impl<'guard, 'txn> ::core::convert::From<&'txn mut $crate::TableTransaction<'guard, $name>> for index::$name::TransactionIndexes<'guard, 'txn> {
+            impl<'guard, 'txn> ::core::convert::From<&'txn mut $crate::TableTransaction<'guard, $name>>
+                for index::$name::TransactionIndexes<'guard, 'txn>
+            {
                 fn from(base: &'txn mut $crate::TableTransaction<'guard, $name>) -> Self {
                     index::$name::TransactionIndexes { __base: base }
                 }
@@ -714,13 +867,27 @@ macro_rules! store {
                 $(
                     /// Read/write access to the table via this index.
                     #[allow(dead_code)]
-                    pub fn $field(&mut self) -> $crate::index_select!({ $crate::IndexTransaction<'guard, '_, index::$name::$field> } { $crate::MultiIndexTransaction<'guard, '_, index::$name::$field> } $(; $unique)?) {
-                        $crate::index_select!({ $crate::IndexTransaction::new } { $crate::MultiIndexTransaction::new } $(; $unique)?)(self.__base)
+                    pub fn $field(&mut self) -> $crate::index_select!({
+                        $crate::IndexTransaction<'guard, '_, index::$name::$field>
+                    } {
+                        $crate::MultiIndexTransaction<'guard, '_, index::$name::$field>
+                    } {
+                        $crate::IndexTransaction<'guard, '_, index::$name::$field>
+                    } $(; $unique)?) {
+                        $crate::index_select!({
+                            $crate::IndexTransaction::new
+                        } {
+                            $crate::MultiIndexTransaction::new
+                        } {
+                            $crate::IndexTransaction::new
+                        } $(; $unique)?)(self.__base)
                     }
                 )*
             }
 
-            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::TableTransaction<'guard, $name>> for index::$name::RoTransactionIndexes<'txn, $crate::transactions::TransactionInner<'guard, TableStorage>> {
+            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::TableTransaction<'guard, $name>>
+                for index::$name::RoTransactionIndexes<'txn, $crate::transactions::TransactionInner<'guard, TableStorage>>
+            {
                 fn from(_base: &'txn $crate::TableTransaction<'guard, $name>) -> Self {
                     index::$name::RoTransactionIndexes {
                         __txn: ::core::marker::PhantomData,
@@ -729,7 +896,9 @@ macro_rules! store {
                 }
             }
 
-            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::RoTableTransaction<'guard, $name>> for index::$name::RoTransactionIndexes<'txn, $crate::storage::Storage<TableStorage>> {
+            impl<'guard, 'txn> ::core::convert::From<&'txn $crate::RoTableTransaction<'guard, $name>>
+                for index::$name::RoTransactionIndexes<'txn, $crate::storage::Storage<TableStorage>>
+            {
                 fn from(_base: &'txn $crate::RoTableTransaction<'guard, $name>) -> Self {
                     index::$name::RoTransactionIndexes {
                         __txn: ::core::marker::PhantomData,
@@ -746,10 +915,16 @@ macro_rules! store {
                 )*
             }
 
-            impl $crate::schema::IndexStorage<$key_ty, $value_ty> for index::$name::Storage {
+            impl $crate::schema::IndexWrite<$key_ty, $value_ty> for index::$name::Storage {
                 fn clear(&mut self, _txn_id: $crate::transactions::TxnId) {
                     $(
-                        self.$field.clear(_txn_id);
+                        $crate::index_select!({
+                            self.$field.clear(_txn_id);
+                        } {
+                            self.$field.clear(_txn_id);
+                        } {
+                            $crate::schema::CustomIndex::clear(&mut self.$field.0, _txn_id);
+                        } $(; $unique)?);
                     )*
                 }
 
@@ -759,7 +934,7 @@ macro_rules! store {
                     Q: ?::core::marker::Sized + ::core::hash::Hash + ::core::cmp::Eq + $crate::__alloc::borrow::ToOwned<Owned = $key_ty>
                 {
                     $(
-                        $crate::on_insert_each!($name, $field: $field_ty; (self, _key, _value, _txn_id) $(; $unique)?);
+                        $crate::on_insert_each!($name, $field: $field_ty; (self, _key, _value, _txn_id) $(; $unique $(($cimpl))?)?);
                     )*
                 }
 
@@ -777,6 +952,14 @@ macro_rules! store {
                                 }
                             } {
                                 self.$field.remove_base_key(&index_key, _key, _txn_id);
+                            } {
+                                // The entry may belong to another row.
+                                let custom = &mut self.$field.0;
+                                if <$($($cimpl)?)? as $crate::schema::CustomIndex<$field_ty, $key_ty>>::get(custom, &index_key)
+                                    .is_some_and(|k| ::core::borrow::Borrow::<Q>::borrow(k) == _key)
+                                {
+                                    <$($($cimpl)?)? as $crate::schema::CustomIndex<$field_ty, $key_ty>>::remove(custom, &index_key, _txn_id);
+                                }
                             } $(; $unique)?);
                         }
                     })*
@@ -1042,17 +1225,84 @@ macro_rules! get_index_fn {
     };
 }
 
-/// Expands to the first group of tokens for a unique index, or the second for a `multi` index.
+/// Expands to the first group of tokens for a unique index, the second for a `multi` index, or the
+/// third for a `custom` index.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! index_select {
-    ({ $($unique:tt)* } { $($multi:tt)* }; multi) => { $($multi)* };
-    ({ $($unique:tt)* } { $($multi:tt)* } $(; $kind:ident)?) => { $($unique)* };
+    ({ $($unique:tt)* } { $($multi:tt)* } { $($custom:tt)* }; multi) => { $($multi)* };
+    ({ $($unique:tt)* } { $($multi:tt)* } { $($custom:tt)* }; custom) => { $($custom)* };
+    ({ $($unique:tt)* } { $($multi:tt)* } { $($custom:tt)* } $(; $kind:ident)?) => { $($unique)* };
+}
+
+/// Implements `TableDesc` for an index stored as a table.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! index_table_desc {
+    ($name:ident, $field:ident : $field_ty:ty => $value_ty:ty) => {
+        // SAFETY: `table_ptr` points to the index's own field of its base table's `indexes`.
+        unsafe impl $crate::schema::TableDesc for index::$name::$field {
+            const NAME: &'static str = ::core::stringify!($name by $field);
+            type Key = $field_ty;
+            type Value = $value_ty;
+            type IndexStorage = ();
+
+            fn get_table(storage: &TableStorage) -> &$crate::storage::Table<Self> {
+                &storage.$name.indexes.$field
+            }
+            unsafe fn table_ptr(storage: *mut TableStorage) -> *mut $crate::storage::Table<Self> {
+                // SAFETY: `storage` is dereferenceable (by the caller's contract). This only
+                // computes a place, it does not create a reference to the storage or the base
+                // table.
+                unsafe { &raw mut (*storage).$name.indexes.$field }
+            }
+            $crate::value_eq!(Self::Value);
+        }
+    };
+}
+
+/// Implements `IndexDesc` for a unique or custom index.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! index_desc {
+    ($name:ident, $field:ident : $field_ty:ty => $index_ty:ty) => {
+        // SAFETY: `index_ptr` points to the index's own field of its base table's `indexes`.
+        unsafe impl $crate::schema::IndexDesc for index::$name::$field {
+            type Key = $field_ty;
+            type BaseTable = $name;
+            type IndexStorage = $index_ty;
+
+            fn get_index(storage: &TableStorage) -> &Self::IndexStorage {
+                &storage.$name.indexes.$field
+            }
+            unsafe fn index_ptr(storage: *mut TableStorage) -> *mut Self::IndexStorage {
+                // SAFETY: `storage` is dereferenceable (by the caller's contract). This only
+                // computes a place, it does not create a reference to the storage or the base
+                // table.
+                unsafe { &raw mut (*storage).$name.indexes.$field }
+            }
+        }
+    };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! on_insert_each {
+    (
+        $name:ident,
+        $field:ident :
+        $field_ty:ty;
+        ($self:ident, $key:ident, $value:ident, $txn_id:ident); custom($cimpl:ty)
+    ) => {
+        for index_key in index::$name::Storage::$field($value) {
+            $crate::schema::CustomIndex::insert(
+                &mut $self.$field.0,
+                index_key,
+                $crate::__alloc::borrow::ToOwned::to_owned($key),
+                $txn_id,
+            );
+        }
+    };
     (
         $name:ident,
         $field:ident :
