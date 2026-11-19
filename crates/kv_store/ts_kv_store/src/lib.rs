@@ -224,7 +224,7 @@ pub use schema::{GeneratedStorage, GeneratedStore};
 #[doc(inline)]
 pub use transactions::{
     DefaultSingletonTransaction, RoDefaultSingletonTransaction, RoSingletonTransaction,
-    RoTableTransaction, RoTransaction, SingletonTransaction, TableTransaction, Transaction,
+    RoTableTransaction, RoTransaction, SingletonTransaction, TableTransaction, Transaction, TxnId,
 };
 
 /// A key-value store. See the crate docs for details. Its schema is described by `TableStorage`.
