@@ -429,12 +429,20 @@ impl<D: PrimaryDesc> Table<D> {
     ///
     /// Access is scoped by a closure (rather than returning an iterator) because the store is
     /// locked while iterating, and so references into the store must not outlive the iterator.
-    /// Use a (read-only) transaction to get an iterator.
+    /// Use a (read-only) transaction to return an iterator.
     pub fn with_iter<F, T>(&self, _owner: Owner, f: F) -> T
     where
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a D::Key, &'a D::Value)>) -> T,
     {
         <&Self as TabularOps<_>>::with_iter(self, f)
+    }
+
+    /// Iterate over all key/value pairs in the table, calling `f` for each pair.
+    pub fn for_each<F>(&self, owner: Owner, mut f: F)
+    where
+        F: for<'a> FnMut(&'a D::Key, &'a D::Value),
+    {
+        self.with_iter(owner, |it| it.for_each(|(k, v)| f(k, v)))
     }
 
     /// Iterate over all keys in the table.
@@ -469,6 +477,19 @@ impl<D: PrimaryDesc> Table<D> {
         self.in_txn(owner, |txn| txn.with_iter_mut(f))
     }
 
+    /// Iterate over all key/value pairs in the table, calling `f` for each pair with mutable
+    /// access to the value.
+    ///
+    /// Returns `Error::NonUniqueIndexKey` if `f` makes a unique index key non-unique, in which
+    /// case none of the mutations are applied.
+    pub fn try_for_each_mut<F>(&self, owner: Owner, mut f: F) -> Result<()>
+    where
+        F: for<'a> FnMut(&'a D::Key, &'a mut D::Value),
+        D::Value: Clone + PartialEq,
+    {
+        self.try_with_iter_mut(owner, |it| it.for_each(|(k, v)| f(k, v)))
+    }
+
     /// Iterate over all key/value pairs in the table, with mutable access to the
     /// values.
     ///
@@ -482,6 +503,18 @@ impl<D: PrimaryDesc> Table<D> {
         D::Value: Clone + PartialEq,
     {
         self.try_with_iter_mut(owner, f).unwrap()
+    }
+
+    /// Iterate over all key/value pairs in the table, calling `f` for each pair with mutable
+    /// access to the value.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn for_each_mut<F>(&self, owner: Owner, f: F)
+    where
+        F: for<'a> FnMut(&'a D::Key, &'a mut D::Value),
+        D::Value: Clone + PartialEq,
+    {
+        self.try_for_each_mut(owner, f).unwrap()
     }
 
     /// Iterate over all values in the table, with mutable access.
@@ -942,6 +975,14 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         self.inner.with_iter(self.owner, f)
     }
 
+    /// Iterate over all key/value pairs in the table, calling `f` for each pair.
+    pub fn for_each<F>(&self, f: F)
+    where
+        F: for<'a> FnMut(&'a D::Key, &'a D::Value),
+    {
+        self.inner.for_each(self.owner, f)
+    }
+
     /// Iterate over all keys in the table.
     pub fn with_keys<F, T>(&self, f: F) -> T
     where
@@ -974,6 +1015,19 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         self.inner.try_with_iter_mut(self.owner, f)
     }
 
+    /// Iterate over all key/value pairs in the table, calling `f` for each pair with mutable
+    /// access to the value.
+    ///
+    /// Returns `Error::NonUniqueIndexKey` if `f` makes a unique index key non-unique, in which
+    /// case none of the mutations are applied.
+    pub fn try_for_each_mut<F>(&self, f: F) -> Result<()>
+    where
+        F: for<'a> FnMut(&'a D::Key, &'a mut D::Value),
+        D::Value: Clone + PartialEq,
+    {
+        self.inner.try_for_each_mut(self.owner, f)
+    }
+
     /// Iterate over all key/value pairs in the table, with mutable access to the
     /// values.
     ///
@@ -987,6 +1041,18 @@ impl<D: PrimaryDesc> TableWithOwner<D> {
         D::Value: Clone + PartialEq,
     {
         self.try_with_iter_mut(f).unwrap()
+    }
+
+    /// Iterate over all key/value pairs in the table, calling `f` for each pair with mutable
+    /// access to the value.
+    ///
+    /// Panics if `f` makes a unique index key non-unique.
+    pub fn for_each_mut<F>(&self, f: F)
+    where
+        F: for<'a> FnMut(&'a D::Key, &'a mut D::Value),
+        D::Value: Clone + PartialEq,
+    {
+        self.try_for_each_mut(f).unwrap()
     }
 
     /// Iterate over all values in the table, with mutable access.
@@ -1054,7 +1120,7 @@ impl<D: schema::Indexable> TableWithOwner<D> {
     /// Access the table via its indexes.
     ///
     /// Returns a struct with a field for each index declared for the table; each
-    /// field is an [`IndexWithOwner`](crate::IndexWithOwner) which gives access to the table using
+    /// field is an [`Index`](crate::Index) which gives access to the table using
     /// that index's key.
     ///
     /// # Example:

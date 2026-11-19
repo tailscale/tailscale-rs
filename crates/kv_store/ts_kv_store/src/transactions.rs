@@ -566,6 +566,16 @@ impl<'guard, D: PrimaryDesc> TableTransaction<'guard, D> {
         TabularOpsMut::with_iter_mut(self, owner, f)
     }
 
+    /// Iterate all key/value pairs in the table, calling `f` for each pair with mutable access to
+    /// the value.
+    pub fn for_each_mut<F>(&mut self, mut f: F)
+    where
+        F: for<'b> FnMut(&'b D::Key, &'b mut D::Value),
+        D::Value: Clone + PartialEq,
+    {
+        self.with_iter_mut(|it| it.for_each(|(k, v)| f(k, v)))
+    }
+
     /// Iterate all values in the table, with mutable access.
     pub fn with_values_mut<F, T>(&mut self, f: F) -> T
     where

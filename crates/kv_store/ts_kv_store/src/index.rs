@@ -75,6 +75,15 @@ impl<D: IndexDesc> Index<D> {
         <&Self as IndexedOps<_>>::with_iter(self, f)
     }
 
+    /// Iterate over all rows in the index, calling `f` for each index key, base key, and value.
+    pub fn for_each<F>(&self, mut f: F)
+    where
+        BaseKey<D>: Eq + Hash,
+        F: for<'a> FnMut(&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>),
+    {
+        self.with_iter(|it| it.for_each(|(k, bk, v)| f(k, bk, v)))
+    }
+
     /// Iterate over all keys in the table.
     pub fn with_keys<F, T>(&self, f: F) -> T
     where
@@ -212,7 +221,7 @@ unsafe impl<D: IndexDesc> IndexedOps<D::Storage> for &Index<D> {
 
 /// Read-only, transactional accessor for a table of key/values pairs via an index.
 ///
-/// Usually used via its aliases: [`RoIndexTransaction`] and [`TxnRoIndexTransaction`] (built from a
+/// Usually used via its aliases: [`RoIndexTransaction`] and [`RoRoIndexTransaction`] (built from a
 /// read-only or read/write transaction, respectively).
 ///
 /// `D` describes the index table, its base table is `D::BaseTable`. `G` is the storage guard of

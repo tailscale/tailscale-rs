@@ -40,12 +40,9 @@ impl Message<Arc<PeerState>> for SourceFilterUpdater {
     ) {
         let mut src_filter = Table::default();
 
-        // Note(nrc): for_each method would make this easier
-        self.env.kv_store().Peers.with_iter(KV_OWNER, |iter| {
-            for (id, node) in iter {
-                for route in node.accepted_routes.iter() {
-                    src_filter.insert(route.to_owned(), *id);
-                }
+        self.env.kv_store().Peers.for_each(KV_OWNER, |id, node| {
+            for route in node.accepted_routes.iter() {
+                src_filter.insert(route.to_owned(), *id);
             }
         });
 
