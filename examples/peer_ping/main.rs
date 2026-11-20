@@ -13,6 +13,11 @@ struct Args {
     #[arg(short = 'c', long, default_value = "tsrs_keys.json")]
     key_file: PathBuf,
 
+    /// Path to a logtail state file to use. Will be created if it doesn't exist.
+    #[arg(long, default_value = "tsrs_logtail.json")]
+    #[cfg(feature = "metrics")]
+    logtail_file: PathBuf,
+
     /// The auth key to connect with.
     ///
     /// Can be omitted if the key file is already authenticated.
@@ -50,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
 
-    let mut config = Config::default_with_key_file(&args.key_file).await?;
+    let mut config = Config::default_with_state_files(&args.key_file, #[cfg(feature = "metrics")] &args.logtail_file).await?;
     config.requested_hostname = args.hostname;
 
     if let Some(url) = args.control_url {

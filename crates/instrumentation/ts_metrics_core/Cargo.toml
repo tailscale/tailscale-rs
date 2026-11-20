@@ -1,0 +1,26 @@
+[package]
+name = "ts_metrics_core"
+version.workspace = true
+description = "tailscale metrics core"
+categories = [
+    "development-tools::debugging",
+    "development-tools::profiling",
+    "no-std",
+    "no-std::no-alloc"
+]
+keywords = ["tailscale"]
+
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crossbeam-utils.workspace = true
+pastey.workspace = true
+
+[features]
+metrics = []
+
+[lints]
+workspace = true

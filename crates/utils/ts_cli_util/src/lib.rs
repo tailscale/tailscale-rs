@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::{Stream, StreamExt};
@@ -25,6 +26,11 @@ pub struct CommonArgs {
     #[arg(short = 'c', long, default_value = "tsrs_keys.json")]
     pub key_state_path: std::path::PathBuf,
 
+    /// Path to a logtail state file to use. Will be created if it doesn't exist.
+    #[arg(long, default_value = "tsrs_logtail.json")]
+    #[cfg(feature = "metrics")]
+    pub logtail_file: PathBuf,
+
     /// The auth key to connect with.
     ///
     /// Can be omitted if the keys in the config are already authenticated.
@@ -45,7 +51,7 @@ pub struct CommonArgs {
 impl CommonArgs {
     /// Convert the args to a [`tailscale::Config`].
     pub async fn config(&self) -> Result<tailscale::Config> {
-        let mut config = tailscale::Config::default_with_key_file(&self.key_state_path).await?;
+        let mut config = tailscale::Config::default_with_state_files(&self.key_state_path, &self.logtail_file).await?;
 
         config.requested_hostname = self.hostname.clone();
         config.control_server_url = self
@@ -83,6 +89,7 @@ impl CommonArgs {
             None,
             &key_state,
             &conn,
+            #[cfg(feature = "metrics")] &config.logtail_id,
         )
         .await?;
 

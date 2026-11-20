@@ -123,10 +123,12 @@ pub async fn register(
     followup: Option<Url>,
     node_keystate: &ts_keys::NodeState,
     http2_conn: &Http2<BytesBody>,
+    #[cfg(feature = "metrics")] logtail_id: &ts_logtail::id::LogtailPrivateId,
 ) -> Result<(), RegistrationError> {
     let node_public_key = node_keystate.node_keys.public;
     let network_lock_public_key = node_keystate.network_lock_keys.public;
 
+    let logtail_public_id = logtail_id.public_id();
     let register_req = RegisterRequest {
         version: CapabilityVersion::CURRENT,
         node_key: node_public_key,
@@ -134,6 +136,8 @@ pub async fn register(
             hostname: config.hostname.as_deref(),
             app: &config.format_client_name(),
             ipn_version: crate::PKG_VERSION,
+            #[cfg(feature = "metrics")]
+            backend_log_id: logtail_public_id.as_str(),
             ..Default::default()
         },
         nl_key: Some(network_lock_public_key),
@@ -142,6 +146,8 @@ pub async fn register(
         ephemeral: config.ephemeral,
         ..Default::default()
     };
+
+    tracing::info!(?register_req);
 
     let body = if cfg!(debug_assertions) {
         serde_json::to_string_pretty(&register_req)?

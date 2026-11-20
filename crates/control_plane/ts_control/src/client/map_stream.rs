@@ -97,6 +97,7 @@ pub struct StateUpdate {
     pub pop_browser_url: Option<Url>,
     /// New dial plan sent by control.
     pub dial_plan: Option<DialPlan>,
+    pub log_auth_tokens: Option<Vec<String>>,
 }
 
 /// Read a stream of netmap responses from `reader`, converting them into `StateUpdate`s.
@@ -212,6 +213,9 @@ pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpd
                         .ok()
                 }),
                 dial_plan: map_response.control_dial_plan.map(Into::into),
+                log_auth_tokens: map_response.node.as_ref().and_then(|node| {
+                    node.cap_map.get("log-upload-auth").map(|vs| vs.0.iter().map(ToString::to_string).collect())
+                })
             },
             reader,
         ))

@@ -13,7 +13,6 @@ use ts_control::{
     ControlDialer, DialPlan, Endpoint, Error as ControlError, Node, RegistrationError, StateUpdate,
     client::{HttpConn, handle_ping, map_stream, send_map_request},
 };
-
 use crate::{
     Task,
     derp_latency::{DerpLatencyMeasurement, DerpLatencyMeasurer},
@@ -86,6 +85,9 @@ pub struct Params {
 
     /// The [`Env`] for this actor.
     pub(crate) env: Env,
+
+    #[cfg(feature = "metrics")]
+    pub(crate) logtail_id: ts_logtail::id::LogtailPrivateId,
 }
 
 #[doc(hidden)]
@@ -140,6 +142,7 @@ impl kameo::Actor for ControlRunner {
                             followup,
                             &params.env.keys,
                             &client,
+                            #[cfg(feature = "metrics")] &params.logtail_id
                         )
                         .await;
 
@@ -490,6 +493,8 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
                 }
             }
         }
+
+        self.params.env.metrics.control_plane.handled_state_update.inc();
     }
 }
 

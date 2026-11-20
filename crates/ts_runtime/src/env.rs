@@ -11,6 +11,8 @@ use kameo::{
 use kameo_actors::scheduler::Scheduler;
 use smol_str::SmolStr;
 
+use ts_metrics_core::Metrics;
+
 use crate::{
     Error, ErrorKind,
     error::ResultExt,
@@ -26,6 +28,7 @@ pub struct Env {
     pub registry: ActorRef<Registry>,
 
     pub keys: Arc<ts_keys::NodeState>,
+    pub metrics: Arc<Metrics>
 }
 
 impl Env {
@@ -35,6 +38,7 @@ impl Env {
             scheduler: Scheduler::spawn_default(),
             registry: Registry::spawn_default(),
             keys: Arc::new(keys),
+            metrics: Arc::new(Default::default()),
         }
     }
 

@@ -18,6 +18,7 @@ ts_control.workspace = true
 ts_dataplane.workspace = true
 ts_disco_protocol.workspace = true
 ts_keys.workspace = true
+ts_metrics_core.workspace = true
 ts_netcheck.workspace = true
 ts_netmon.workspace = true
 ts_netstack_smoltcp = { workspace = true, features = ["tokio"] }
@@ -28,6 +29,8 @@ ts_transport.workspace = true
 ts_derp.workspace = true
 ts_tunnel.workspace = true
 ts_util.workspace = true
+
+ts_logtail = { workspace = true, optional = true }
 
 # Unconditionally required dependencies.
 futures.workspace = true
@@ -59,6 +62,7 @@ ts_capabilityversion.workspace = true
 [features]
 console = ["kameo/console"]
 otel = ["kameo/otel", "kameo/tracing"]
+metrics = ["ts_logtail", "ts_metrics_core/metrics"]
 
 [lints]
 workspace = true

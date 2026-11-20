@@ -343,6 +343,8 @@ impl From<&ts_control_serde::Node<'_>> for Node {
             node_capabilities: value
                 .cap_map
                 .iter()
+                // log upload token is a secret that shouldn't be stored in the node state
+                .filter(|(k, _v)| **k != "log-upload-auth")
                 .map(|(k, v)| (k.to_string(), v.into()))
                 .collect(),
             tags: value

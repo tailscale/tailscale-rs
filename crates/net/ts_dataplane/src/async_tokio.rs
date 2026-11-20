@@ -8,6 +8,7 @@ use std::{
 };
 
 use tokio::sync::{Mutex, mpsc, watch};
+use ts_metrics_core::Metrics;
 use ts_packet::PacketMut;
 use ts_transport::{DynEndpoint, OverlayTransportId, PeerId, UnderlayTransportId};
 use ts_tunnel::NodeKeyPair;
@@ -101,6 +102,7 @@ impl DataPlane {
     /// outgoing traffic, as tracked by the dataplane.
     pub fn new(
         my_key: NodeKeyPair,
+        metrics: Arc<Metrics>,
     ) -> (
         Self,
         Rx<DiscoBatch>,
@@ -114,7 +116,7 @@ impl DataPlane {
         let (stun_tx, stun_rx) = mpsc::unbounded_channel();
         let (peer_tx, peer_rx) = watch::channel(Default::default());
 
-        let sync = crate::DataPlane::new(my_key);
+        let sync = crate::DataPlane::new(my_key, metrics);
 
         let dp = Self {
             underlay_down,

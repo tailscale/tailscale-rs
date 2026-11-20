@@ -434,7 +434,7 @@ checksum = "144e573728da132683b9488acd528274c790e07fc06ff81ee29f9d8f8b1041e0"
 dependencies = [
  "blowfish",
  "pbkdf2",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -1513,7 +1513,7 @@ dependencies = [
  "ed25519",
  "rand_core 0.10.1",
  "serde",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature",
  "subtle",
  "zeroize",
@@ -3316,7 +3316,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -3330,7 +3330,7 @@ dependencies = [
  "fiat-crypto 0.3.0",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -3344,7 +3344,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -3360,7 +3360,7 @@ dependencies = [
  "futures",
  "log",
  "rand 0.10.3",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "thiserror 2.0.21",
  "tokio",
  "windows 0.62.2",
@@ -3443,6 +3443,12 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pbkdf2"
@@ -3634,7 +3640,7 @@ dependencies = [
  "pbkdf2",
  "rand_core 0.10.1",
  "scrypt",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "spki",
 ]
 
@@ -4346,6 +4352,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "reqwest-middleware"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07bc3f1384cffa4f274dad2d4ddd73aed32fed8f786d96c6be8aa4e5fd3c3b58"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "http",
+ "reqwest",
+ "thiserror 2.0.21",
+ "tower-service",
+]
+
+[[package]]
+name = "reqwest-tracing"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5e5af0cd6fc3d3c8f703d597af70b6e4e62432c63157b49419fa1ffaf481702"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "getrandom 0.2.17",
+ "http",
+ "matchit",
+ "reqwest",
+ "reqwest-middleware",
+ "tracing",
+]
+
+[[package]]
 name = "rfc6979"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4475,7 +4511,7 @@ dependencies = [
  "scrypt",
  "sec1",
  "sha1 0.11.0",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "sha3",
  "signature",
  "spki",
@@ -4747,7 +4783,7 @@ dependencies = [
  "cfg-if",
  "pbkdf2",
  "salsa20 0.11.0",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -4957,9 +4993,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+checksum = "5b0e5c7d67bc53f435386b2130fdc900488c5703770f6d8a4633060e34288a27"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -5217,7 +5253,7 @@ dependencies = [
  "rand_core 0.10.1",
  "sec1",
  "sha1 0.11.0",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature",
  "ssh-cipher",
  "ssh-encoding",
@@ -5403,6 +5439,7 @@ dependencies = [
  "tracing-test",
  "ts_control",
  "ts_keys",
+ "ts_logtail",
  "ts_netstack_smoltcp",
  "ts_runtime",
  "ts_test_util",
@@ -6140,6 +6177,7 @@ dependencies = [
  "ts_dynbitset",
  "ts_http_util",
  "ts_keys",
+ "ts_logtail",
  "ts_packet",
  "ts_packetfilter",
  "ts_packetfilter_state",
@@ -6201,6 +6239,7 @@ dependencies = [
  "tracing",
  "ts_bart",
  "ts_disco_protocol",
+ "ts_metrics_core",
  "ts_packet",
  "ts_packetfilter",
  "ts_time",
@@ -6351,6 +6390,32 @@ dependencies = [
  "tokio",
  "tracing",
  "ts_kv_store",
+]
+
+[[package]]
+name = "ts_logtail"
+version = "0.7.1"
+dependencies = [
+ "chrono",
+ "hex",
+ "rand 0.10.3",
+ "reqwest",
+ "reqwest-middleware",
+ "reqwest-tracing",
+ "serde",
+ "serde_json",
+ "sha2 0.11.2",
+ "thiserror 2.0.21",
+ "tracing",
+ "ts_metrics_core",
+]
+
+[[package]]
+name = "ts_metrics_core"
+version = "0.7.1"
+dependencies = [
+ "crossbeam-utils",
+ "pastey",
 ]
 
 [[package]]
@@ -6548,6 +6613,8 @@ dependencies = [
  "ts_derp",
  "ts_disco_protocol",
  "ts_keys",
+ "ts_logtail",
+ "ts_metrics_core",
  "ts_netcheck",
  "ts_netmon",
  "ts_netstack_smoltcp",

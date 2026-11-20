@@ -32,6 +32,7 @@ mod route_updater;
 mod src_filter;
 mod stunner;
 mod task;
+mod metrics;
 
 pub(crate) use env::Env;
 pub use error::{Error, ErrorKind};
@@ -53,6 +54,13 @@ pub struct Config {
     pub auth_key: Option<String>,
     /// The keys to use.
     pub keys: ts_keys::NodeState,
+
+    #[cfg(feature = "metrics")]
+    pub export_metrics: bool,
+    #[cfg(feature = "metrics")]
+    pub crate_features: String,
+    #[cfg(feature = "metrics")]
+    pub logtail_id: ts_logtail::id::LogtailPrivateId,
 }
 
 impl kameo::Actor for Runtime {
@@ -74,6 +82,15 @@ impl kameo::Actor for Runtime {
             {
                 tracing::error!(error = %e, "console died");
             };
+        }
+
+        #[cfg(feature = "metrics")]
+        if config.export_metrics {
+            metrics::LogtailExporter::supervise(&slf, metrics::Args {
+                env: env.clone(),
+                crate_features: config.crate_features.clone(),
+                logtail_id: config.logtail_id.clone(),
+            }).spawn().await;
         }
 
         DataplaneActor::supervise(&slf, env.clone()).spawn().await;
@@ -138,6 +155,7 @@ impl kameo::Actor for Runtime {
                 config: config.control_config,
                 auth_key: config.auth_key,
                 env: env.clone(),
+                #[cfg(feature = "metrics")] logtail_id: config.logtail_id.clone()
             },
         )
         .spawn()

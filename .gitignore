@@ -8,6 +8,7 @@ perf.data
 perf.data.old
 heaptrack.*
 tsrs_keys*.json
+tsrs_logtail*.json
 priv/
 _build/
 ts_elixir/deps/

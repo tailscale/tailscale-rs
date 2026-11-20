@@ -21,6 +21,7 @@ mod packet_ident;
 pub mod underlay_router;
 
 pub use packet_ident::{PacketIdent, PacketType};
+use ts_metrics_core::Metrics;
 
 /// Duration without traffic after which to remove a peer from the active map.
 const PEER_EXPIRATION: Duration = Duration::from_secs(45);
@@ -65,11 +66,13 @@ pub struct DataPlane {
 
     /// Next event for the peer gc subsystem.
     pub peer_gc_next: Option<Handle<Subsystem>>,
+
+    metrics: Arc<Metrics>
 }
 
 impl DataPlane {
     /// Creates a new data plane for a wireguard node key.
-    pub fn new(my_key: NodeKeyPair) -> Self {
+    pub fn new(my_key: NodeKeyPair, metrics: Arc<Metrics>) -> Self {
         DataPlane {
             wireguard: Endpoint::new(my_key),
             or_out: Default::default(),
@@ -81,6 +84,7 @@ impl DataPlane {
             active_peers: Default::default(),
             wg_next: None,
             peer_gc_next: None,
+            metrics
         }
     }
 
@@ -165,6 +169,10 @@ impl DataPlane {
                 (wg, disco, stun)
             },
         );
+
+        self.metrics.network.rx_pkts_wg.add(wireguard.len());
+        self.metrics.network.rx_pkts_disco.add(disco.len());
+        self.metrics.network.rx_pkts_stun.add(stun.len());
 
         let ts_tunnel::RecvResult { to_local, to_peers } =
             self.wireguard.recv(Instant::now(), wireguard);

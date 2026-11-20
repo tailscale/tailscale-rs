@@ -206,6 +206,12 @@ impl Device {
             control_config: config.into(),
             auth_key,
             keys,
+            #[cfg(feature = "metrics")]
+            export_metrics: config.export_metrics,
+            #[cfg(feature = "metrics")]
+            crate_features: Config::FEATURES.to_owned(),
+            #[cfg(feature = "metrics")]
+            logtail_id: config.logtail_id,
         });
 
         rt.wait_for_startup_result()

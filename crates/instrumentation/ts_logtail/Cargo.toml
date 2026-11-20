@@ -1,0 +1,32 @@
+[package]
+name = "ts_logtail"
+version.workspace = true
+description = "tailscale metrics logtail exporter"
+categories = [
+    "development-tools::debugging",
+    "development-tools::profiling"
+]
+keywords = ["tailscale"]
+
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = ["now", "serde"] }
+hex.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+reqwest-middleware.workspace = true
+reqwest-tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+ts_metrics_core.workspace = true
+
+[lints]
+workspace = true

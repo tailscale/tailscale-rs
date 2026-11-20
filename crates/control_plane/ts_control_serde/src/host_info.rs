@@ -22,7 +22,7 @@ pub struct HostInfo<'a> {
     pub ipn_version: &'a str,
     /// Logtail ID of the Tailscale frontend (CLI) instance.
     pub frontend_log_id: &'a str,
-    /// Logtail ID of the Tailscale frontend (daemon) instance.
+    /// Logtail ID of the Tailscale backend (daemon) instance.
     pub backend_log_id: &'a str,
     /// A string indicating the operating system running on the Tailscale host.
     pub os: &'a str,

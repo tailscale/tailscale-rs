@@ -41,17 +41,27 @@ pub struct Config {
     ///
     /// [KB article on ephemeral nodes]: https://tailscale.com/docs/features/ephemeral-nodes
     pub ephemeral: bool,
+
+    #[cfg(feature = "metrics")]
+    pub export_metrics: bool,
+
+    #[cfg(feature = "metrics")]
+    pub logtail_id: ts_logtail::id::LogtailPrivateId,
 }
 
 impl Config {
     /// Create a new config with its [`key_state`](Config::key_state) populated from the specified key file and using
     /// default options for other configuration.
     ///
+    /// If metrics are enabled (default behavior) then also loads logging system state from the specified logtail file.
+    ///
     /// See [`load_key_file`] for more details and an alternative with more options for reading
     /// the key file.
-    pub async fn default_with_key_file(p: impl AsRef<Path>) -> Result<Self, crate::Error> {
+    pub async fn default_with_state_files(key_file_path: impl AsRef<Path>, #[cfg(feature = "metrics")] logtail_file_path: impl AsRef<Path>) -> Result<Self, crate::Error> {
         Ok(Config {
-            key_state: load_key_file(p, Default::default()).await?,
+            key_state: load_key_file(key_file_path, Default::default()).await?,
+            #[cfg(feature = "metrics")]
+            logtail_id: load_logtail_file(logtail_file_path, Default::default()).await?,
             ..Default::default()
         })
     }
@@ -81,6 +91,9 @@ impl Config {
 
         config
     }
+
+    #[cfg(feature = "metrics")]
+    pub const FEATURES: &'static str = env!("TS_ENABLED_FEATURES");
 }
 
 /// Load an auth key from the `TS_AUTH_KEY` environment variable.
@@ -97,17 +110,68 @@ pub async fn load_key_file(
     p: impl AsRef<Path>,
     bad_format: BadFormatBehavior,
 ) -> Result<PersistState, crate::Error> {
+    load_state_file::<KeyFile>(p, bad_format).await
+}
+
+#[cfg(feature = "metrics")]
+pub async fn load_logtail_file(
+    p: impl AsRef<Path>,
+    bad_format: BadFormatBehavior,
+) -> Result<ts_logtail::id::LogtailPrivateId, crate::Error> {
+    load_state_file::<LogtailFile>(p, bad_format).await
+}
+
+async fn load_state_file<T: StateFile>(p: impl AsRef<Path>, bad_format: BadFormatBehavior) -> Result<T::State, crate::Error> {
     let p = p.as_ref();
 
-    tracing::trace!(key_file = %p.display(), "loading key file");
+    tracing::trace!(state_file = %p.display(), "loading state file");
 
-    let key_file = load_or_init::<KeyFile>(&p, bad_format).await?;
-    Ok(key_file.key_state)
+    let state_file = load_or_init::<T>(&p, bad_format).await?;
+    Ok(state_file.into_state())
+}
+
+trait StateFile: Default + serde::Serialize + serde::de::DeserializeOwned {
+    type State;
+
+    fn into_state(self) -> Self::State;
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 struct KeyFile {
     key_state: PersistState,
+}
+
+impl StateFile for KeyFile {
+    type State = PersistState;
+
+    fn into_state(self) -> Self::State {
+        self.key_state
+    }
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[cfg(feature = "metrics")]
+struct LogtailFile {
+    logtail_id: ts_logtail::id::LogtailPrivateId,
+}
+
+#[cfg(feature = "metrics")]
+impl StateFile for LogtailFile {
+    type State = ts_logtail::id::LogtailPrivateId;
+
+    fn into_state(self) -> Self::State {
+        self.logtail_id
+    }
+}
+
+#[cfg(feature = "metrics")]
+impl Default for LogtailFile {
+    fn default() -> Self {
+        let mut result = LogtailFile {
+            logtail_id: ts_logtail::id::LogtailPrivateId::default(),
+        };
+        result
+    }
 }
 
 impl From<&Config> for ts_control::Config {
@@ -140,6 +204,10 @@ impl Default for Config {
             requested_hostname: None,
             requested_tags: vec![],
             ephemeral: false,
+            #[cfg(feature = "metrics")]
+            export_metrics: true,
+            #[cfg(feature = "metrics")]
+            logtail_id: ts_logtail::id::LogtailPrivateId::default(),
         }
     }
 }
@@ -160,12 +228,10 @@ pub enum BadFormatBehavior {
 /// Attempt to load a file from a path. If it doesn't exist, create it with the
 /// specified default value.
 #[tracing::instrument(skip_all, fields(?bad_format_behavior, path = %path.as_ref().display()))]
-async fn load_or_init<KeyState>(
+async fn load_or_init<State: StateFile>(
     path: impl AsRef<Path>,
     bad_format_behavior: BadFormatBehavior,
-) -> Result<KeyState, crate::Error>
-where
-    KeyState: Default + serde::Serialize + serde::de::DeserializeOwned,
+) -> Result<State, crate::Error>
 {
     let path = path.as_ref();
 
@@ -177,7 +243,7 @@ where
         })?;
 
     match tokio::fs::read(path).await {
-        Ok(contents) => match serde_json::from_slice::<KeyState>(&contents) {
+        Ok(contents) => match serde_json::from_slice::<State>(&contents) {
             Ok(state) => return Ok(state),
             Err(e) => match bad_format_behavior {
                 BadFormatBehavior::Error => {
@@ -200,7 +266,7 @@ where
         }
     }
 
-    let value = KeyState::default();
+    let value = State::default();
     try_write(path, &value).await?;
     Ok(value)
 }

@@ -60,13 +60,22 @@ pub mod _internal {
         });
 
         future_into_py(py, async move {
+            let key_state: ts::keys::PersistState = if let Some(keys) = keys {
+                (&keys).try_into().map_err(|_| py_value_err("invalid keys"))?
+            } else if let Some(key_file_path) = key_file_path {
+                ts::config::load_key_file(key_file_path, Default::default())
+                    .await
+                    .map_err(py_value_err)?
+            } else {
+                Default::default()
+            };
             let mut config = if let Some(keys) = keys {
                 let state: ts::keys::PersistState = (&keys)
                     .try_into()
                     .map_err(|_| py_value_err("invalid keys"))?;
                 state.into()
             } else if let Some(key_file_path) = key_file_path {
-                ts::Config::default_with_key_file(key_file_path)
+                ts::Config::default_with_state_files(key_file_path)
                     .await
                     .map_err(py_value_err)?
             } else {

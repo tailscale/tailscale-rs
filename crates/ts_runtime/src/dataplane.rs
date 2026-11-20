@@ -99,7 +99,7 @@ impl kameo::Actor for DataplaneActor {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         let (dataplane, disco, stun, active_peers) =
-            ts_dataplane::async_tokio::DataPlane::new(env.keys.node_keys.clone());
+            ts_dataplane::async_tokio::DataPlane::new(env.keys.node_keys.clone(), env.metrics.clone());
 
         let dataplane = Arc::new(dataplane);
 

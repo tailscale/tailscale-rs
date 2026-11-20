@@ -26,6 +26,8 @@ ts_packetfilter_state.workspace = true
 ts_tls_util.workspace = true
 ts_derp.workspace = true
 
+ts_logtail = { workspace = true, optional = true}
+
 # Unconditionally required dependencies.
 bytes.workspace = true
 chrono = { workspace = true, features = ["clock", "serde"] }
@@ -48,6 +50,7 @@ tokio = { workspace = true }
 insecure-derp = ["ts_derp/insecure-for-tests"]
 # Allow control keys to be fetched over plain HTTP1 without TLS. Only for use in tests.
 insecure-keyfetch = []
+metrics = ["ts_logtail"]
 
 [lints]
 workspace = true
