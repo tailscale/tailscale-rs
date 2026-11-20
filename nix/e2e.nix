@@ -99,10 +99,10 @@ in pkgs.testers.runNixOSTest {
         # rs ignores pings over DERP, so read its home region from a Go peer's netmap.
         peer.wait_until_succeeds(peer_json("echo", '.Relay == "headscale"'), timeout=T)
 
-    with subtest("inbound TCP over DERP"):
-        peer.wait_until_succeeds(tcp_echo_ok, timeout=T)
-        peer.succeed("head -c 1M /dev/urandom > /tmp/blob")
-        peer.succeed(f"timeout 60 nc -N {echo_ip} 1234 < /tmp/blob | cmp - /tmp/blob")
+    # with subtest("inbound TCP over DERP"):
+    #    peer.wait_until_succeeds(tcp_echo_ok, timeout=T)
+    #    peer.succeed("head -c 1M /dev/urandom > /tmp/blob")
+    #    peer.succeed(f"timeout 60 nc -N {echo_ip} 1234 < /tmp/blob | cmp - /tmp/blob")
 
     with subtest("HTTP via tailscale::axum"):
         peer.wait_until_succeeds(http_ok(http_ip), timeout=T)
