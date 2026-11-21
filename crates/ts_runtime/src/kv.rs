@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use core::{borrow::Borrow, hash::Hash, slice};
 
 use ipnet::IpNet;
+use smallvec::{SmallVec, smallvec};
+use ts_bart::{RouteModification, RoutingTable, RoutingTableExt};
 use ts_control::{DerpRegion, Node, StableNodeId};
 use ts_derp::RegionId;
 use ts_keys::{DiscoPublicKey, NodePublicKey};
@@ -12,102 +14,7 @@ use ts_transport::PeerId;
 
 use crate::{control_runner, peer_tracker};
 
-#[derive(Default)]
-struct BartIpIndex(ts_bart::Table<PeerId>);
-
-impl IndexMaintenance<IpNet, PeerId> for BartIpIndex {
-    fn insert(&mut self, key: IpNet, base_key: PeerId, txn_id: TxnId) {
-        todo!()
-    }
-
-    fn remove<R>(&mut self, key: &IpNet, base_key: &R, txn_id: TxnId)
-    where
-        PeerId: std::borrow::Borrow<R>,
-        R: ?Sized + Eq,
-    {
-        todo!()
-    }
-
-    fn clear(&mut self, txn_id: TxnId) {
-        todo!()
-    }
-
-    fn check_consistent(&self, txn_id: TxnId) -> ts_kv_store::Result<()> {
-        todo!()
-    }
-
-    fn commit(&mut self, txn_id: TxnId) {
-        todo!()
-    }
-
-    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (IpNet, &'a PeerId)>)
-    where
-        PeerId: 'a,
-    {
-        todo!()
-    }
-}
-
-impl UniqueIndexRead<IpNet, PeerId> for BartIpIndex {
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&PeerId>
-    where
-        IpNet: std::borrow::Borrow<Q>,
-        Q: ?Sized + std::hash::Hash + Eq,
-    {
-        todo!()
-    }
-}
-
-#[derive(Default)]
-struct BartRouteIndex(ts_bart::Table<smallvec::SmallVec<[PeerId; 2]>>);
-
-impl IndexMaintenance<IpNet, PeerId> for BartRouteIndex {
-    fn insert(&mut self, key: IpNet, base_key: PeerId, txn_id: TxnId) {
-        todo!()
-    }
-
-    fn remove<R>(&mut self, key: &IpNet, base_key: &R, txn_id: TxnId)
-    where
-        PeerId: std::borrow::Borrow<R>,
-        R: ?Sized + Eq,
-    {
-        todo!()
-    }
-
-    fn clear(&mut self, txn_id: TxnId) {
-        todo!()
-    }
-
-    fn commit(&mut self, txn_id: TxnId) {
-        todo!()
-    }
-
-    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (IpNet, &'a PeerId)>)
-    where
-        PeerId: 'a,
-    {
-        todo!()
-    }
-}
-
-impl MultiIndexRead<IpNet, PeerId> for BartRouteIndex {
-    type BaseKeys<'a> = todo!();
-
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
-    where
-        IpNet: std::borrow::Borrow<Q>,
-        Q: ?Sized + std::hash::Hash + Eq,
-    {
-        todo!()
-    }
-}
-
 ts_kv_store::store! {
-    kvs: {
-        // bart table index augmentations to the Peer table
-        PeerIpIndex(Arc<ts_bart::Table<PeerId>>; peer_tracker::KV_OWNER; notify(Clone)),
-        PeerRouteIndex(Arc<ts_bart::Table<smallvec::SmallVec<[PeerId; 2]>>>; peer_tracker::KV_OWNER; notify(Clone)),
-    }
     tables: {
         Peers(
             PeerId => Node;
@@ -118,6 +25,11 @@ ts_kv_store::store! {
             index(hostname: String; replace);
             index(fqdn: String = |node: &Node| node.fqdn_opt(false); assert);
             index(disco_key: DiscoPublicKey = |node: &Node| node.disco_key);
+            index(
+                tailnet_ip: IpNet = |node: &Node| [node.tailnet_address.ipv4.into(), node.tailnet_address.ipv6.into()];
+                custom(BartIpIndex)
+            );
+            index(route: IpNet = |node: &Node| node.accepted_routes.clone(); custom_multi(BartRouteIndex));
         ),
 
         // Control
@@ -129,5 +41,98 @@ ts_kv_store::store! {
             RegionId => f64;
             control_runner::KV_OWNER;
         ),
+    }
+}
+
+type PeerIds = SmallVec<[PeerId; 2]>;
+
+#[derive(Default)]
+pub struct BartIpIndex(pub ts_bart::Table<PeerId>);
+
+impl IndexMaintenance<IpNet, PeerId> for BartIpIndex {
+    fn insert(&mut self, key: IpNet, base_key: PeerId, _txn_id: TxnId) {
+        self.0.insert(key, base_key);
+    }
+
+    fn remove<R>(&mut self, key: &IpNet, base_key: &R, _txn_id: TxnId)
+    where
+        PeerId: Borrow<R>,
+        R: ?Sized + Eq,
+    {
+        self.0.modify(*key, |id| match id {
+            Some(id) if (*id).borrow() == base_key => RouteModification::Remove,
+            _ => RouteModification::Noop,
+        });
+    }
+
+    fn clear(&mut self, _txn_id: TxnId) {
+        self.0.clear();
+    }
+
+    fn commit(&mut self, _txn_id: TxnId) {}
+}
+
+impl UniqueIndexRead<IpNet, PeerId> for BartIpIndex {
+    fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<&PeerId>
+    where
+        IpNet: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IpNet>,
+    {
+        self.0.lookup_prefix_exact(key.to_owned())
+    }
+}
+
+#[derive(Default)]
+pub struct BartRouteIndex(pub ts_bart::Table<PeerIds>);
+
+impl IndexMaintenance<IpNet, PeerId> for BartRouteIndex {
+    fn insert(&mut self, key: IpNet, base_key: PeerId, _txn_id: TxnId) {
+        self.0.modify(key, |ids| match ids {
+            Some(ids) => {
+                if !ids.contains(&base_key) {
+                    ids.push(base_key);
+                }
+                RouteModification::Noop
+            }
+            None => RouteModification::Insert(smallvec![base_key]),
+        });
+    }
+
+    fn remove<R>(&mut self, key: &IpNet, base_key: &R, _txn_id: TxnId)
+    where
+        PeerId: Borrow<R>,
+        R: ?Sized + Eq,
+    {
+        self.0.modify(*key, |ids| match ids {
+            Some(ids) => {
+                ids.retain(|id| Borrow::<R>::borrow(id) != base_key);
+                if ids.is_empty() {
+                    RouteModification::Remove
+                } else {
+                    RouteModification::Noop
+                }
+            }
+            None => RouteModification::Noop,
+        });
+    }
+
+    fn clear(&mut self, _txn_id: TxnId) {
+        self.0.clear();
+    }
+
+    fn commit(&mut self, _txn_id: TxnId) {}
+}
+
+impl MultiIndexRead<IpNet, PeerId> for BartRouteIndex {
+    type BaseKeys<'a> = slice::Iter<'a, PeerId>;
+
+    fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
+    where
+        IpNet: Borrow<Q>,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IpNet>,
+    {
+        self.0
+            .lookup_prefix_exact(key.to_owned())
+            .map(|ids| ids.iter())
     }
 }

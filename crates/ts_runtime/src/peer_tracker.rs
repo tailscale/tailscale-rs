@@ -45,21 +45,19 @@ impl PeerTracker {
     fn peer_by_tailnet_ip_opt(&self, ip: IpAddr) -> Option<Node> {
         let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
 
-        let id = txn.PeerIpIndex.with(|v| v.lookup(ip).copied())?;
+        let id = *txn.Peers.indexes().tailnet_ip.inner().0.lookup(ip)?;
         txn.Peers.get(&id)
     }
 
     /// Get the nodes with the closest matching route.
-    pub fn get_route(&self, route: ipnet::IpNet) -> Vec<Node> {
+    fn get_route(&self, route: ipnet::IpNet) -> Vec<Node> {
         let txn = self.env.kv_store().begin_ro_transaction(KV_OWNER);
 
-        let Some(ids) = txn.PeerRouteIndex.with(|v| v.lookup_prefix(route).cloned()) else {
+        let Some(ids) = txn.Peers.indexes().route.inner().0.lookup_prefix(route) else {
             return Vec::new();
         };
 
-        ids.into_iter()
-            .map(|id| txn.Peers.get(&id).unwrap())
-            .collect()
+        ids.iter().filter_map(|id| txn.Peers.get(id)).collect()
     }
 }
 
