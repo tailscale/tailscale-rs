@@ -109,28 +109,33 @@ pub struct VersionedValue<T> {
     slot_b: Option<(TxnId, T)>,
 }
 
-impl<T> Default for VersionedValue<T> {
-    fn default() -> Self {
-        VersionedValue {
-            slot_a: None,
-            slot_b: None,
-        }
+impl<T: Default> VersionedValue<T> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn default() -> Self {
+        VersionedValue::new(T::default(), TxnId::FIRST)
     }
-}
 
-impl<T: Clone + PartialEq> VersionedValue<T> {
-    /// Pass a mutable reference to the value visible to `txn_id` (if there is one) to `f`.
+    fn value(&self, txn_id: TxnId) -> &T {
+        self.get(txn_id).expect("singleton has no value")
+    }
+
+    pub(crate) fn with<R>(&self, txn_id: TxnId, f: impl FnOnce(&T) -> R) -> R {
+        f(self.value(txn_id))
+    }
+
+    /// Pass a mutable reference to the value visible to `txn_id` to `f`.
     ///
     /// The value is cloned into `txn_id`'s slot (if it is not already there). If `f` leaves the
     /// value unchanged and `txn_id` had not already written the value, then the clone is
     /// discarded so that the value does not count as mutated.
-    ///
-    /// Returns `None` (and does not call `f`) if there is no value.
-    fn with_mut_value<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+    pub(crate) fn with_mut<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> R
+    where
+        T: Clone + PartialEq,
+    {
         // If this transaction has already written to the value, then it counts as mutated.
         let previously_written = self.modified_in_txn(txn_id).is_some();
 
-        let value = self.internal_clone(txn_id)?;
+        let value = self.internal_clone(txn_id).expect("singleton has no value");
         let old_value = (!previously_written).then(|| value.clone());
         let result = f(value);
 
@@ -139,163 +144,20 @@ impl<T: Clone + PartialEq> VersionedValue<T> {
             self.gc_txn(txn_id);
         }
 
-        Some(result)
-    }
-}
-
-/// Storage for a singleton's value.
-///
-/// Implemented by `VersionedValue<Option<T>>` for singletons which may have no value, and by
-/// `DefaultValue<T>` for singletons declared with `default`, which always have a value.
-#[doc(hidden)]
-pub trait SingletonSlot: Default {
-    /// The type of the singleton's value.
-    type Value;
-    /// The result type of operations which might not find a value: `Option<T>` if the singleton
-    /// may have no value, `T` if it always has a value.
-    type Maybe<T>;
-
-    /// Convert the result of an operation which might not find a value to `Self::Maybe`.
-    ///
-    /// Panics if `result` is `None` and the singleton always has a value.
-    fn from_option<R>(result: Option<R>) -> Self::Maybe<R>;
-
-    /// The value visible to `txn_id`, if there is one.
-    fn get(&self, txn_id: TxnId) -> Option<&Self::Value>;
-
-    /// Pass a reference to the value visible to `txn_id` (if there is one) to `f`.
-    fn with<R>(&self, txn_id: TxnId, f: impl FnOnce(&Self::Value) -> R) -> Self::Maybe<R> {
-        Self::from_option(self.get(txn_id).map(f))
-    }
-
-    /// Pass a mutable reference to the value visible to `txn_id` (if there is one) to `f`.
-    fn with_mut<R>(
-        &mut self,
-        txn_id: TxnId,
-        f: impl FnOnce(&mut Self::Value) -> R,
-    ) -> Self::Maybe<R>
-    where
-        Self::Value: Clone + PartialEq;
-
-    /// Write `value` in transaction `txn_id`.
-    fn insert(&mut self, value: Self::Value, txn_id: TxnId);
-
-    /// Delete the value in transaction `txn_id`.
-    fn delete(&mut self, txn_id: TxnId);
-
-    /// Delete the value in transaction `txn_id`, returning a clone of the deleted value (if there
-    /// was one).
-    fn remove(&mut self, txn_id: TxnId) -> Self::Maybe<Self::Value>
-    where
-        Self::Value: Clone,
-    {
-        let result = self.get(txn_id).cloned();
-        // Only delete a value which is present, otherwise the delete would count as a write.
-        if result.is_some() {
-            self.delete(txn_id);
-        }
-        Self::from_option(result)
-    }
-
-    /// How the value was changed by transaction `txn_id`.
-    ///
-    /// Returns `None` if the transaction did not write the value, `Some(None)` if the transaction
-    /// deleted the value, and `Some(Some(value))` if the transaction inserted or mutated the value.
-    fn change_in_txn(&self, txn_id: TxnId) -> Option<Option<&Self::Value>>;
-
-    /// Cleanup a rolled-back transaction.
-    fn gc_txn(&mut self, txn_id: TxnId);
-}
-
-/// A singleton which may have no value. A deleted value is stored as a `None` tombstone.
-impl<T> SingletonSlot for VersionedValue<Option<T>> {
-    type Value = T;
-    type Maybe<R> = Option<R>;
-
-    fn from_option<R>(result: Option<R>) -> Option<R> {
         result
     }
 
-    fn get(&self, txn_id: TxnId) -> Option<&T> {
-        self.get(txn_id)?.as_ref()
-    }
-
-    fn with_mut<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> Option<R>
+    pub(crate) fn remove(&mut self, txn_id: TxnId) -> T
     where
-        T: Clone + PartialEq,
+        T: Clone,
     {
-        // Check for a value before cloning: a deleted singleton is stored as a `None` in an
-        // occupied slot, and cloning that into the free slot would look like a mutation and cause
-        // a spurious `Remove` notification.
-        SingletonSlot::get(self, txn_id)?;
-
-        self.with_mut_value(txn_id, |value| value.as_mut().map(f))?
+        let result = self.value(txn_id).clone();
+        self.delete(txn_id);
+        result
     }
 
-    fn insert(&mut self, value: T, txn_id: TxnId) {
-        self.set(Some(value), txn_id);
-    }
-
-    fn delete(&mut self, txn_id: TxnId) {
-        self.set(None, txn_id);
-    }
-
-    fn change_in_txn(&self, txn_id: TxnId) -> Option<Option<&T>> {
-        self.modified_in_txn(txn_id).map(Option::as_ref)
-    }
-
-    fn gc_txn(&mut self, txn_id: TxnId) {
-        VersionedValue::gc_txn(self, txn_id);
-    }
-}
-
-/// Storage for a singleton declared with `default`, which always has a value.
-///
-/// Deleting the value is just writing the default value (so it is notified as an upsert).
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct DefaultValue<T>(VersionedValue<T>);
-
-impl<T: Default> Default for DefaultValue<T> {
-    fn default() -> Self {
-        DefaultValue(VersionedValue::new(T::default(), TxnId::FIRST))
-    }
-}
-
-impl<T: Default> SingletonSlot for DefaultValue<T> {
-    type Value = T;
-    type Maybe<R> = R;
-
-    fn from_option<R>(result: Option<R>) -> R {
-        result.expect("defaulting singleton has no value")
-    }
-
-    fn get(&self, txn_id: TxnId) -> Option<&T> {
-        self.0.get(txn_id)
-    }
-
-    fn with_mut<R>(&mut self, txn_id: TxnId, f: impl FnOnce(&mut T) -> R) -> R
-    where
-        T: Clone + PartialEq,
-    {
-        Self::from_option(self.0.with_mut_value(txn_id, f))
-    }
-
-    fn insert(&mut self, value: T, txn_id: TxnId) {
-        self.0.set(value, txn_id);
-    }
-
-    fn delete(&mut self, txn_id: TxnId) {
-        self.0.set(T::default(), txn_id);
-    }
-
-    fn change_in_txn(&self, txn_id: TxnId) -> Option<Option<&T>> {
-        // The value is never deleted, so any write is an upsert.
-        self.0.modified_in_txn(txn_id).map(Some)
-    }
-
-    fn gc_txn(&mut self, txn_id: TxnId) {
-        self.0.gc_txn(txn_id);
+    pub(crate) fn delete(&mut self, txn_id: TxnId) {
+        self.set(T::default(), txn_id);
     }
 }
 
@@ -303,6 +165,13 @@ impl<T> VersionedValue<T> {
     pub(crate) fn new(t: T, id: TxnId) -> Self {
         VersionedValue {
             slot_a: Some((id, t)),
+            slot_b: None,
+        }
+    }
+
+    fn empty() -> Self {
+        VersionedValue {
+            slot_a: None,
             slot_b: None,
         }
     }
@@ -1014,7 +883,10 @@ impl<D: schema::TableDesc> Table<D> {
 
         if let Some((key, value)) = self.delete_mask.insert(key, value, txn_id) {
             record_mutation(&mut self.modified, &key, txn_id);
-            self.data.entry(key).or_default().set(value, txn_id);
+            self.data
+                .entry(key)
+                .or_insert_with(VersionedValue::empty)
+                .set(value, txn_id);
         }
     }
 
@@ -1083,7 +955,7 @@ mod test {
 
     #[test]
     fn get_returns_none_when_empty() {
-        let v: VersionedValue<u32> = VersionedValue::default();
+        let v: VersionedValue<u32> = VersionedValue::empty();
         assert!(v.get(TxnId::new(2)).is_none());
     }
 
@@ -1143,7 +1015,7 @@ mod test {
 
     #[test]
     fn internal_clone_returns_none_when_empty() {
-        let mut v: VersionedValue<u32> = VersionedValue::default();
+        let mut v: VersionedValue<u32> = VersionedValue::empty();
         assert!(v.internal_clone(TxnId::new(2)).is_none());
     }
 
@@ -1184,7 +1056,7 @@ mod test {
 
     #[test]
     fn set_into_empty_writes_to_slot_a() {
-        let mut v: VersionedValue<u32> = VersionedValue::default();
+        let mut v: VersionedValue<u32> = VersionedValue::empty();
         v.set(42, TxnId::new(2));
         assert_eq!(v.slot_a, Some((TxnId::new(2), 42)));
         assert!(v.slot_b.is_none());
@@ -1284,15 +1156,15 @@ mod txn_test {
         let mut storage =
             Storage::<TableStorage>::new(alloc::sync::Arc::downgrade(&NoOpNotifier::new()));
         let id = storage.begin_transaction();
-        storage.tables.Count.set(Some(42), id);
+        storage.tables.Count.set(42, id);
         // Visible to the in-progress transaction.
-        assert_eq!(storage.tables.Count.get(id), Some(&Some(42)));
+        assert_eq!(storage.tables.Count.get(id), Some(&42));
 
         // Simulate cleanup of an abandoned transaction.
         storage.clear_transaction();
 
         assert!(storage.current_txn().is_none());
         let now = storage.txn_id();
-        assert!(storage.tables.Count.get(now).is_none());
+        assert_eq!(storage.tables.Count.get(now), Some(&0));
     }
 }
