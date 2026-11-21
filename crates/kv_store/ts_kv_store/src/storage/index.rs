@@ -7,166 +7,12 @@ use crate::{
     schema::{
         TableDesc,
         index::{
-            BaseKeyWrite, CustomIndex, CustomMultiIndex, IndexLifecycle, IndexRead, MultiIndexRead,
+            IndexMaintenance, MultiIndexIterable, MultiIndexRead, UniqueIndexIterable,
+            UniqueIndexRead,
         },
     },
     transactions::TxnId,
 };
-
-/// Storage for a custom index.
-#[doc(hidden)]
-#[derive(Debug, Default)]
-pub struct CustomIndexStorage<T>(pub T);
-
-/// Storage for a custom multi-index.
-#[doc(hidden)]
-#[derive(Debug, Default)]
-pub struct CustomMultiIndexStorage<T>(pub T);
-
-impl<K: Hash + Eq, B, T: CustomIndex<K, B>> IndexLifecycle<K, B> for CustomIndexStorage<T> {
-    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
-        self.0.check_consistent(txn_id)
-    }
-
-    fn commit(&mut self, txn_id: TxnId) {
-        self.0.commit(txn_id);
-    }
-
-    fn clear(&mut self, txn_id: TxnId) {
-        self.0.clear(txn_id);
-    }
-
-    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (K, &'a B)>)
-    where
-        B: 'a,
-    {
-        if !self.0.rollback(txn_id) {
-            self.0.rebuild(committed);
-        }
-    }
-}
-
-impl<K: Hash + Eq, B, T: CustomIndex<K, B>> BaseKeyWrite<K, B> for CustomIndexStorage<T> {
-    fn insert_base_key<Q>(&mut self, index_key: K, base_key: &Q, txn_id: TxnId)
-    where
-        B: Borrow<Q>,
-        Q: ?Sized + Eq + ToOwned<Owned = B>,
-    {
-        self.0.insert(index_key, base_key.to_owned(), txn_id);
-    }
-
-    fn remove_base_key<Q>(&mut self, index_key: &K, base_key: &Q, txn_id: TxnId)
-    where
-        B: Borrow<Q>,
-        Q: ?Sized + Eq,
-    {
-        // The entry may belong to another row.
-        if self
-            .0
-            .get(index_key, txn_id)
-            .is_some_and(|k| k.borrow() == base_key)
-        {
-            self.0.remove(index_key, txn_id);
-        }
-    }
-}
-
-impl<K: Hash + Eq, B, T: CustomMultiIndex<K, B>> IndexLifecycle<K, B>
-    for CustomMultiIndexStorage<T>
-{
-    fn check_consistent(&self, _txn_id: TxnId) -> Result<()> {
-        Ok(())
-    }
-
-    fn commit(&mut self, txn_id: TxnId) {
-        self.0.commit(txn_id);
-    }
-
-    fn clear(&mut self, txn_id: TxnId) {
-        self.0.clear(txn_id);
-    }
-
-    fn rollback<'a>(&mut self, txn_id: TxnId, committed: impl Iterator<Item = (K, &'a B)>)
-    where
-        B: 'a,
-    {
-        if !self.0.rollback(txn_id) {
-            self.0.rebuild(committed);
-        }
-    }
-}
-
-impl<K: Hash + Eq, B, T: CustomMultiIndex<K, B>> BaseKeyWrite<K, B> for CustomMultiIndexStorage<T> {
-    fn insert_base_key<Q>(&mut self, index_key: K, base_key: &Q, txn_id: TxnId)
-    where
-        B: Borrow<Q>,
-        Q: ?Sized + Eq + ToOwned<Owned = B>,
-    {
-        self.0.insert(index_key, base_key.to_owned(), txn_id);
-    }
-
-    fn remove_base_key<Q>(&mut self, index_key: &K, base_key: &Q, txn_id: TxnId)
-    where
-        B: Borrow<Q>,
-        Q: ?Sized + Eq,
-    {
-        self.0.remove(index_key, base_key, txn_id);
-    }
-}
-
-impl<K: Hash + Eq, B, T: CustomIndex<K, B>> IndexRead<K, B> for CustomIndexStorage<T> {
-    type Iter<'a>
-        = T::Iter<'a>
-    where
-        T: 'a,
-        K: 'a,
-        B: 'a;
-
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&B>
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-    {
-        self.0.get(key, txn_id)
-    }
-
-    fn iter(&self, txn_id: TxnId) -> T::Iter<'_> {
-        self.0.iter(txn_id)
-    }
-
-    fn check_consistent(&self, txn_id: TxnId) -> Result<()> {
-        self.0.check_consistent(txn_id)
-    }
-}
-
-impl<K: Hash + Eq, B, T: CustomMultiIndex<K, B>> MultiIndexRead<K, B>
-    for CustomMultiIndexStorage<T>
-{
-    type BaseKeys<'a>
-        = T::BaseKeys<'a>
-    where
-        T: 'a,
-        B: 'a;
-
-    type Iter<'a>
-        = T::Iter<'a>
-    where
-        T: 'a,
-        K: 'a,
-        B: 'a;
-
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<T::BaseKeys<'_>>
-    where
-        K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-    {
-        self.0.get(key, txn_id)
-    }
-
-    fn iter(&self, txn_id: TxnId) -> T::Iter<'_> {
-        self.0.iter(txn_id)
-    }
-}
 
 /// A built-in unique index, which handles non-unique index keys according to `P`.
 #[doc(hidden)]
@@ -267,27 +113,9 @@ pub mod policy {
     }
 }
 
-impl<D: TableDesc, P: policy::UniquePolicy> CustomIndex<D::Key, D::Value> for UniqueIndex<D, P> {
-    type Iter<'a>
-        = TableIter<'a, D>
-    where
-        P: 'a;
-
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
-    where
-        D::Key: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-    {
-        if self.is_poisoned(txn_id) {
-            return None;
-        }
-        self.table.get(key, txn_id)
-    }
-
-    fn iter(&self, txn_id: TxnId) -> TableIter<'_, D> {
-        self.table.iter(txn_id)
-    }
-
+impl<D: TableDesc, P: policy::UniquePolicy> IndexMaintenance<D::Key, D::Value>
+    for UniqueIndex<D, P>
+{
     fn insert(&mut self, key: D::Key, base_key: D::Value, txn_id: TxnId) {
         if self.get(&key, txn_id).is_none() {
             self.table.insert(key, base_key, txn_id);
@@ -296,8 +124,18 @@ impl<D: TableDesc, P: policy::UniquePolicy> CustomIndex<D::Key, D::Value> for Un
         }
     }
 
-    fn remove(&mut self, key: &D::Key, txn_id: TxnId) {
-        self.table.delete(key, txn_id);
+    fn remove<R>(&mut self, key: &D::Key, base_key: &R, txn_id: TxnId)
+    where
+        D::Value: Borrow<R>,
+        R: ?Sized + Eq,
+    {
+        if self
+            .table
+            .get(key, txn_id)
+            .is_some_and(|k| k.borrow() == base_key)
+        {
+            self.table.delete(key, txn_id);
+        }
     }
 
     fn clear(&mut self, txn_id: TxnId) {
@@ -317,43 +155,44 @@ impl<D: TableDesc, P: policy::UniquePolicy> CustomIndex<D::Key, D::Value> for Un
         self.table.commit_without_notifications(txn_id);
     }
 
-    fn rollback(&mut self, txn_id: TxnId) -> bool {
-        self.table.gc_txn(txn_id);
-        self.poisoned.gc_txn(txn_id);
-        true
-    }
-
-    fn rebuild<'a>(&mut self, _: impl Iterator<Item = (D::Key, &'a D::Value)>)
+    fn rollback<'a>(&mut self, txn_id: TxnId, _: impl Iterator<Item = (D::Key, &'a D::Value)>)
     where
         D::Value: 'a,
     {
-        unreachable!("rollback always succeeds");
+        self.table.gc_txn(txn_id);
+        self.poisoned.gc_txn(txn_id);
     }
 }
 
-impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> CustomMultiIndex<D::Key, B> for Table<D> {
-    type BaseKeys<'a>
-        = slice::Iter<'a, B>
-    where
-        B: 'a;
-
-    type Iter<'a>
-        = Map<TableIter<'a, D>, fn((&'a D::Key, &'a Vec<B>)) -> (&'a D::Key, slice::Iter<'a, B>)>
-    where
-        B: 'a;
-
-    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<slice::Iter<'_, B>>
+impl<D: TableDesc, P: policy::UniquePolicy> UniqueIndexRead<D::Key, D::Value>
+    for UniqueIndex<D, P>
+{
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&D::Value>
     where
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        Table::get(self, key, txn_id).map(|keys| keys.iter())
+        if self.is_poisoned(txn_id) {
+            return None;
+        }
+        self.table.get(key, txn_id)
     }
+}
 
-    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_> {
-        Table::iter(self, txn_id).map(|(k, v)| (k, v.iter()))
+impl<D: TableDesc, P: policy::UniquePolicy> UniqueIndexIterable<D::Key, D::Value>
+    for UniqueIndex<D, P>
+{
+    type Iter<'a>
+        = TableIter<'a, D>
+    where
+        P: 'a;
+
+    fn iter(&self, txn_id: TxnId) -> TableIter<'_, D> {
+        self.table.iter(txn_id)
     }
+}
 
+impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> IndexMaintenance<D::Key, B> for Table<D> {
     fn insert(&mut self, key: D::Key, base_key: B, txn_id: TxnId) {
         match Table::get(self, &key, txn_id) {
             Some(keys) if keys.contains(&base_key) => {}
@@ -390,15 +229,38 @@ impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> CustomMultiIndex<D::Key
         self.commit_without_notifications(txn_id);
     }
 
-    fn rollback(&mut self, txn_id: TxnId) -> bool {
-        self.gc_txn(txn_id);
-        true
-    }
-
-    fn rebuild<'a>(&mut self, _: impl Iterator<Item = (D::Key, &'a B)>)
+    fn rollback<'a>(&mut self, txn_id: TxnId, _: impl Iterator<Item = (D::Key, &'a B)>)
     where
         B: 'a,
     {
-        unreachable!("rollback always succeeds");
+        self.gc_txn(txn_id);
+    }
+}
+
+impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> MultiIndexRead<D::Key, B> for Table<D> {
+    type BaseKeys<'a>
+        = slice::Iter<'a, B>
+    where
+        B: 'a;
+
+    fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<slice::Iter<'_, B>>
+    where
+        D::Key: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
+    {
+        Table::get(self, key, txn_id).map(|keys| keys.iter())
+    }
+}
+
+impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> MultiIndexIterable<D::Key, B>
+    for Table<D>
+{
+    type Iter<'a>
+        = Map<TableIter<'a, D>, fn((&'a D::Key, &'a Vec<B>)) -> (&'a D::Key, slice::Iter<'a, B>)>
+    where
+        B: 'a;
+
+    fn iter(&self, txn_id: TxnId) -> Self::Iter<'_> {
+        Table::iter(self, txn_id).map(|(k, v)| (k, v.iter()))
     }
 }

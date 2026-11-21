@@ -113,13 +113,19 @@
 /// ## Custom indexes
 ///
 /// A custom index is declared with `index(field: Type (= closure)?; custom(Impl))`, where `Impl` is
-/// a concrete type which implements [`CustomIndex<Type, KeyType>`](crate::schema::index::CustomIndex). `Impl` stores the
+/// a concrete type which implements [`UniqueIndexRead<Type, KeyType>`](crate::schema::index::UniqueIndexRead). `Impl` stores the
 /// index and decides how non-unique index keys are handled. Custom indexes have the same user-facing
 /// API as unique indexes.
 ///
 /// A custom multi-index is declared with `custom_multi(Impl)`, where `Impl` implements
-/// [`CustomMultiIndex<Type, KeyType>`](crate::schema::index::CustomMultiIndex). Custom multi-indexes have the same
+/// [`MultiIndexRead<Type, KeyType>`](crate::schema::index::MultiIndexRead). Custom multi-indexes have the same
 /// user-facing API as `multi` indexes.
+///
+/// Both kinds of custom index must also implement
+/// [`IndexMaintenance<Type, KeyType>`](crate::schema::index::IndexMaintenance). To support
+/// iteration (`iter`, `keys`, and `IntoIterator`), they must implement
+/// [`UniqueIndexIterable`](crate::schema::index::UniqueIndexIterable) or
+/// [`MultiIndexIterable`](crate::schema::index::MultiIndexIterable), respectively.
 ///
 /// # Notifications
 ///
@@ -286,7 +292,7 @@ macro_rules! store {
                 $(
                     $(
                         self.$name.check_txn_consistency(_txn_id)?;
-                        $(<_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::check_consistent(&self.$name.indexes.$field, _txn_id)?;)*
+                        $(<_ as $crate::schema::index::IndexMaintenance<$field_ty, $key_ty>>::check_consistent(&self.$name.indexes.$field, _txn_id)?;)*
                     )*
                 )?
                 $(
@@ -304,7 +310,7 @@ macro_rules! store {
                         if !events.is_empty() {
                             _subscriptions.collect_events::<$name>(_notifications, events);
                         }
-                        $(<_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::commit(&mut self.$name.indexes.$field, _txn_id);)*
+                        $(<_ as $crate::schema::index::IndexMaintenance<$field_ty, $key_ty>>::commit(&mut self.$name.indexes.$field, _txn_id);)*
                     )*
                 )?
 
@@ -314,17 +320,20 @@ macro_rules! store {
             fn gc_txn(&mut self, _txn_id: $crate::transactions::TxnId) {
                 $(
                     $(
-                        self.$name.gc_txn(_txn_id);
-                        $({
-                            // The base table must already be rolled back, so that `rows` are the
-                            // committed rows.
-                            let (indexes, rows) = self.$name.indexes_and_rows(_txn_id);
-                            <_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::rollback(
-                                &mut indexes.$field,
-                                _txn_id,
-                                rows.flat_map(|(k, v)| index::$name::Storage::$field(v).into_iter().map(move |ik| (ik, k))),
-                            );
-                        })*
+                        // Indexes are only modified via their base table, so if the table is
+                        // unmodified, so are its indexes.
+                        if self.$name.gc_txn(_txn_id) {
+                            $({
+                                // The base table must already be rolled back, so that `rows` are the
+                                // committed rows.
+                                let (indexes, rows) = self.$name.indexes_and_rows(_txn_id);
+                                <_ as $crate::schema::index::IndexMaintenance<$field_ty, $key_ty>>::rollback(
+                                    &mut indexes.$field,
+                                    _txn_id,
+                                    rows.flat_map(|(k, v)| index::$name::Storage::$field(v).into_iter().map(move |ik| (ik, k))),
+                                );
+                            })*
+                        }
                     )*
                 )?
                 $(
@@ -477,7 +486,7 @@ macro_rules! store {
 
             impl $crate::schema::index::IndexWrite<$key_ty, $value_ty> for index::$name::Storage {
                 fn clear(&mut self, _txn_id: $crate::transactions::TxnId) {
-                    $(<_ as $crate::schema::index::IndexLifecycle<$field_ty, $key_ty>>::clear(&mut self.$field, _txn_id);)*
+                    $(<_ as $crate::schema::index::IndexMaintenance<$field_ty, $key_ty>>::clear(&mut self.$field, _txn_id);)*
                 }
 
                 fn on_insert<Q>(&mut self, _key: &Q, _value: &$value_ty, _txn_id: $crate::transactions::TxnId)
@@ -487,7 +496,7 @@ macro_rules! store {
                 {
                     $({
                         for index_key in index::$name::Storage::$field(_value) {
-                            <_ as $crate::schema::index::BaseKeyWrite<$field_ty, $key_ty>>::insert_base_key(&mut self.$field, index_key, _key, _txn_id);
+                            <_ as $crate::schema::index::IndexMaintenance<$field_ty, $key_ty>>::insert(&mut self.$field, index_key, $crate::__alloc::borrow::ToOwned::to_owned(_key), _txn_id);
                         }
                     })*
                 }
@@ -499,7 +508,7 @@ macro_rules! store {
                 {
                     $({
                         for index_key in index::$name::Storage::$field(_value) {
-                            <_ as $crate::schema::index::BaseKeyWrite<$field_ty, $key_ty>>::remove_base_key(&mut self.$field, &index_key, _key, _txn_id);
+                            <_ as $crate::schema::index::IndexMaintenance<$field_ty, $key_ty>>::remove(&mut self.$field, &index_key, _key, _txn_id);
                         }
                     })*
                 }
@@ -812,18 +821,18 @@ macro_rules! index_desc {
         }
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; custom($cimpl:ty)) => {
-        $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::CustomIndexStorage<$cimpl>);
+        $crate::index_desc!(@impl $name, $field: $field_ty => $cimpl);
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; custom_multi($cimpl:ty)) => {
-        $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::CustomMultiIndexStorage<$cimpl>);
+        $crate::index_desc!(@impl $name, $field: $field_ty => $cimpl);
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; multi) => {
         $crate::index_table_desc!($name, $field: $field_ty => $crate::__alloc::vec::Vec<$key_ty>);
-        $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::CustomMultiIndexStorage<$crate::storage::Table<Self>>);
+        $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::Table<Self>);
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; $policy:ident) => {
         $crate::index_table_desc!($name, $field: $field_ty => $key_ty);
-        $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::CustomIndexStorage<$crate::storage::UniqueIndex<Self, $crate::storage::policy::$policy>>);
+        $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::UniqueIndex<Self, $crate::storage::policy::$policy>);
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty) => {
         $crate::index_desc!($name, $field: $field_ty => $key_ty; poison);

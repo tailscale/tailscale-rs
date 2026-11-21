@@ -207,7 +207,7 @@ pub mod transactions;
 #[doc(inline)]
 pub use index::{
     Index, IndexGuard, IndexTransaction, MultiIndex, MultiIndexGuard, MultiIndexTransaction,
-    RoIndexTransaction, RoRoIndexTransaction,
+    RoIndexTransaction, RoMultiIndexTransaction, RoRoIndexTransaction, RoRoMultiIndexTransaction,
 };
 pub use iter::{BaseRows, IndexIter, MultiIndexIter, TableIter};
 #[doc(inline)]

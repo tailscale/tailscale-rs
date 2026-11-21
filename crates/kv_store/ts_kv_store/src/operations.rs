@@ -13,9 +13,9 @@ use core::{borrow::Borrow, hash::Hash, ops::Deref};
 use crate::{
     GeneratedStorage, Owner, Result, iter,
     schema::{
-        self, Desc, IndexDesc, MultiIndexDesc, PrimaryTableDesc, SingletonDesc, TableDesc,
-        UniqueIndexDesc,
-        index::{IndexRead, MultiIndexRead},
+        self, Desc, IndexDesc, IterableMultiIndexDesc, IterableUniqueIndexDesc, MultiIndexDesc,
+        PrimaryTableDesc, SingletonDesc, TableDesc, UniqueIndexDesc,
+        index::{IndexMaintenance, MultiIndexRead, UniqueIndexRead},
     },
     storage::{SingletonSlot, Storage, Table},
     transactions::{TransactionRef, TxnId},
@@ -246,26 +246,6 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
             .and_then(|base_key| Some(f(base_key, base.get(base_key, txn_id)?))))
     }
 
-    /// Like `with`, but only looks up the key from the index (not the value in the base table).
-    fn with_base_key<Q, T>(
-        self,
-        key: &Q,
-        f: impl FnOnce(&BaseKey<Self::IndexDesc>) -> T,
-    ) -> Result<Option<T>>
-    where
-        IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
-    {
-        let guard = self.read_lock();
-        // SAFETY (for all uses of `guard`): `guard` is from `read_lock` (see the trait's
-        // contract).
-        unsafe { check_consistent::<Self::IndexDesc>(&*guard) }?;
-        let txn_id = guard.txn_id();
-        Ok(unsafe { guard.index::<Self::IndexDesc>() }
-            .get(key, txn_id)
-            .map(f))
-    }
-
     fn with_iter<T>(
         self,
         f: impl for<'a> FnOnce(
@@ -277,7 +257,10 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
                 ),
             >,
         ) -> T,
-    ) -> T {
+    ) -> T
+    where
+        Self::IndexDesc: IterableUniqueIndexDesc,
+    {
         let guard = self.read_lock();
         // SAFETY: `guard` is from `read_lock` (see the trait's contract).
         f(&mut unsafe { iter::index_iter::<Self::IndexDesc>(&*guard) })
@@ -286,7 +269,10 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
     fn with_keys<T>(
         self,
         f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<Self::IndexDesc>>) -> T,
-    ) -> T {
+    ) -> T
+    where
+        Self::IndexDesc: IterableUniqueIndexDesc,
+    {
         self.with_iter(|iter| f(&mut iter.map(|(k, ..)| k)))
     }
 
@@ -295,7 +281,10 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
         f: impl for<'a> FnOnce(
             &mut dyn Iterator<Item = (&'a BaseKey<Self::IndexDesc>, &'a BaseValue<Self::IndexDesc>)>,
         ) -> T,
-    ) -> T {
+    ) -> T
+    where
+        Self::IndexDesc: IterableUniqueIndexDesc,
+    {
         self.with_iter(|iter| f(&mut iter.map(|(_, bk, v)| (bk, v))))
     }
 }
@@ -374,7 +363,10 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
                 ),
             >,
         ) -> T,
-    ) -> T {
+    ) -> T
+    where
+        Self::IndexDesc: IterableMultiIndexDesc,
+    {
         let guard = self.read_lock();
         // SAFETY: `guard` is from `read_lock` (see the trait's contract).
         f(&mut unsafe { iter::multi_index_iter::<Self::IndexDesc>(&*guard) })
@@ -383,7 +375,10 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
     fn with_keys<T>(
         self,
         f: impl for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<Self::IndexDesc>>) -> T,
-    ) -> T {
+    ) -> T
+    where
+        Self::IndexDesc: IterableMultiIndexDesc,
+    {
         self.with_iter(|iter| f(&mut iter.map(|(k, _)| k)))
     }
 
@@ -392,7 +387,10 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
         f: impl for<'a> FnOnce(
             &mut dyn Iterator<Item = (&'a BaseKey<Self::IndexDesc>, &'a BaseValue<Self::IndexDesc>)>,
         ) -> T,
-    ) -> T {
+    ) -> T
+    where
+        Self::IndexDesc: IterableMultiIndexDesc,
+    {
         self.with_iter(|iter| f(&mut iter.flat_map(|(_, rows)| rows)))
     }
 }

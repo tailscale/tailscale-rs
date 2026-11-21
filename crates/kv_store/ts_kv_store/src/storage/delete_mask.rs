@@ -76,8 +76,8 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
     {
         debug_assert!(self.check_txn_id(txn_id));
         match self {
-            DeleteMask::All(self_id, present) if *self_id == txn_id => present.get(k)?.get(txn_id),
-            DeleteMask::Some(self_id, removed) if *self_id == txn_id && removed.contains(k) => None,
+            DeleteMask::All(_self_id, present) => present.get(k)?.get(txn_id),
+            DeleteMask::Some(self_id, removed) if removed.contains(k) => None,
             _ => data.get(k)?.get(txn_id),
         }
     }
@@ -97,10 +97,8 @@ impl<K: Hash + Eq, V> DeleteMask<K, V> {
     {
         debug_assert!(self.check_txn_id(txn_id));
         match self {
-            DeleteMask::All(self_id, present) if *self_id == txn_id => {
-                present.get_mut(k)?.get_mut(txn_id)
-            }
-            DeleteMask::Some(self_id, removed) if *self_id == txn_id && removed.contains(k) => None,
+            DeleteMask::All(_self_id, present) => present.get_mut(k)?.get_mut(txn_id),
+            DeleteMask::Some(self_id, removed) if removed.contains(k) => None,
             _ => data.get_mut(k)?.internal_clone(txn_id),
         }
     }

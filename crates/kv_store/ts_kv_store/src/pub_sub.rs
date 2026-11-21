@@ -313,7 +313,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         events: HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
     ) {
         let all = self.all.lock().unwrap();
-        let all_events = process_events::<D>(&events, None);
+        let all_events = process_events::<D>(&events);
         for s in all.iter() {
             notifications.append_notifications(*s, &all_events);
         }
@@ -329,7 +329,7 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
         }
 
         for (k, s) in table.subscriptions.iter() {
-            let events = process_events::<D>(&events, Some(k));
+            let events = process_events::<D>(events.get_key_value(k));
             if !events.is_empty() {
                 for s in s {
                     notifications.append_notifications(*s, &events);
@@ -670,11 +670,8 @@ impl<N: Clone> Notifications<N> {
 
 /// Process events for a table (described by `D`) into notifications by collecting internal events
 /// into the public event type and wrapping it in the table's notification type.
-///
-/// `filter` is used when a subscriber is just watching a single key in the table, not all of them.
-fn process_events<D: PrimaryTableDesc>(
-    events: &HashMap<D::Key, WatchedEvent<D::NotificationValue>>,
-    filter: Option<&D::Key>,
+fn process_events<'a, D: PrimaryTableDesc>(
+    events: impl IntoIterator<Item = (&'a D::Key, &'a WatchedEvent<D::NotificationValue>)>,
 ) -> Vec<NotificationType<D>> {
     use collect::CollectEvents;
 
@@ -684,14 +681,6 @@ fn process_events<D: PrimaryTableDesc>(
     // Collecting clear events degenerates into a simple bool.
     let mut clear = false;
     for (k, e) in events {
-        // We could have separate functions for one key vs the whole table and be a little bit more
-        // efficient. I don't think it would be a huge difference though.
-        if let Some(f) = filter
-            && f != k
-        {
-            continue;
-        }
-
         match e {
             WatchedEvent::Clear => clear = true,
             WatchedEvent::Remove => removes.push(k.clone(), ()),
@@ -1012,13 +1001,13 @@ mod tests {
 
     #[test]
     fn process_events_empty() {
-        let result = process_events::<Items>(&HashMap::new(), None);
+        let result = process_events::<Items>(&HashMap::new());
         assert!(result.is_empty());
     }
 
     #[test]
     fn process_events_single_upsert_is_key_upsert() {
-        let result = process_events::<Items>(&events(&[(1, upsert("a"))]), None);
+        let result = process_events::<Items>(&events(&[(1, upsert("a"))]));
         assert_eq!(result.len(), 1);
         assert_eq!(
             ItemsKind::from(&result[0]),
@@ -1028,7 +1017,7 @@ mod tests {
 
     #[test]
     fn process_events_many_upserts_are_table_upsert() {
-        let result = process_events::<Items>(&events(&[(1, upsert("a")), (2, upsert("b"))]), None);
+        let result = process_events::<Items>(&events(&[(1, upsert("a")), (2, upsert("b"))]));
         assert_eq!(result.len(), 1);
         assert_eq!(
             ItemsKind::from(&result[0]),
@@ -1038,17 +1027,17 @@ mod tests {
 
     #[test]
     fn process_events_single_remove_is_key_remove() {
-        let result = process_events::<Items>(&events(&[(1, WatchedEvent::Remove)]), None);
+        let result = process_events::<Items>(&events(&[(1, WatchedEvent::Remove)]));
         assert_eq!(result.len(), 1);
         assert_eq!(ItemsKind::from(&result[0]), ItemsKind::KeyRemove(1));
     }
 
     #[test]
     fn process_events_many_removes_are_table_remove() {
-        let result = process_events::<Items>(
-            &events(&[(1, WatchedEvent::Remove), (2, WatchedEvent::Remove)]),
-            None,
-        );
+        let result = process_events::<Items>(&events(&[
+            (1, WatchedEvent::Remove),
+            (2, WatchedEvent::Remove),
+        ]));
         assert_eq!(result.len(), 1);
         assert_eq!(
             ItemsKind::from(&result[0]),
@@ -1060,17 +1049,17 @@ mod tests {
     fn process_events_single_init_is_table_upsert() {
         // `KeyOnlyUpsert` (empty -> non-empty) is always reported as a table-level upsert, even for
         // one key.
-        let result = process_events::<Items>(&events(&[(1, WatchedEvent::KeyOnlyUpsert)]), None);
+        let result = process_events::<Items>(&events(&[(1, WatchedEvent::KeyOnlyUpsert)]));
         assert_eq!(result.len(), 1);
         assert_eq!(ItemsKind::from(&result[0]), ItemsKind::TableUpsert(vec![1]));
     }
 
     #[test]
     fn process_events_init_and_upsert_coalesce_to_table_upsert() {
-        let result = process_events::<Items>(
-            &events(&[(1, WatchedEvent::KeyOnlyUpsert), (2, upsert("b"))]),
-            None,
-        );
+        let result = process_events::<Items>(&events(&[
+            (1, WatchedEvent::KeyOnlyUpsert),
+            (2, upsert("b")),
+        ]));
         assert_eq!(result.len(), 1);
         assert_eq!(
             ItemsKind::from(&result[0]),
@@ -1080,24 +1069,9 @@ mod tests {
 
     #[test]
     fn process_events_clear_is_table_clear() {
-        let result = process_events::<Items>(&events(&[(1, WatchedEvent::Clear)]), None);
+        let result = process_events::<Items>(&events(&[(1, WatchedEvent::Clear)]));
         assert_eq!(result.len(), 1);
         assert_eq!(ItemsKind::from(&result[0]), ItemsKind::TableClear);
-    }
-
-    #[test]
-    fn process_events_filter_selects_only_matching_key() {
-        let evs = events(&[(1, upsert("a")), (2, upsert("b"))]);
-
-        let matched = process_events::<Items>(&evs, Some(&1));
-        assert_eq!(matched.len(), 1);
-        assert_eq!(
-            ItemsKind::from(&matched[0]),
-            ItemsKind::KeyUpsert(1, "a".to_owned())
-        );
-
-        let missing = process_events::<Items>(&evs, Some(&3));
-        assert!(missing.is_empty());
     }
 
     #[test]

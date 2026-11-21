@@ -6,7 +6,10 @@ use crate::{
     KvStore, Owner, Result, RoTableTransaction, TableTransaction,
     iter::{self, BaseRows, IndexIter, MultiIndexIter},
     operations::{BaseKey, BaseValue, IndexKey, IndexedOps, MultiIndexedOps, Ops, StorageGuard},
-    schema::{Desc, MultiIndexDesc, UniqueIndexDesc},
+    schema::{
+        Desc, IterableMultiIndexDesc, IterableUniqueIndexDesc, MultiIndexDesc, UniqueIndexDesc,
+        index::UniqueIndexRead,
+    },
     storage::Storage,
     transactions::TransactionInner,
 };
@@ -65,6 +68,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     /// Use a (read-only) transaction to get an iterator.
     pub fn with_iter<F, T>(&self, f: F) -> T
     where
+        D: IterableUniqueIndexDesc,
         F: for<'a> FnOnce(
             &mut dyn Iterator<Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>)>,
         ) -> T,
@@ -75,6 +79,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     /// Iterate over all rows in the index, calling `f` for each index key, base key, and value.
     pub fn for_each<F>(&self, mut f: F)
     where
+        D: IterableUniqueIndexDesc,
         F: for<'a> FnMut(&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>),
     {
         self.with_iter(|it| it.for_each(|(k, bk, v)| f(k, bk, v)))
@@ -83,6 +88,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     /// Iterate over all keys in the table.
     pub fn with_keys<F, T>(&self, f: F) -> T
     where
+        D: IterableUniqueIndexDesc,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<D>>) -> T,
     {
         <&Self as IndexedOps<_>>::with_keys(self, f)
@@ -91,6 +97,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     /// Iterate over all values in the table.
     pub fn with_values<F, T>(&self, f: F) -> T
     where
+        D: IterableUniqueIndexDesc,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a BaseKey<D>, &'a BaseValue<D>)>) -> T,
     {
         <&Self as IndexedOps<_>>::with_values(self, f)
@@ -255,6 +262,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     /// Use a (read-only) transaction to get an iterator.
     pub fn with_iter<F, T>(&self, f: F) -> T
     where
+        D: IterableMultiIndexDesc,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a IndexKey<D>, BaseRows<'a, D>)>) -> T,
     {
         <&Self as MultiIndexedOps<_>>::with_iter(self, f)
@@ -264,6 +272,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     /// in the base table.
     pub fn for_each<F>(&self, mut f: F)
     where
+        D: IterableMultiIndexDesc,
         F: for<'a> FnMut(&'a IndexKey<D>, BaseRows<'a, D>),
     {
         self.with_iter(|it| it.for_each(|(k, rows)| f(k, rows)))
@@ -272,6 +281,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     /// Iterate over all keys in the index.
     pub fn with_keys<F, T>(&self, f: F) -> T
     where
+        D: IterableMultiIndexDesc,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = &'a IndexKey<D>>) -> T,
     {
         <&Self as MultiIndexedOps<_>>::with_keys(self, f)
@@ -280,6 +290,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     /// Iterate over all indexed base keys and values.
     pub fn with_values<F, T>(&self, f: F) -> T
     where
+        D: IterableMultiIndexDesc,
         F: for<'a> FnOnce(&mut dyn Iterator<Item = (&'a BaseKey<D>, &'a BaseValue<D>)>) -> T,
     {
         <&Self as MultiIndexedOps<_>>::with_values(self, f)
@@ -451,18 +462,24 @@ impl<D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
     }
 
     /// Iterate all the keys in the index and values in the base table.
-    pub fn iter(&self) -> IndexIter<'_, D> {
+    pub fn iter(&self) -> IndexIter<'_, D>
+    where
+        D: IterableUniqueIndexDesc,
+    {
         // SAFETY: by `IndexGuard::guard`'s invariant.
         unsafe { iter::index_iter::<D>(self.guard) }
     }
 
     /// Iterate all the keys in the index.
-    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>> {
+    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>>
+    where
+        D: IterableUniqueIndexDesc,
+    {
         self.iter().map(|(k, ..)| k)
     }
 }
 
-impl<'a, D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IntoIterator
+impl<'a, D: IterableUniqueIndexDesc, G: StorageGuard<D::Storage>> IntoIterator
     for &'a IndexGuard<'_, D, G>
 {
     type Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>);
@@ -499,7 +516,12 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
         IndexKey<D>: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
     {
-        <&Self as IndexedOps<_>>::with_base_key(self, key, Clone::clone)
+        self.check_consistent()?;
+        let guard = self.read_lock();
+        // SAFETY: `self` is borrowed while `guard` is used, so `self.base` cannot mutate the index.
+        Ok(unsafe { guard.index::<D>() }
+            .get(key, guard.txn_id())
+            .cloned())
     }
 
     /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
@@ -535,14 +557,20 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     }
 
     /// Iterate all the keys in the index and values in the base table.
-    pub fn iter(&self) -> IndexIter<'_, D> {
+    pub fn iter(&self) -> IndexIter<'_, D>
+    where
+        D: IterableUniqueIndexDesc,
+    {
         // SAFETY: `self` is borrowed for as long as the iterator is live, so `self.base` cannot
         // mutate the base table or its indexes.
         unsafe { iter::index_iter::<D>(self.read_lock()) }
     }
 
     /// Iterate all the keys in the index.
-    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>> {
+    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>>
+    where
+        D: IterableUniqueIndexDesc,
+    {
         self.iter().map(|(k, ..)| k)
     }
 
@@ -618,7 +646,7 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     }
 }
 
-impl<'a, D: UniqueIndexDesc> IntoIterator for &'a IndexTransaction<'_, '_, D> {
+impl<'a, D: IterableUniqueIndexDesc> IntoIterator for &'a IndexTransaction<'_, '_, D> {
     type Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>);
     type IntoIter = IndexIter<'a, D>;
 
@@ -655,8 +683,18 @@ pub struct MultiIndexGuard<'txn, D: MultiIndexDesc, G> {
     _index: PhantomData<D>,
 }
 
+/// Read-only, transactional accessor for a table of key/values pairs via a multi-index, built from
+/// a read-only transaction.
+pub type RoRoMultiIndexTransaction<'txn, D> =
+    MultiIndexGuard<'txn, D, Storage<<D as Desc>::Storage>>;
+
+/// Read-only, transactional accessor for a table of key/values pairs via a multi-index, built from
+/// a read/write transaction.
+pub type RoMultiIndexTransaction<'guard, 'txn, D> =
+    MultiIndexGuard<'txn, D, TransactionInner<'guard, <D as Desc>::Storage>>;
+
 impl<'guard, 'txn, D: MultiIndexDesc> From<&'txn TableTransaction<'guard, D::BaseTable>>
-    for MultiIndexGuard<'txn, D, TransactionInner<'guard, D::Storage>>
+    for RoMultiIndexTransaction<'guard, 'txn, D>
 {
     fn from(base: &'txn TableTransaction<'guard, D::BaseTable>) -> Self {
         // Upholds the invariant on `guard`: only `base` can mutate the base
@@ -670,7 +708,7 @@ impl<'guard, 'txn, D: MultiIndexDesc> From<&'txn TableTransaction<'guard, D::Bas
 }
 
 impl<'txn, D: MultiIndexDesc> From<&'txn RoTableTransaction<'_, D::BaseTable>>
-    for MultiIndexGuard<'txn, D, Storage<D::Storage>>
+    for RoRoMultiIndexTransaction<'txn, D>
 {
     fn from(base: &'txn RoTableTransaction<'_, D::BaseTable>) -> Self {
         // Upholds the invariant on `guard`: the store is read-locked for `'txn`.
@@ -726,18 +764,24 @@ impl<D: MultiIndexDesc, G: StorageGuard<D::Storage>> MultiIndexGuard<'_, D, G> {
     }
 
     /// Iterate all the keys in the index, each with an iterator over its rows in the base table.
-    pub fn iter(&self) -> MultiIndexIter<'_, D> {
+    pub fn iter(&self) -> MultiIndexIter<'_, D>
+    where
+        D: IterableMultiIndexDesc,
+    {
         // SAFETY: by `MultiIndexGuard::guard`'s invariant.
         unsafe { iter::multi_index_iter::<D>(self.guard) }
     }
 
     /// Iterate all the keys in the index.
-    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>> {
+    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>>
+    where
+        D: IterableMultiIndexDesc,
+    {
         self.iter().map(|(k, _)| k)
     }
 }
 
-impl<'a, D: MultiIndexDesc, G: StorageGuard<D::Storage>> IntoIterator
+impl<'a, D: IterableMultiIndexDesc, G: StorageGuard<D::Storage>> IntoIterator
     for &'a MultiIndexGuard<'_, D, G>
 {
     type Item = (&'a IndexKey<D>, BaseRows<'a, D>);
@@ -794,14 +838,20 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
     }
 
     /// Iterate all the keys in the index, each with an iterator over its rows in the base table.
-    pub fn iter(&self) -> MultiIndexIter<'_, D> {
+    pub fn iter(&self) -> MultiIndexIter<'_, D>
+    where
+        D: IterableMultiIndexDesc,
+    {
         // SAFETY: `self` is borrowed for as long as the iterator is live, so `self.base` cannot
         // mutate the base table or its indexes.
         unsafe { iter::multi_index_iter::<D>(self.read_lock()) }
     }
 
     /// Iterate all the keys in the index.
-    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>> {
+    pub fn keys(&self) -> impl Iterator<Item = &IndexKey<D>>
+    where
+        D: IterableMultiIndexDesc,
+    {
         self.iter().map(|(k, _)| k)
     }
 
@@ -836,7 +886,7 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
     }
 }
 
-impl<'a, D: MultiIndexDesc> IntoIterator for &'a MultiIndexTransaction<'_, '_, D> {
+impl<'a, D: IterableMultiIndexDesc> IntoIterator for &'a MultiIndexTransaction<'_, '_, D> {
     type Item = (&'a IndexKey<D>, BaseRows<'a, D>);
     type IntoIter = MultiIndexIter<'a, D>;
 
@@ -2602,19 +2652,38 @@ mod test_custom_index {
 
     use crate::{
         Owner,
-        schema::index::{CustomIndex, CustomMultiIndex},
+        schema::index::{
+            IndexMaintenance, MultiIndexIterable, MultiIndexRead, UniqueIndexIterable,
+            UniqueIndexRead,
+        },
         store,
         transactions::TxnId,
     };
 
     /// A custom index where inserting an existing key replaces its entry.
-    impl<K: Hash + Eq, B: Clone> CustomIndex<K, B> for HashMap<K, B> {
-        type Iter<'a>
-            = hash_map::Iter<'a, K, B>
-        where
-            K: 'a,
-            B: 'a;
+    impl<K: Hash + Eq, B: Clone> IndexMaintenance<K, B> for HashMap<K, B> {
+        fn insert(&mut self, key: K, base_key: B, _txn_id: TxnId) {
+            HashMap::insert(self, key, base_key);
+        }
 
+        fn remove<R>(&mut self, key: &K, base_key: &R, _txn_id: TxnId)
+        where
+            B: Borrow<R>,
+            R: ?Sized + Eq,
+        {
+            if HashMap::get(self, key).is_some_and(|b| b.borrow() == base_key) {
+                HashMap::remove(self, key);
+            }
+        }
+
+        fn clear(&mut self, _txn_id: TxnId) {
+            HashMap::clear(self);
+        }
+
+        fn commit(&mut self, _txn_id: TxnId) {}
+    }
+
+    impl<K: Hash + Eq, B: Clone> UniqueIndexRead<K, B> for HashMap<K, B> {
         fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<&B>
         where
             K: Borrow<Q>,
@@ -2622,70 +2691,22 @@ mod test_custom_index {
         {
             HashMap::get(self, key)
         }
+    }
+
+    impl<K: Hash + Eq, B: Clone> UniqueIndexIterable<K, B> for HashMap<K, B> {
+        type Iter<'a>
+            = hash_map::Iter<'a, K, B>
+        where
+            K: 'a,
+            B: 'a;
 
         fn iter(&self, _txn_id: TxnId) -> Self::Iter<'_> {
             HashMap::iter(self)
         }
-
-        fn insert(&mut self, key: K, base_key: B, _txn_id: TxnId) {
-            HashMap::insert(self, key, base_key);
-        }
-
-        fn remove(&mut self, key: &K, _txn_id: TxnId) {
-            HashMap::remove(self, key);
-        }
-
-        fn clear(&mut self, _txn_id: TxnId) {
-            HashMap::clear(self);
-        }
-
-        fn check_consistent(&self, _txn_id: TxnId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn commit(&mut self, _txn_id: TxnId) {}
-
-        fn rollback(&mut self, _txn_id: TxnId) -> bool {
-            false
-        }
-
-        fn rebuild<'a>(&mut self, data: impl Iterator<Item = (K, &'a B)>)
-        where
-            B: 'a,
-        {
-            HashMap::clear(self);
-            self.extend(data.map(|(k, b)| (k, b.clone())));
-        }
     }
 
     /// A custom multi-index.
-    impl<K: Hash + Eq, B: Hash + Eq + Clone> CustomMultiIndex<K, B> for HashMap<K, HashSet<B>> {
-        type BaseKeys<'a>
-            = hash_set::Iter<'a, B>
-        where
-            K: 'a,
-            B: 'a;
-        type Iter<'a>
-            = Map<
-            hash_map::Iter<'a, K, HashSet<B>>,
-            fn((&'a K, &'a HashSet<B>)) -> (&'a K, hash_set::Iter<'a, B>),
-        >
-        where
-            K: 'a,
-            B: 'a;
-
-        fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
-        where
-            K: Borrow<Q>,
-            Q: ?Sized + Hash + Eq,
-        {
-            HashMap::get(self, key).map(HashSet::iter)
-        }
-
-        fn iter(&self, _txn_id: TxnId) -> Self::Iter<'_> {
-            HashMap::iter(self).map(|(k, v)| (k, v.iter()))
-        }
-
+    impl<K: Hash + Eq, B: Hash + Eq + Clone> IndexMaintenance<K, B> for HashMap<K, HashSet<B>> {
         fn insert(&mut self, key: K, base_key: B, _txn_id: TxnId) {
             self.entry(key).or_default().insert(base_key);
         }
@@ -2708,19 +2729,36 @@ mod test_custom_index {
         }
 
         fn commit(&mut self, _txn_id: TxnId) {}
+    }
 
-        fn rollback(&mut self, _txn_id: TxnId) -> bool {
-            false
-        }
-
-        fn rebuild<'a>(&mut self, data: impl Iterator<Item = (K, &'a B)>)
+    impl<K: Hash + Eq, B: Hash + Eq + Clone> MultiIndexRead<K, B> for HashMap<K, HashSet<B>> {
+        type BaseKeys<'a>
+            = hash_set::Iter<'a, B>
         where
-            B: 'a,
+            K: 'a,
+            B: 'a;
+
+        fn get<Q>(&self, key: &Q, _txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
+        where
+            K: Borrow<Q>,
+            Q: ?Sized + Hash + Eq,
         {
-            HashMap::clear(self);
-            for (k, b) in data {
-                self.entry(k).or_default().insert(b.clone());
-            }
+            HashMap::get(self, key).map(HashSet::iter)
+        }
+    }
+
+    impl<K: Hash + Eq, B: Hash + Eq + Clone> MultiIndexIterable<K, B> for HashMap<K, HashSet<B>> {
+        type Iter<'a>
+            = Map<
+            hash_map::Iter<'a, K, HashSet<B>>,
+            fn((&'a K, &'a HashSet<B>)) -> (&'a K, hash_set::Iter<'a, B>),
+        >
+        where
+            K: 'a,
+            B: 'a;
+
+        fn iter(&self, _txn_id: TxnId) -> Self::Iter<'_> {
+            HashMap::iter(self).map(|(k, v)| (k, v.iter()))
         }
     }
 

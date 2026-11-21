@@ -50,11 +50,13 @@ impl<D: schema::TableDesc> Table<D> {
     }
 
     /// Cleanup a rolled-back transaction.
-    pub fn gc_txn(&mut self, txn_id: TxnId) {
-        self.delete_mask = DeleteMask::None;
+    ///
+    /// Returns `true` if the transaction modified the table (and so may have modified its indexes).
+    pub fn gc_txn(&mut self, txn_id: TxnId) -> bool {
+        let deleted = !matches!(core::mem::take(&mut self.delete_mask), DeleteMask::None);
 
         let Some(modified) = &self.modified else {
-            return;
+            return deleted;
         };
 
         assert_eq!(
@@ -74,6 +76,7 @@ impl<D: schema::TableDesc> Table<D> {
         }
 
         self.modified = None;
+        true
     }
 
     /// This table's indexes and its rows visible to `txn_id`.
@@ -373,16 +376,12 @@ impl<D: schema::TableDesc> Table<D> {
     {
         let mut removed = Vec::new();
         let mut yielded = Vec::new();
-        let result = if <D::IndexStorage as IndexWrite<_, _>>::HAS_INDEXES {
-            f(
-                &mut self
-                    .iter_mut(txn_id)
-                    .inspect(|(k, _)| yielded.push((*k).clone())),
-                &mut removed,
-            )
-        } else {
-            f(&mut self.iter_mut(txn_id), &mut removed)
-        };
+        let result = f(
+            &mut self
+                .iter_mut(txn_id)
+                .inspect(|(k, _)| yielded.push((*k).clone())),
+            &mut removed,
+        );
 
         // `iter_mut` has removed the index entries of every row it yielded. Removed rows must not
         // go through `Table::delete`, which would remove their (possibly mutated) index keys a
@@ -427,6 +426,8 @@ impl<D: schema::TableDesc> Table<D> {
     }
 
     pub(crate) fn insert(&mut self, key: D::Key, value: D::Value, txn_id: TxnId) {
+        // Before touching the indexes, so that `gc_txn` rolls them back if they panic.
+        mutations(&mut self.modified, txn_id);
         if let Some(old_value) = self.delete_mask.lookup(&self.data, &key, txn_id) {
             self.indexes.on_remove(&key, old_value, txn_id);
         }
@@ -443,6 +444,8 @@ impl<D: schema::TableDesc> Table<D> {
         D::Key: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = D::Key>,
     {
+        // Before touching the indexes, so that `gc_txn` rolls them back if they panic.
+        mutations(&mut self.modified, txn_id);
         // Only the value visible to this transaction is indexed. Any other value for `key` in
         // `self.data` (e.g., if `key` has already been removed in this transaction) may share
         // an index key with a different row, whose index entry must be kept.

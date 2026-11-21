@@ -70,10 +70,6 @@ impl<T> VersionedValue<T> {
     where
         T: Clone,
     {
-        if self.slot_a.is_none() && self.slot_b.is_none() {
-            return None;
-        }
-
         // The unpleasantness with `unwrap`s is to work around lifetime issues.
         if let Some((aid, a)) = &mut self.slot_a {
             if txn_id == *aid {
@@ -104,7 +100,7 @@ impl<T> VersionedValue<T> {
                 Some(&mut self.slot_a.as_mut().unwrap().1)
             }
         } else {
-            unreachable!();
+            None
         }
     }
 

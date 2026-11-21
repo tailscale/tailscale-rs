@@ -5,8 +5,9 @@ use std::collections::{HashSet, hash_map};
 use crate::{
     operations::{BaseKey, BaseValue, IndexKey, StorageGuard},
     schema::{
-        MultiIndexDesc, PrimaryTableDesc, TableDesc, UniqueIndexDesc,
-        index::{IndexRead, MultiIndexRead},
+        IterableMultiIndexDesc, IterableUniqueIndexDesc, MultiIndexDesc, PrimaryTableDesc,
+        TableDesc,
+        index::{MultiIndexIterable, MultiIndexRead, UniqueIndexIterable},
     },
     storage::{Table, VersionedValue},
     transactions::TxnId,
@@ -34,13 +35,13 @@ impl<'a, D: TableDesc> Iterator for TableIter<'a, D> {
 
 /// Iterator over the index `D`, yielding each index key with the corresponding base table key and
 /// value.
-pub struct IndexIter<'a, D: UniqueIndexDesc> {
-    index: <D::IndexStorage as IndexRead<IndexKey<D>, BaseKey<D>>>::Iter<'a>,
+pub struct IndexIter<'a, D: IterableUniqueIndexDesc> {
+    index: <D::IndexStorage as UniqueIndexIterable<IndexKey<D>, BaseKey<D>>>::Iter<'a>,
     base: &'a Table<D::BaseTable>,
     txn_id: TxnId,
 }
 
-impl<'a, D: UniqueIndexDesc> Iterator for IndexIter<'a, D> {
+impl<'a, D: IterableUniqueIndexDesc> Iterator for IndexIter<'a, D> {
     type Item = (&'a IndexKey<D>, &'a BaseKey<D>, &'a BaseValue<D>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -51,13 +52,13 @@ impl<'a, D: UniqueIndexDesc> Iterator for IndexIter<'a, D> {
 
 /// Iterator over the multi-index `D`, yielding each index key with an iterator over the
 /// corresponding rows of the base table.
-pub struct MultiIndexIter<'a, D: MultiIndexDesc> {
-    index: <D::IndexStorage as MultiIndexRead<IndexKey<D>, BaseKey<D>>>::Iter<'a>,
+pub struct MultiIndexIter<'a, D: IterableMultiIndexDesc> {
+    index: <D::IndexStorage as MultiIndexIterable<IndexKey<D>, BaseKey<D>>>::Iter<'a>,
     base: &'a Table<D::BaseTable>,
     txn_id: TxnId,
 }
 
-impl<'a, D: MultiIndexDesc> Iterator for MultiIndexIter<'a, D> {
+impl<'a, D: IterableMultiIndexDesc> Iterator for MultiIndexIter<'a, D> {
     type Item = (&'a IndexKey<D>, BaseRows<'a, D>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -111,7 +112,7 @@ pub(crate) unsafe fn table_iter<D: PrimaryTableDesc>(
 ///
 /// There must be no live mutable reference to the index described by `D` or to `D::BaseTable`
 /// while the returned iterator is live.
-pub(crate) unsafe fn index_iter<D: UniqueIndexDesc>(
+pub(crate) unsafe fn index_iter<D: IterableUniqueIndexDesc>(
     guard: &impl StorageGuard<D::Storage>,
 ) -> IndexIter<'_, D> {
     let txn_id = guard.txn_id();
@@ -130,7 +131,7 @@ pub(crate) unsafe fn index_iter<D: UniqueIndexDesc>(
 ///
 /// There must be no live mutable reference to the index described by `D` or to `D::BaseTable`
 /// while the returned iterator is live.
-pub(crate) unsafe fn multi_index_iter<D: MultiIndexDesc>(
+pub(crate) unsafe fn multi_index_iter<D: IterableMultiIndexDesc>(
     guard: &impl StorageGuard<D::Storage>,
 ) -> MultiIndexIter<'_, D> {
     let txn_id = guard.txn_id();

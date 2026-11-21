@@ -98,6 +98,7 @@ impl<S: OptionalSingletonDesc> Singleton<S> {
             |txn| unsafe { SingletonTransaction::new(txn) },
             f,
         )
+        .unwrap()
     }
 }
 
@@ -199,6 +200,7 @@ impl<S: DefaultSingletonDesc> DefaultSingleton<S> {
             |txn| unsafe { DefaultSingletonTransaction::new(txn) },
             f,
         )
+        .unwrap()
     }
 }
 
@@ -252,19 +254,21 @@ fn unsubscribe<S: SingletonDesc>(store: &KvStore<S::Storage>, subscription: Subs
 /// operation, then commit it.
 ///
 /// `new_view` must create the only view of the transaction it is passed.
+///
+/// Returns the error from committing, if there is one.
 fn in_txn<'store, TableStorage: GeneratedStorage, V, T>(
     store: &'store KvStore<TableStorage>,
     owner: Owner,
     new_view: impl FnOnce(Rc<Transaction<'store, TableStorage>>) -> V,
     f: impl FnOnce(&mut V) -> T,
-) -> T {
+) -> Result<T> {
     let txn = Rc::new(store.begin_generic_transaction(owner));
     let mut view = new_view(Rc::clone(&txn));
     let result = f(&mut view);
     drop(view);
     // `view` was the only other reference to `txn`.
-    Rc::into_inner(txn).unwrap().commit().unwrap();
-    result
+    Rc::into_inner(txn).unwrap().commit()?;
+    Ok(result)
 }
 
 /// Access tabular data in the store.
@@ -609,14 +613,8 @@ pub(crate) fn table_in_txn<D: PrimaryTableDesc, T>(
     owner: Owner,
     f: impl FnOnce(&mut TableTransaction<D>) -> T,
 ) -> Result<T> {
-    let txn = Rc::new(store.begin_generic_transaction(owner));
-    // SAFETY: this is the only view created from `txn`, so it cannot overlap any other view.
-    let mut view = unsafe { TableTransaction::new(Rc::clone(&txn)) };
-    let result = f(&mut view);
-    drop(view);
-    // `view` was the only other reference to `txn`.
-    Rc::into_inner(txn).unwrap().commit()?;
-    Ok(result)
+    // SAFETY: `in_txn` creates only one view of the transaction.
+    in_txn(store, owner, |txn| unsafe { TableTransaction::new(txn) }, f)
 }
 
 impl<D: schema::Indexable> Table<D> {

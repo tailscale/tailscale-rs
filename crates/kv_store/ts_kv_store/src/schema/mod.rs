@@ -6,7 +6,9 @@ use core::{any::Any, hash::Hash, ops::Deref};
 use crate::{
     Owner,
     pub_sub::Subscriptions,
-    schema::index::{IndexRead, IndexWrite, MultiIndexRead},
+    schema::index::{
+        IndexWrite, MultiIndexIterable, MultiIndexRead, UniqueIndexIterable, UniqueIndexRead,
+    },
     storage::{DefaultValue, SingletonSlot, Table, VersionedValue},
     transactions::TxnId,
 };
@@ -197,7 +199,7 @@ pub unsafe trait IndexDesc: Desc {
 #[doc(hidden)]
 pub trait UniqueIndexDesc:
     IndexDesc<
-    IndexStorage: IndexRead<
+    IndexStorage: UniqueIndexRead<
         <Self as IndexDesc>::Key,
         <<Self as IndexDesc>::BaseTable as TableDesc>::Key,
     >,
@@ -207,7 +209,7 @@ pub trait UniqueIndexDesc:
 
 impl<D> UniqueIndexDesc for D where
     D: IndexDesc<
-        IndexStorage: IndexRead<
+        IndexStorage: UniqueIndexRead<
             <D as IndexDesc>::Key,
             <<D as IndexDesc>::BaseTable as TableDesc>::Key,
         >,
@@ -230,6 +232,50 @@ pub trait MultiIndexDesc:
 impl<D> MultiIndexDesc for D where
     D: IndexDesc<
         IndexStorage: MultiIndexRead<
+            <D as IndexDesc>::Key,
+            <<D as IndexDesc>::BaseTable as TableDesc>::Key,
+        >,
+    >
+{
+}
+
+/// A unique index which supports iteration.
+#[doc(hidden)]
+pub trait IterableUniqueIndexDesc:
+    UniqueIndexDesc<
+    IndexStorage: UniqueIndexIterable<
+        <Self as IndexDesc>::Key,
+        <<Self as IndexDesc>::BaseTable as TableDesc>::Key,
+    >,
+>
+{
+}
+
+impl<D> IterableUniqueIndexDesc for D where
+    D: UniqueIndexDesc<
+        IndexStorage: UniqueIndexIterable<
+            <D as IndexDesc>::Key,
+            <<D as IndexDesc>::BaseTable as TableDesc>::Key,
+        >,
+    >
+{
+}
+
+/// A multi-index which supports iteration.
+#[doc(hidden)]
+pub trait IterableMultiIndexDesc:
+    MultiIndexDesc<
+    IndexStorage: MultiIndexIterable<
+        <Self as IndexDesc>::Key,
+        <<Self as IndexDesc>::BaseTable as TableDesc>::Key,
+    >,
+>
+{
+}
+
+impl<D> IterableMultiIndexDesc for D where
+    D: MultiIndexDesc<
+        IndexStorage: MultiIndexIterable<
             <D as IndexDesc>::Key,
             <<D as IndexDesc>::BaseTable as TableDesc>::Key,
         >,

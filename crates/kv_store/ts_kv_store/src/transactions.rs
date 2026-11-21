@@ -78,13 +78,7 @@ impl<TableStorage: GeneratedStorage> KvStore<TableStorage> {
     ///
     /// Blocks until the store's global lock is available for read access.
     pub fn begin_ro_transaction(&self, owner: Owner) -> TableStorage::RoTransaction<'_> {
-        let guard = self.get_read_lock();
-
-        TableStorage::make_ro_txn(RoTransaction {
-            guard,
-            owner,
-            _not_send_or_sync: PhantomData,
-        })
+        TableStorage::make_ro_txn(RoTransaction::new(self.get_read_lock(), owner))
     }
 
     /// Start a read-only transaction (i.e., only supports non-mutating access to the store, but
@@ -98,11 +92,7 @@ impl<TableStorage: GeneratedStorage> KvStore<TableStorage> {
         self.clear_lock_poison();
 
         if let Ok(guard) = self.storage.try_read() {
-            return Some(TableStorage::make_ro_txn(RoTransaction {
-                guard,
-                owner,
-                _not_send_or_sync: PhantomData,
-            }));
+            return Some(TableStorage::make_ro_txn(RoTransaction::new(guard, owner)));
         }
 
         // Garbage-collect the abandoned transaction before reading.
@@ -113,11 +103,7 @@ impl<TableStorage: GeneratedStorage> KvStore<TableStorage> {
         guard.clear_transaction();
         let guard = RwLockWriteGuard::downgrade(guard);
 
-        Some(TableStorage::make_ro_txn(RoTransaction {
-            guard,
-            owner,
-            _not_send_or_sync: PhantomData,
-        }))
+        Some(TableStorage::make_ro_txn(RoTransaction::new(guard, owner)))
         // We only try once, rather than loop because if the user is calling `try_begin_...`, they
         // presumably don't want to wait and we'd only need to retry if someone else grabbed the
         // lock before we could.
@@ -870,7 +856,15 @@ pub struct RoTransaction<'guard, TableStorage: GeneratedStorage> {
     _not_send_or_sync: PhantomData<*const ()>,
 }
 
-impl<TableStorage: GeneratedStorage> RoTransaction<'_, TableStorage> {
+impl<'guard, TableStorage: GeneratedStorage> RoTransaction<'guard, TableStorage> {
+    fn new(guard: RwLockReadGuard<'guard, Storage<TableStorage>>, owner: Owner) -> Self {
+        RoTransaction {
+            guard,
+            owner,
+            _not_send_or_sync: PhantomData,
+        }
+    }
+
     /// 'Commit' this transaction.
     ///
     /// This simply drops the `RoTransaction` object. It is optional to call and currently
