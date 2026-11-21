@@ -7,8 +7,8 @@ use crate::{
     iter::{self, BaseRows, IndexIter, MultiIndexIter},
     operations::{BaseKey, BaseValue, IndexKey, IndexedOps, MultiIndexedOps, Ops, StorageGuard},
     schema::{
-        Desc, IterableMultiIndexDesc, IterableUniqueIndexDesc, MultiIndexDesc, UniqueIndexDesc,
-        index::UniqueIndexRead,
+        CustomIndexDesc, Desc, IterableMultiIndexDesc, IterableUniqueIndexDesc, MultiIndexDesc,
+        UniqueIndexDesc, index::UniqueIndexRead,
     },
     storage::Storage,
     transactions::TransactionInner,
@@ -29,6 +29,16 @@ impl<D: UniqueIndexDesc> Index<D> {
         Index { store, owner }
     }
 
+    /// Access the storage of a custom index.
+    pub fn with_inner<T>(&self, f: impl FnOnce(&D::IndexStorage) -> T) -> T
+    where
+        D: CustomIndexDesc,
+    {
+        let guard = self.read_lock();
+        // SAFETY: the store is read-locked while `f` runs.
+        f(unsafe { guard.index::<D>() })
+    }
+
     /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
     pub fn check_consistent(&self) -> Result<()> {
         <&Self as IndexedOps<_>>::check_consistent(self)
@@ -43,7 +53,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     where
         BaseValue<D>: Clone,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as IndexedOps<_>>::get(self, key, self.owner).unwrap()
     }
@@ -56,7 +66,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Option<T>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner).unwrap()
     }
@@ -117,7 +127,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.in_txn(|index| index.with_mut(key, f))
     }
@@ -136,7 +146,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.try_with_mut(key, f).unwrap()
     }
@@ -157,7 +167,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.in_txn(|index| index.upsert(key, value, base_key))
     }
@@ -176,7 +186,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.try_upsert(key, value, base_key).unwrap()
     }
@@ -187,7 +197,7 @@ impl<D: UniqueIndexDesc> Index<D> {
     pub fn delete<Q>(&self, key: &Q) -> Option<BaseKey<D>>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.in_txn(|index| index.delete(key)).unwrap()
     }
@@ -231,6 +241,16 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
         MultiIndex { store, owner }
     }
 
+    /// Access the storage of a custom index.
+    pub fn with_inner<T>(&self, f: impl FnOnce(&D::IndexStorage) -> T) -> T
+    where
+        D: CustomIndexDesc,
+    {
+        let guard = self.read_lock();
+        // SAFETY: the store is read-locked while `f` runs.
+        f(unsafe { guard.index::<D>() })
+    }
+
     /// Get the rows of the table for `key` by cloning their base keys and values.
     ///
     /// Returns an empty `Vec` if there are no rows for the specified key.
@@ -238,7 +258,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     where
         BaseValue<D>: Clone,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as MultiIndexedOps<_>>::get(self, key, self.owner)
     }
@@ -249,7 +269,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     pub fn with<Q, T, F>(&self, key: &Q, f: F) -> Option<T>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
         F: FnOnce(&mut dyn Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>) -> T,
     {
         <&Self as MultiIndexedOps<_>>::with::<Q, T, F>(self, key, f, self.owner)
@@ -309,7 +329,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.in_txn(|index| index.with_mut(key, f))
     }
@@ -322,7 +342,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.try_with_mut(key, f).unwrap()
     }
@@ -331,7 +351,7 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
     pub fn delete<Q>(&self, key: &Q) -> Vec<BaseKey<D>>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.in_txn(|index| index.delete(key)).unwrap()
     }
@@ -428,10 +448,19 @@ unsafe impl<D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IndexedOps<D::Stora
     type IndexDesc = D;
 }
 
-impl<D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
+impl<'txn, D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'txn, D, G> {
     /// Returns `Ok` if the index is consistent, and an error with some kind of explanation if not.
     pub fn check_consistent(&self) -> Result<()> {
         <&Self as IndexedOps<_>>::check_consistent(self)
+    }
+
+    /// The storage of a custom index.
+    pub fn inner(&self) -> &'txn D::IndexStorage
+    where
+        D: CustomIndexDesc,
+    {
+        // SAFETY: by `IndexGuard::guard`'s invariant.
+        unsafe { self.guard.index::<D>() }
     }
 
     /// Get a row of the table from the store by cloning the value.
@@ -443,7 +472,7 @@ impl<D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
     where
         BaseValue<D>: Clone,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as IndexedOps<_>>::get::<Q>(self, key, self.owner).unwrap()
     }
@@ -456,7 +485,7 @@ impl<D: UniqueIndexDesc, G: StorageGuard<D::Storage>> IndexGuard<'_, D, G> {
     pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Option<T>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.owner).unwrap()
     }
@@ -511,10 +540,20 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
         }
     }
 
+    /// The storage of a custom index.
+    pub fn inner(&self) -> &D::IndexStorage
+    where
+        D: CustomIndexDesc,
+    {
+        // SAFETY: `self` is borrowed while the reference is live, so `self.base` cannot mutate
+        // the index.
+        unsafe { self.read_lock().index::<D>() }
+    }
+
     fn base_key<Q>(&self, key: &Q) -> Result<Option<BaseKey<D>>>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         self.check_consistent()?;
         let guard = self.read_lock();
@@ -538,7 +577,7 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     where
         BaseValue<D>: Clone,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as IndexedOps<_>>::get::<Q>(self, key, self.base.owner()).unwrap()
     }
@@ -551,7 +590,7 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     pub fn with<Q, T>(&self, key: &Q, f: impl FnOnce(&BaseKey<D>, &BaseValue<D>) -> T) -> Option<T>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as IndexedOps<_>>::with::<Q, T>(self, key, f, self.base.owner()).unwrap()
     }
@@ -590,7 +629,7 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         let base_key = self.base_key(key).unwrap()?;
         self.base.with_mut(&base_key, |v| f(&base_key, v))
@@ -614,7 +653,7 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         if let Some(k) = self.with_mut(key, |k, v| {
             *v = value.clone();
@@ -636,7 +675,7 @@ impl<'guard, 'txn, D: UniqueIndexDesc> IndexTransaction<'guard, 'txn, D> {
     pub fn delete<Q>(&mut self, key: &Q) -> Option<BaseKey<D>>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         let base_key = self.base_key(key).unwrap();
         if let Some(base_key) = &base_key {
@@ -738,7 +777,15 @@ unsafe impl<D: MultiIndexDesc, G: StorageGuard<D::Storage>> MultiIndexedOps<D::S
     type IndexDesc = D;
 }
 
-impl<D: MultiIndexDesc, G: StorageGuard<D::Storage>> MultiIndexGuard<'_, D, G> {
+impl<'txn, D: MultiIndexDesc, G: StorageGuard<D::Storage>> MultiIndexGuard<'txn, D, G> {
+    /// The storage of a custom index.
+    pub fn inner(&self) -> &'txn D::IndexStorage
+    where
+        D: CustomIndexDesc,
+    {
+        // SAFETY: by `MultiIndexGuard::guard`'s invariant.
+        unsafe { self.guard.index::<D>() }
+    }
     /// Get the rows of the table for `key` by cloning their base keys and values.
     ///
     /// Returns an empty `Vec` if there are no rows for the specified key.
@@ -746,7 +793,7 @@ impl<D: MultiIndexDesc, G: StorageGuard<D::Storage>> MultiIndexGuard<'_, D, G> {
     where
         BaseValue<D>: Clone,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as MultiIndexedOps<_>>::get(self, key, self.owner)
     }
@@ -757,7 +804,7 @@ impl<D: MultiIndexDesc, G: StorageGuard<D::Storage>> MultiIndexGuard<'_, D, G> {
     pub fn with<Q, T, F>(&self, key: &Q, f: F) -> Option<T>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
         F: FnOnce(&mut dyn Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>) -> T,
     {
         <&Self as MultiIndexedOps<_>>::with::<Q, T, F>(self, key, f, self.owner)
@@ -813,6 +860,16 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
         }
     }
 
+    /// The storage of a custom index.
+    pub fn inner(&self) -> &D::IndexStorage
+    where
+        D: CustomIndexDesc,
+    {
+        // SAFETY: `self` is borrowed while the reference is live, so `self.base` cannot mutate
+        // the index.
+        unsafe { self.read_lock().index::<D>() }
+    }
+
     /// Get the rows of the table for `key` by cloning their base keys and values.
     ///
     /// Returns an empty `Vec` if there are no rows for the specified key.
@@ -820,7 +877,7 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
     where
         BaseValue<D>: Clone,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         <&Self as MultiIndexedOps<_>>::get(self, key, self.base.owner())
     }
@@ -831,7 +888,7 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
     pub fn with<Q, T, F>(&self, key: &Q, f: F) -> Option<T>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
         F: FnOnce(&mut dyn Iterator<Item = (&BaseKey<D>, &BaseValue<D>)>) -> T,
     {
         <&Self as MultiIndexedOps<_>>::with::<Q, T, F>(self, key, f, self.base.owner())
@@ -865,7 +922,7 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
     where
         BaseValue<D>: Clone + PartialEq,
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         for base_key in <&Self as MultiIndexedOps<_>>::base_keys(self, key) {
             self.base.with_mut(&base_key, |v| f(&base_key, v));
@@ -876,7 +933,7 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
     pub fn delete<Q>(&mut self, key: &Q) -> Vec<BaseKey<D>>
     where
         IndexKey<D>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
     {
         let base_keys = <&Self as MultiIndexedOps<_>>::base_keys(self, key);
         for base_key in &base_keys {
@@ -2827,5 +2884,60 @@ mod test_custom_index {
 
         assert_eq!(sorted_base_keys(&store, "Alice"), vec![1]);
         assert!(sorted_base_keys(&store, "Bob").is_empty());
+    }
+
+    #[test]
+    fn iter_mut_and_retain_maintain_index() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Users.insert(OWNER, 2, row("Bob"));
+
+        let mutate = |txn: &mut Transaction<'_>| {
+            txn.Users
+                .with_iter_mut(|it| it.for_each(|(_, v)| v.name.push('!')));
+            txn.Users.retain(|k, _| *k == 1);
+        };
+
+        let mut txn = store.begin_transaction(OWNER);
+        mutate(&mut txn);
+        let indexes = txn.Users.ro_indexes();
+        assert_eq!(indexes.name.get("Alice!"), Some((1, row("Alice!"))));
+        assert_eq!(indexes.name.get("Alice"), None);
+        assert_eq!(indexes.name.get("Bob!"), None);
+        assert_eq!(indexes.name.inner().len(), 1);
+        txn.rollback();
+        assert_eq!(sorted_keys(&store), vec!["Alice", "Bob"]);
+
+        let mut txn = store.begin_transaction(OWNER);
+        mutate(&mut txn);
+        txn.commit().unwrap();
+        assert_eq!(sorted_keys(&store), vec!["Alice!"]);
+    }
+
+    #[test]
+    fn inner() {
+        let store = KvStore::new();
+        store.Users.insert(OWNER, 1, row("Alice"));
+        store.Teams.insert(OWNER, 2, row("Bob"));
+
+        assert_eq!(store.Users.indexes(OWNER).name.with_inner(|i| i.len()), 1);
+        assert!(
+            store
+                .Teams
+                .indexes(OWNER)
+                .name
+                .with_inner(|i| i.contains_key("Bob"))
+        );
+
+        let mut txn = store.begin_transaction(OWNER);
+        txn.Users.insert(3, row("Carol"));
+        assert_eq!(txn.Users.ro_indexes().name.inner().get("Carol"), Some(&3));
+        assert_eq!(txn.Users.indexes().name().inner().len(), 2);
+        assert_eq!(txn.Teams.indexes().name().inner().len(), 1);
+        txn.rollback();
+
+        let txn = store.begin_ro_transaction(OWNER);
+        assert_eq!(txn.Users.indexes().name.inner().len(), 1);
+        assert_eq!(txn.Teams.indexes().name.inner()["Bob"].len(), 1);
     }
 }

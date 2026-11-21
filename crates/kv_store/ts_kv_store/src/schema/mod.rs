@@ -169,6 +169,10 @@ pub unsafe trait IndexDesc: Desc {
     unsafe fn index_ptr(storage: *mut Self::Storage) -> *mut Self::IndexStorage;
 }
 
+/// An index with user-implemented, unversioned storage (`custom` or `custom_multi`).
+#[doc(hidden)]
+pub trait CustomIndexDesc: IndexDesc {}
+
 /// An index where each index key maps to a single row of the base table.
 #[doc(hidden)]
 pub trait UniqueIndexDesc:

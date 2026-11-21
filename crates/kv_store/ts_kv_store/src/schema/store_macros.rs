@@ -815,11 +815,10 @@ macro_rules! index_desc {
             }
         }
     };
-    ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; custom($cimpl:ty)) => {
+    // `custom(Impl)` or `custom_multi(Impl)`.
+    ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; $custom:ident($cimpl:ty)) => {
         $crate::index_desc!(@impl $name, $field: $field_ty => $cimpl);
-    };
-    ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; custom_multi($cimpl:ty)) => {
-        $crate::index_desc!(@impl $name, $field: $field_ty => $cimpl);
+        impl $crate::schema::CustomIndexDesc for index::$name::$field {}
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; multi) => {
         $crate::index_table_desc!($name, $field: $field_ty => $crate::__alloc::vec::Vec<$key_ty>);

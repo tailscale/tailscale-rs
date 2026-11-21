@@ -106,7 +106,7 @@ pub trait UniqueIndexRead<K: Hash + Eq, B>: IndexMaintenance<K, B> {
     fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<&B>
     where
         K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = K>;
 }
 
 /// A [`UniqueIndexRead`] which supports iteration.
@@ -137,7 +137,7 @@ pub trait MultiIndexRead<K: Hash + Eq, B>: IndexMaintenance<K, B> {
     fn get<Q>(&self, key: &Q, txn_id: TxnId) -> Option<Self::BaseKeys<'_>>
     where
         K: Borrow<Q>,
-        Q: ?Sized + Hash + Eq;
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = K>;
 }
 
 /// A [`MultiIndexRead`] which supports iteration.

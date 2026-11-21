@@ -219,7 +219,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
     where
         BaseValue<Self::IndexDesc>: Clone,
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
     {
         self.with(key, |k, v| (k.clone(), v.clone()), owner)
     }
@@ -232,7 +232,7 @@ pub(crate) unsafe trait IndexedOps<TableStorage: GeneratedStorage>:
     ) -> Result<Option<T>>
     where
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
     {
         let guard = self.read_lock();
         // SAFETY (for all uses of `guard`): `guard` is from `read_lock` (see the trait's
@@ -307,7 +307,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
     where
         BaseValue<Self::IndexDesc>: Clone,
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
     {
         self.with(
             key,
@@ -320,7 +320,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
     fn with<Q, T, F>(self, key: &Q, f: F, _owner: Owner) -> Option<T>
     where
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
         F: FnOnce(
             &mut dyn Iterator<Item = (&BaseKey<Self::IndexDesc>, &BaseValue<Self::IndexDesc>)>,
         ) -> T,
@@ -342,7 +342,7 @@ pub(crate) unsafe trait MultiIndexedOps<TableStorage: GeneratedStorage>:
     fn base_keys<Q>(self, key: &Q) -> Vec<BaseKey<Self::IndexDesc>>
     where
         IndexKey<Self::IndexDesc>: Borrow<Q>,
-        Q: ?Sized + Hash + Eq,
+        Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<Self::IndexDesc>>,
     {
         let guard = self.read_lock();
         // SAFETY: `guard` is from `read_lock` (see the trait's contract).
