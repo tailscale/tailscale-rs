@@ -81,10 +81,13 @@ jobs:
           - is_pr_or_push: true
             target:
               triple: aarch64-apple-darwin
-          # Same for `*-windows-gnu`
+          # Same for `*-windows-gnu` and `*-windows-msvc`.
           - is_pr_or_push: true
             target:
               triple: x86_64-pc-windows-gnu
+          - is_pr_or_push: true
+            target:
+              triple: x86_64-pc-windows-msvc
           # Same for the MSRV toolchain, except on the targets flagged `msrv_on_pr` above.
           - is_pr_or_push: true
             toolchain:
