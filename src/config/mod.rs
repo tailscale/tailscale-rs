@@ -51,11 +51,27 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create a new config with its [`key_state`](Config::key_state) populated from the specified key file and using
-    /// default options for other configuration.
+    /// Create a new config with its [`key_state`](Config::key_state) populated from the
+    /// specified key file and using default options for other configuration.
     ///
-    /// See [`load_key_file`] for more details and an alternative with more options for reading
-    /// the key file.
+    /// # Usage model and security
+    ///
+    /// This function is provided as a convenience that we expect to work for most users in
+    /// most cases. As a consequence of this model, `tailscale-rs` expects to own the file:
+    /// external modification isn't supported, and we may unilaterally overwrite any
+    /// permissions on the specified file, failing if we can't do so. This generally means
+    /// unique access to the user `tailscale-rs` is running as, with no group or other ACL
+    /// permissions (`0600` on unix).
+    ///
+    /// If you need more control over the permissions on the key file, you should manage
+    /// loading and saving of [`PersistState`] yourself and construct [`Config`] directly.
+    ///
+    /// This function currently emits a warning if it can't apply expected permissions. This
+    /// will become a hard error in the future.
+    ///
+    /// As a usability compromise for alternate (non-unix, non-Windows) platforms which
+    /// support `std::fs`, a warning is emitted that we don't know how to secure the key
+    /// file, but the function succeeds. This may become a hard error in the future.
     pub async fn default_with_key_file(p: impl AsRef<Path>) -> Result<Self, crate::Error> {
         Ok(Config {
             key_state: load_key_file(p, Default::default()).await?,
@@ -100,6 +116,25 @@ pub fn auth_key_from_env() -> Option<String> {
 ///
 /// The `bad_format` argument allows you to specify whether an existing file should be
 /// overwritten if the contents can't be parsed.
+///
+/// # Usage model and security
+///
+/// This function is provided as a convenience that we expect to work for most users in most
+/// cases. As a consequence of this model, `tailscale-rs` expects to semantically own the
+/// file: external modification isn't supported, and we may unilaterally overwrite any
+/// permissions on the specified file, failing if we can't do so. This generally means
+/// unique access to the user `tailscale-rs` is running as, with no group or other ACL
+/// permissions (`0600` on unix).
+///
+/// If you need more control over the permissions on the key file, you should manage loading
+/// and saving of [`PersistState`] yourself and construct [`Config`] directly.
+///
+/// This function currently emits a warning if it can't apply expected permissions. This
+/// will become a hard error in the future.
+///
+/// As a usability compromise for alternate (non-unix, non-Windows) platforms which support
+/// `std::fs`, a warning is emitted that we don't know how to secure the key file, but the
+/// function succeeds. This may become a hard error in the future.
 pub async fn load_key_file(
     p: impl AsRef<Path>,
     bad_format: BadFormatBehavior,
