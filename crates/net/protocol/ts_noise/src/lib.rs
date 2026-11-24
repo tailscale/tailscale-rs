@@ -4,5 +4,6 @@
 
 pub mod core;
 pub mod ik;
+pub mod ikhfs_psk2;
 pub mod ikpsk2;
 mod messages;

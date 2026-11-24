@@ -17,6 +17,7 @@ blake2.workspace = true
 chacha20poly1305.workspace = true
 hkdf.workspace = true
 itertools.workspace = true
+ml-kem.workspace = true
 x25519-dalek.workspace = true
 zerocopy.workspace = true
 zeroize.workspace = true
