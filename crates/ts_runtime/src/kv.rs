@@ -12,7 +12,7 @@ use ts_kv_store::{
 };
 use ts_transport::PeerId;
 
-use crate::{control_runner, peer_tracker};
+use crate::{control_runner, derp_latency, peer_tracker};
 
 ts_kv_store::store! {
     tables: {
@@ -39,7 +39,7 @@ ts_kv_store::store! {
         ),
         DerpLatency(
             RegionId => f64;
-            control_runner::KV_OWNER;
+            derp_latency::KV_OWNER;
         ),
     }
 }

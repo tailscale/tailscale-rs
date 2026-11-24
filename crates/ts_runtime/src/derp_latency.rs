@@ -1,19 +1,20 @@
-use std::sync::Arc;
-
 use kameo::{
     actor::ActorRef,
     message::{Context, Message},
 };
-use ts_netcheck::RegionResult;
+use ts_derp::RegionId;
 
-use crate::{Error, env::Env, multiderp::DerpMapUpdate};
+use crate::{Error, env::Env, kv::KvStore, multiderp::DerpMapUpdate};
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct DerpLatencyMeasurement {
-    pub measurement: Arc<Vec<RegionResult>>,
+pub(crate) const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("derp_latency");
+
+/// The region with the lowest measured latency, if any.
+pub(crate) fn preferred_region(store: &KvStore, owner: ts_kv_store::Owner) -> Option<RegionId> {
+    store.DerpLatency.with_iter(owner, |it| {
+        it.min_by(|(a_id, a), (b_id, b)| a.total_cmp(b).then(a_id.cmp(b_id)))
+            .map(|(id, _)| *id)
+    })
 }
-
-const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("derp_latency");
 
 pub struct DerpLatencyMeasurer {
     env: Env,
@@ -51,14 +52,12 @@ impl Message<DerpMapUpdate> for DerpLatencyMeasurer {
 
         tracing::trace!(?latencies, "measurement complete");
 
-        if let Err(e) = self
-            .env
-            .publish(DerpLatencyMeasurement {
-                measurement: Arc::new(latencies),
-            })
-            .await
-        {
-            tracing::error!(error = %e, "publishing");
-        };
+        let mut txn = self.env.kv_store().begin_transaction(KV_OWNER);
+        txn.DerpLatency.clear();
+        for result in latencies {
+            txn.DerpLatency
+                .insert(result.id, result.latency.as_secs_f64());
+        }
+        txn.commit().unwrap();
     }
 }

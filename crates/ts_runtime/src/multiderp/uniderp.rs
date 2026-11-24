@@ -3,11 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use kameo::{
     actor::{ActorRef, Spawn, WeakActorRef},
     error::ActorStopReason,
-    message::{Context, Message},
+    message::{Context, Message, StreamMessage},
 };
 use smol_str::SmolStr;
 use tokio::sync::{Mutex, watch};
@@ -21,8 +21,9 @@ use ts_transport::{BatchRecvIter, DynEndpoint, UnderlayTransport, UnderlayTransp
 use crate::{
     Task,
     dataplane::{DataplaneActor, NewUnderlayTransport},
-    derp_latency::DerpLatencyMeasurement,
+    derp_latency,
     env::Env,
+    kv,
     multiderp::{Multiderp, SetRegionTransportId},
     task::ErasedTask,
 };
@@ -80,7 +81,22 @@ impl kameo::Actor for Uniderp {
     type Error = crate::Error;
 
     async fn on_start(args: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        let (home_derp_tx, home_derp_rx) = watch::channel(false);
+        let subscriber = args.env.create_store_subscriber(KV_OWNER);
+        args.env
+            .kv_store()
+            .DerpLatency
+            .subscribe(&subscriber)
+            .unwrap();
+        let notifications = futures::stream::unfold(subscriber, async move |mut s| {
+            s.recv().await.ok().map(|n| (n, s))
+        });
+        slf.attach_stream(notifications.boxed(), (), ());
+
+        // Note(nrc): if we had subscribe_and_notify for whole tables, we could skip this and really
+        // on the initial notification (also elsewhere in runtime)
+        let is_home =
+            derp_latency::preferred_region(args.env.kv_store(), KV_OWNER) == Some(args.region_id);
+        let (home_derp_tx, home_derp_rx) = watch::channel(is_home);
 
         let (transport_id, from_dataplane, to_dataplane) = args
             .env
@@ -108,7 +124,6 @@ impl kameo::Actor for Uniderp {
         let task = Task::spawn_link(&slf, start_runner(runner.clone()).boxed()).await;
 
         args.env.subscribe::<super::DerpMapUpdate>(&slf).await?;
-        args.env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
 
         args.env
             .register(Some(Self::name(args.region_id)), &slf)
@@ -182,17 +197,27 @@ impl Message<super::DerpMapUpdate> for Uniderp {
     }
 }
 
-impl Message<DerpLatencyMeasurement> for Uniderp {
+impl Message<StreamMessage<kv::Notification, (), ()>> for Uniderp {
     type Reply = ();
 
-    async fn handle(&mut self, msg: DerpLatencyMeasurement, _ctx: &mut Context<Self, Self::Reply>) {
-        let Some(result) = msg.measurement.as_ref().first() else {
-            tracing::trace!("received home derp measurement message but none was set");
-            return;
-        };
+    async fn handle(
+        &mut self,
+        msg: StreamMessage<kv::Notification, (), ()>,
+        ctx: &mut Context<Self, Self::Reply>,
+    ) {
+        match msg {
+            StreamMessage::Next(kv::Notification::DerpLatency(_)) => {}
+            StreamMessage::Finished(()) => {
+                tracing::error!("kv store subscription ended, restarting");
+                ctx.stop();
+                return;
+            }
+            _ => return,
+        }
 
+        let preferred = derp_latency::preferred_region(self.env.kv_store(), KV_OWNER);
         self.home_derp_tx.send_if_modified(|x| {
-            let new_val = result.id == self.runner_state.region_id;
+            let new_val = preferred == Some(self.runner_state.region_id);
             let changed = new_val != *x;
             *x = new_val;
 
