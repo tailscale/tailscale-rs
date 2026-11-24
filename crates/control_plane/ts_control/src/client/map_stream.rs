@@ -83,7 +83,10 @@ pub type FilterUpdate = (Option<pf::Ruleset>, BTreeMap<String, Option<pf::Rulese
 /// An update to the netmap state produced from a mapresponse.
 #[derive(Debug)]
 pub struct StateUpdate {
-    /// New derp map is available.
+    /// New derp map is available (the control runner in ts_runtime feeds this into the kv store,
+    /// other users should subscribe to the kv store rather than use this directly. Note(nrc): I
+    /// didn't see a good way to separate this out from the rest of `StateUpdate`, but I feel
+    /// like it should be).
     pub derp: Option<crate::DerpMap>,
     /// New self-node.
     pub node: Option<crate::Node>,

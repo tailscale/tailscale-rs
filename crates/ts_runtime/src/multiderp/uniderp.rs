@@ -73,6 +73,8 @@ async fn start_runner(mut runner: Runner) {
     }
 }
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("uniderp");
+
 impl kameo::Actor for Uniderp {
     type Args = Args;
     type Error = crate::Error;
@@ -105,9 +107,7 @@ impl kameo::Actor for Uniderp {
 
         let task = Task::spawn_link(&slf, start_runner(runner.clone()).boxed()).await;
 
-        args.env
-            .subscribe::<Arc<ts_control::StateUpdate>>(&slf)
-            .await?;
+        args.env.subscribe::<super::DerpMapUpdate>(&slf).await?;
         args.env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
 
         args.env
@@ -139,19 +139,16 @@ impl kameo::Actor for Uniderp {
     }
 }
 
-impl Message<Arc<ts_control::StateUpdate>> for Uniderp {
+impl Message<super::DerpMapUpdate> for Uniderp {
     type Reply = ();
 
-    async fn handle(
-        &mut self,
-        msg: Arc<ts_control::StateUpdate>,
-        ctx: &mut Context<Self, Self::Reply>,
-    ) {
-        let Some(derp) = &msg.derp else {
-            return;
-        };
-
-        let Some(region) = derp.get(&self.runner_state.region_id) else {
+    async fn handle(&mut self, _msg: super::DerpMapUpdate, ctx: &mut Context<Self, Self::Reply>) {
+        let Some(region) = self
+            .env
+            .kv_store()
+            .DerpMap
+            .get(KV_OWNER, &self.runner_state.region_id)
+        else {
             tracing::debug!(
                 region_id = ?self.runner_state.region_id,
                 "derp region disappeared from map, stopping"
@@ -160,12 +157,12 @@ impl Message<Arc<ts_control::StateUpdate>> for Uniderp {
             return;
         };
 
-        if &self.runner_state.region == region {
+        if self.runner_state.region == region {
             return;
         }
 
         tracing::debug!(id = %self.runner_state.region_id, "region changed, restarting task");
-        self.runner_state.region = region.clone();
+        self.runner_state.region = region;
 
         self.task.unlink(ctx.actor_ref()).await;
         self.task.stop_gracefully().await.unwrap();

@@ -6,10 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures::StreamExt;
 use kameo::{
     actor::{ActorRef, Spawn, WeakActorRef},
     error::ActorStopReason,
-    message::{Context, Message},
+    message::{Context, Message, StreamMessage},
 };
 use kameo_actors::scheduler::SetTimeout;
 use ts_control::DerpRegion;
@@ -21,6 +22,7 @@ use crate::{
     Env, Error,
     dataplane::{DataplaneActor, SendUnderlay},
     disco::SendDisco,
+    kv,
     multiderp::uniderp::Uniderp,
 };
 
@@ -42,16 +44,28 @@ impl kameo::Actor for Multiderp {
     type Error = Error;
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
         env.subscribe::<SendDisco>(&slf).await?;
 
         env.register(None, &slf).await?;
 
-        Ok(Self {
+        // Subscribe to changes in the derp map in the kv store and turn them into Kameo messages.
+        // Note(nrc): it might be nice to have this functionality directly in something like
+        // ts_kv_store_tokio.
+        let subscriber = env.create_store_subscriber(KV_OWNER);
+        env.kv_store().DerpMap.subscribe(&subscriber).unwrap();
+        let notifications = futures::stream::unfold(subscriber, async move |mut s| {
+            s.recv().await.ok().map(|n| (n, s))
+        });
+        slf.attach_stream(notifications.boxed(), (), ());
+
+        let multiderp = Self {
             env,
             region_map: Default::default(),
             debounce_state: Default::default(),
-        })
+        };
+        multiderp.ensure_all_regions(&slf).await;
+
+        Ok(multiderp)
     }
 
     async fn on_stop(
@@ -65,9 +79,24 @@ impl kameo::Actor for Multiderp {
     }
 }
 
+/// Notify other actors that the derp map in the kv store has changed.
+#[derive(Clone)]
+pub struct DerpMapUpdate;
+
 impl Multiderp {
+    async fn ensure_all_regions(&self, slf: &ActorRef<Self>) {
+        let regions: Vec<(RegionId, DerpRegion)> =
+            self.env.kv_store().DerpMap.with_iter(KV_OWNER, |regions| {
+                regions.map(|(id, region)| (*id, region.clone())).collect()
+            });
+
+        for (id, region) in regions {
+            self.ensure_region(slf, id, region).await;
+        }
+    }
+
     #[tracing::instrument(skip_all, fields(region_id = %id))]
-    async fn ensure_region(&mut self, slf: &ActorRef<Self>, id: RegionId, region: &DerpRegion) {
+    async fn ensure_region(&self, slf: &ActorRef<Self>, id: RegionId, region: DerpRegion) {
         if self
             .env
             .lookup_opt::<Uniderp>(Some(Uniderp::name(id)))
@@ -83,7 +112,7 @@ impl Multiderp {
             slf,
             uniderp::Args {
                 env: self.env.clone(),
-                region: region.clone(),
+                region,
                 region_id: id,
             },
         )
@@ -128,21 +157,30 @@ impl Multiderp {
 
 const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("multiderp");
 
-impl Message<Arc<ts_control::StateUpdate>> for Multiderp {
+impl Message<StreamMessage<kv::Notification, (), ()>> for Multiderp {
     type Reply = ();
 
-    #[tracing::instrument(skip_all, name = "multiderp map update")]
     async fn handle(
         &mut self,
-        msg: Arc<ts_control::StateUpdate>,
+        msg: StreamMessage<kv::Notification, (), ()>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
-        let Some(derp_map) = &msg.derp else {
-            return;
-        };
+        match msg {
+            StreamMessage::Next(kv::Notification::DerpMap(_)) => {}
+            StreamMessage::Finished(()) => {
+                tracing::error!("kv store subscription ended, restarting");
+                ctx.stop();
+                return;
+            }
+            _ => return,
+        }
 
-        for (id, region) in derp_map {
-            self.ensure_region(ctx.actor_ref(), *id, region).await;
+        // Handle changes to the derp map and then notify other actors.
+        self.ensure_all_regions(ctx.actor_ref()).await;
+
+        // TODO(nrc) would be nice to just publish one update, but that requires batching some notifications
+        if let Err(e) = self.env.publish(DerpMapUpdate).await {
+            tracing::error!(error = %e, "publishing derp map update");
         }
     }
 }

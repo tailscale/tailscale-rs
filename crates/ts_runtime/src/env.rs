@@ -10,6 +10,8 @@ use kameo::{
 };
 use kameo_actors::scheduler::Scheduler;
 use smol_str::SmolStr;
+use ts_kv_store::Owner;
+use ts_kv_store_tokio::TokioSubscriber;
 
 use crate::{
     Error, ErrorKind,
@@ -44,6 +46,10 @@ impl Env {
 
     pub fn kv_store(&self) -> &Arc<kv::KvStore> {
         self.notifier.store()
+    }
+
+    pub fn create_store_subscriber(&self, owner: Owner) -> TokioSubscriber<kv::KvStore> {
+        self.notifier.create_subscriber(owner)
     }
 
     pub async fn subscribe<M>(&self, slf: &ActorRef<impl Message<M>>) -> Result<(), Error>

@@ -473,6 +473,15 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
             self.self_node = Some(node.clone());
         }
 
+        if let Some(derp_map) = &msg.derp {
+            let mut txn = self.params.env.kv_store().begin_transaction(KV_OWNER);
+            txn.DerpMap.clear();
+            for (id, region) in derp_map {
+                txn.DerpMap.insert(*id, region.clone());
+            }
+            txn.commit().unwrap();
+        }
+
         if let Err(e) = self.params.env.publish(msg).await {
             tracing::error!(error = %e, "publishing netmap update");
         }
