@@ -80,7 +80,7 @@
 //! `Base` is modified by using the `bar` field of the values in `Base`.
 //!
 //! The index table is itself stored as a table (inside the base tables `indexes` field) with key
-//! type `Url` and value type `u64` (or `Vec<u64>` for multi-indexes).
+//! type `Url` and value type `u64` (or a `SmallVec` of `u64`s for multi-indexes).
 //!
 //! By default, index fields must uniquely identify a row in the base table. If multiple rows in the
 //! base table have the same key in the index, then either a panic is triggered, or accessing or

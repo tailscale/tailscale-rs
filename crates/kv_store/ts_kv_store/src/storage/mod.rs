@@ -1,7 +1,7 @@
 use alloc::sync::Weak;
 
 pub use self::{
-    index::{UniqueIndex, policy},
+    index::{MultiIndexKeys, UniqueIndex, policy},
     singleton::SingletonValue,
     table::Table,
     versioned::VersionedValue,

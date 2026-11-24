@@ -821,7 +821,7 @@ macro_rules! index_desc {
         impl $crate::schema::CustomIndexDesc for index::$name::$field {}
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; multi) => {
-        $crate::index_table_desc!($name, $field: $field_ty => $crate::__alloc::vec::Vec<$key_ty>);
+        $crate::index_table_desc!($name, $field: $field_ty => $crate::storage::MultiIndexKeys<$key_ty>);
         $crate::index_desc!(@impl $name, $field: $field_ty => $crate::storage::Table<Self>);
     };
     ($name:ident, $field:ident : $field_ty:ty => $key_ty:ty; $policy:ident) => {

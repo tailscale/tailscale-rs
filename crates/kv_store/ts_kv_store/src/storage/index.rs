@@ -1,6 +1,7 @@
 use core::{borrow::Borrow, hash::Hash, iter::Map, marker::PhantomData, slice};
 
-use super::{Table, VersionedValue};
+use smallvec::{SmallVec, smallvec};
+
 use crate::{
     Error, Result,
     iter::TableIter,
@@ -11,10 +12,15 @@ use crate::{
             UniqueIndexRead,
         },
     },
+    storage::{Table, VersionedValue},
     transactions::TxnId,
 };
 
-/// A built-in unique index, which handles non-unique index keys according to `P`.
+/// How base keys for are stored in a multi-index.
+#[doc(hidden)]
+pub type MultiIndexKeys<B> = SmallVec<[B; 4]>;
+
+/// A unique index, which handles non-unique index keys according to `P`.
 #[doc(hidden)]
 pub struct UniqueIndex<D: TableDesc, P> {
     table: Table<D>,
@@ -192,14 +198,16 @@ impl<D: TableDesc, P: policy::UniquePolicy> UniqueIndexIterable<D::Key, D::Value
     }
 }
 
-impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> IndexMaintenance<D::Key, B> for Table<D> {
+impl<B: Clone + PartialEq, D: TableDesc<Value = MultiIndexKeys<B>>> IndexMaintenance<D::Key, B>
+    for Table<D>
+{
     fn insert(&mut self, key: D::Key, base_key: B, txn_id: TxnId) {
         match Table::get(self, &key, txn_id) {
             Some(keys) if keys.contains(&base_key) => {}
             Some(_) => {
                 self.with_mut(&key, |keys| keys.push(base_key), txn_id);
             }
-            None => Table::insert(self, key, vec![base_key], txn_id),
+            None => Table::insert(self, key, smallvec![base_key], txn_id),
         }
     }
 
@@ -211,7 +219,7 @@ impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> IndexMaintenance<D::Key
         let empty = self.with_mut(
             key,
             |keys| {
-                keys.retain(|k| k.borrow() != base_key);
+                keys.retain(|k| (*k).borrow() != base_key);
                 keys.is_empty()
             },
             txn_id,
@@ -237,7 +245,9 @@ impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> IndexMaintenance<D::Key
     }
 }
 
-impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> MultiIndexRead<D::Key, B> for Table<D> {
+impl<B: Clone + PartialEq, D: TableDesc<Value = MultiIndexKeys<B>>> MultiIndexRead<D::Key, B>
+    for Table<D>
+{
     type BaseKeys<'a>
         = slice::Iter<'a, B>
     where
@@ -252,11 +262,14 @@ impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> MultiIndexRead<D::Key, 
     }
 }
 
-impl<B: Clone + PartialEq, D: TableDesc<Value = Vec<B>>> MultiIndexIterable<D::Key, B>
+impl<B: Clone + PartialEq, D: TableDesc<Value = MultiIndexKeys<B>>> MultiIndexIterable<D::Key, B>
     for Table<D>
 {
     type Iter<'a>
-        = Map<TableIter<'a, D>, fn((&'a D::Key, &'a Vec<B>)) -> (&'a D::Key, slice::Iter<'a, B>)>
+        = Map<
+        TableIter<'a, D>,
+        fn((&'a D::Key, &'a MultiIndexKeys<B>)) -> (&'a D::Key, slice::Iter<'a, B>),
+    >
     where
         B: 'a;
 

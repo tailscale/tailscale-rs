@@ -347,8 +347,8 @@ impl<D: MultiIndexDesc> MultiIndex<D> {
         self.try_with_mut(key, f).unwrap()
     }
 
-    /// Delete the rows of the table for `key`, returning their keys in the base table.
-    pub fn delete<Q>(&self, key: &Q) -> Vec<BaseKey<D>>
+    /// Delete the rows of the table for `key`.
+    pub fn delete<Q>(&self, key: &Q)
     where
         IndexKey<D>: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
@@ -929,8 +929,8 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
         }
     }
 
-    /// Delete the rows of the table for `key`, returning their keys in the base table.
-    pub fn delete<Q>(&mut self, key: &Q) -> Vec<BaseKey<D>>
+    /// Delete the rows of the table for `key`.
+    pub fn delete<Q>(&mut self, key: &Q)
     where
         IndexKey<D>: Borrow<Q>,
         Q: ?Sized + Hash + Eq + ToOwned<Owned = IndexKey<D>>,
@@ -939,7 +939,6 @@ impl<'guard, 'txn, D: MultiIndexDesc> MultiIndexTransaction<'guard, 'txn, D> {
         for base_key in &base_keys {
             self.base.delete(base_key);
         }
-        base_keys
     }
 }
 
@@ -2615,11 +2614,9 @@ mod test_multi_index {
         assert!(index.get("a").is_empty());
         assert_eq!(sorted_keys(index.get("c")), vec![1, 2]);
 
-        let mut deleted = index.delete("c");
-        deleted.sort();
-        assert_eq!(deleted, vec![1, 2]);
+        index.delete("c");
         assert_eq!(store.Users.len(), 1);
-        assert!(index.delete("c").is_empty());
+        assert!(index.get("c").is_empty());
     }
 
     #[test]
@@ -2632,7 +2629,8 @@ mod test_multi_index {
                 .indexes()
                 .team()
                 .with_mut("a", |_, v| v.team = "b".to_owned());
-            assert_eq!(txn.Users.indexes().team().delete("b").len(), 4);
+            txn.Users.indexes().team().delete("b");
+            assert_eq!(txn.Users.len(), 0);
             assert_eq!(txn.Users.ro_indexes().team.keys().count(), 0);
         }
 
@@ -2662,7 +2660,7 @@ mod test_multi_index {
             .indexes()
             .team()
             .with_mut("a", |_, v| v.team = "c".to_owned());
-        assert_eq!(txn.Users.indexes().team().delete("b"), vec![3]);
+        txn.Users.indexes().team().delete("b");
         txn.commit().unwrap();
 
         let index = store.with_owner(OWNER).Users.indexes().team;

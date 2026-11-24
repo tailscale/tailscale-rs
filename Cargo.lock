@@ -6395,6 +6395,7 @@ dependencies = [
 name = "ts_kv_store"
 version = "0.7.1"
 dependencies = [
+ "smallvec",
  "thiserror 2.0.21",
 ]
 
