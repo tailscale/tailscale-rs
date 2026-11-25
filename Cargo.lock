@@ -6579,14 +6579,12 @@ name = "ts_runtime"
 version = "0.7.1"
 dependencies = [
  "bytes",
- "chrono",
  "futures",
  "futures-util",
  "ipnet",
  "itertools 0.14.0",
  "kameo",
  "kameo_actors",
- "proptest",
  "rand 0.10.4",
  "smallvec",
  "smol_str",
@@ -6598,7 +6596,6 @@ dependencies = [
  "tracing",
  "ts_bart",
  "ts_bart_packetfilter",
- "ts_capabilityversion",
  "ts_control",
  "ts_dataplane",
  "ts_derp",

@@ -55,11 +55,8 @@ itertools.workspace = true
 zerocopy.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
 itertools.workspace = true
-proptest.workspace = true
 tokio-test = "0.4"
-ts_capabilityversion.workspace = true
 
 [features]
 console = ["kameo/console"]

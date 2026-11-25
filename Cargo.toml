@@ -152,7 +152,7 @@ ts_time = { path = "crates/utils/ts_time", version = "0.7.1" }
 
 [workspace.lints.rust]
 closure_returning_async_block = "warn"
-let-underscore = "warn"
+let_underscore = "warn"
 missing_docs = "warn"
 
 # useful reference: https://rust-lang.github.io/rust-clippy/master/index.html
