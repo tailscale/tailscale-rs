@@ -21,7 +21,7 @@ cargo run -p checks
 cargo clippy      $SCOPE --lib                               --no-deps --all-features -- -D warnings
 cargo clippy      $SCOPE --bins --tests --benches --examples --no-deps --all-features -- -D warnings -A missing_docs
 cargo doc         $SCOPE                                     --no-deps --all-features
-cargo deny        $SCOPE                                               --all-features check all
+cargo deny        --workspace                                          --all-features check all
 cargo machete     $SCOPE_NO_WS  --with-metadata
 cargo vet         $SCOPE_NO_WS || true
 cargo nextest run $SCOPE                                               --all-features --no-tests=pass

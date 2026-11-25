@@ -1,5 +1,7 @@
 [advisories]
 ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "archived crate depended on by netlink-packet-utils. Already fixed upstream, just hasn't bubbled through the dependency stack yet" },
+    { id = "RUSTSEC-2026-0542", reason = "chrono is unmaintained via humantime. Waiting on tokio-console to update their deps." },
     { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained. Waiting on russh to update their deps." },
 ]
 
