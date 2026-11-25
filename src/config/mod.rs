@@ -8,6 +8,9 @@ use ts_keys::PersistState;
 #[cfg(unix)]
 mod unix;
 
+#[cfg(windows)]
+mod windows;
+
 const CONTROL_URL_VAR: &str = "TS_CONTROL_URL";
 const HOSTNAME_VAR: &str = "TS_HOSTNAME";
 const AUTHKEY_VAR: &str = "TS_AUTH_KEY";
@@ -48,11 +51,27 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create a new config with its [`key_state`](Config::key_state) populated from the specified key file and using
-    /// default options for other configuration.
+    /// Create a new config with its [`key_state`](Config::key_state) populated from the
+    /// specified key file and using default options for other configuration.
     ///
-    /// See [`load_key_file`] for more details and an alternative with more options for reading
-    /// the key file.
+    /// # Usage model and security
+    ///
+    /// This function is provided as a convenience that we expect to work for most users in
+    /// most cases. As a consequence of this model, `tailscale-rs` expects to own the file:
+    /// external modification isn't supported, and we may unilaterally overwrite any
+    /// permissions on the specified file, failing if we can't do so. This generally means
+    /// unique access to the user `tailscale-rs` is running as, with no group or other ACL
+    /// permissions (`0600` on unix).
+    ///
+    /// If you need more control over the permissions on the key file, you should manage
+    /// loading and saving of [`PersistState`] yourself and construct [`Config`] directly.
+    ///
+    /// This function currently emits a warning if it can't apply expected permissions. This
+    /// will become a hard error in the future.
+    ///
+    /// As a usability compromise for alternate (non-unix, non-Windows) platforms which
+    /// support `std::fs`, a warning is emitted that we don't know how to secure the key
+    /// file, but the function succeeds. This may become a hard error in the future.
     pub async fn default_with_key_file(p: impl AsRef<Path>) -> Result<Self, crate::Error> {
         Ok(Config {
             key_state: load_key_file(p, Default::default()).await?,
@@ -97,6 +116,25 @@ pub fn auth_key_from_env() -> Option<String> {
 ///
 /// The `bad_format` argument allows you to specify whether an existing file should be
 /// overwritten if the contents can't be parsed.
+///
+/// # Usage model and security
+///
+/// This function is provided as a convenience that we expect to work for most users in most
+/// cases. As a consequence of this model, `tailscale-rs` expects to semantically own the
+/// file: external modification isn't supported, and we may unilaterally overwrite any
+/// permissions on the specified file, failing if we can't do so. This generally means
+/// unique access to the user `tailscale-rs` is running as, with no group or other ACL
+/// permissions (`0600` on unix).
+///
+/// If you need more control over the permissions on the key file, you should manage loading
+/// and saving of [`PersistState`] yourself and construct [`Config`] directly.
+///
+/// This function currently emits a warning if it can't apply expected permissions. This
+/// will become a hard error in the future.
+///
+/// As a usability compromise for alternate (non-unix, non-Windows) platforms which support
+/// `std::fs`, a warning is emitted that we don't know how to secure the key file, but the
+/// function succeeds. This may become a hard error in the future.
 pub async fn load_key_file(
     p: impl AsRef<Path>,
     bad_format: BadFormatBehavior,
@@ -227,6 +265,20 @@ async fn read_file(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
                     tracing::error!(error = %e, "failed to fix permissions for key file, this will become a hard error in the future");
                 }
             }
+        } else if #[cfg(windows)] {
+            match windows::check_perms(&f) {
+                Ok(()) => {},
+                Err(windows::CheckError::Windows(e)) => {
+                    return Err(e.into());
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "key file has wrong permissions, fixing");
+                    if let Err(e) = windows::fix_perms_for_path(path) {
+                        // TODO(npry): bail with std::io::Error::other
+                        tracing::error!(error = %e, "failed to fix permissions for key file, this will become a hard error in the future");
+                    }
+                }
+            }
         } else {
             tracing::warn!("protection of key state file permissions is not implemented on this platform");
         }
@@ -244,22 +296,28 @@ async fn try_write(
 ) -> Result<(), crate::Error> {
     use tokio::io::AsyncWriteExt;
 
-    let mut opts = tokio::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    cfg_if::cfg_if! {
+        if #[cfg(windows)] {
+            let f = windows::open_for_write(path);
+        } else {
+            let mut opts = tokio::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
 
-    #[cfg(unix)]
-    {
-        opts.mode(0o600);
+            #[cfg(unix)]
+            {
+                opts.mode(0o600);
+            }
+
+            #[cfg(not(unix))]
+            {
+                tracing::warn!(
+                    "protection of key state file permissions is not implemented on this platform"
+                );
+            }
+
+            let f = opts.open(path.as_ref()).await;
+        }
     }
-
-    #[cfg(not(unix))]
-    {
-        tracing::warn!(
-            "protection of key state file permissions is not implemented on this platform"
-        );
-    }
-
-    let f = opts.open(path.as_ref()).await;
 
     let mut f = f.map_err(|e| {
         tracing::error!(error = %e, "opening key file for write");

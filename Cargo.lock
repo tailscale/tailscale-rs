@@ -5462,6 +5462,7 @@ dependencies = [
  "ts_runtime",
  "ts_test_util",
  "url",
+ "windows 0.62.2",
 ]
 
 [[package]]
