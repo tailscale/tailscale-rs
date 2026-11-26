@@ -157,30 +157,33 @@ impl Multiderp {
 
 const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("multiderp");
 
-impl Message<StreamMessage<kv::Notification, (), ()>> for Multiderp {
+impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for Multiderp {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: StreamMessage<kv::Notification, (), ()>,
+        msg: StreamMessage<Vec<kv::Notification>, (), ()>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
         match msg {
-            StreamMessage::Next(kv::Notification::DerpMap(_)) => {}
+            StreamMessage::Next(notifications) => {
+                if notifications
+                    .iter()
+                    .any(|n| matches!(n, kv::Notification::DerpMap(_)))
+                {
+                    // Handle changes to the derp map and then notify other actors.
+                    self.ensure_all_regions(ctx.actor_ref()).await;
+
+                    if let Err(e) = self.env.publish(DerpMapUpdate).await {
+                        tracing::error!(error = %e, "publishing derp map update");
+                    }
+                }
+            }
             StreamMessage::Finished(()) => {
                 tracing::error!("kv store subscription ended, restarting");
                 ctx.stop();
-                return;
             }
-            _ => return,
-        }
-
-        // Handle changes to the derp map and then notify other actors.
-        self.ensure_all_regions(ctx.actor_ref()).await;
-
-        // TODO(nrc) would be nice to just publish one update, but that requires batching some notifications
-        if let Err(e) = self.env.publish(DerpMapUpdate).await {
-            tracing::error!(error = %e, "publishing derp map update");
+            _ => {}
         }
     }
 }

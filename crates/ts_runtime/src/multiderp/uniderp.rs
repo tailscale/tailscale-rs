@@ -193,32 +193,36 @@ impl Message<super::DerpMapUpdate> for Uniderp {
     }
 }
 
-impl Message<StreamMessage<kv::Notification, (), ()>> for Uniderp {
+impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for Uniderp {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: StreamMessage<kv::Notification, (), ()>,
+        msg: StreamMessage<Vec<kv::Notification>, (), ()>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
         match msg {
-            StreamMessage::Next(kv::Notification::DerpLatency(_)) => {}
+            StreamMessage::Next(notifications) => {
+                if notifications
+                    .iter()
+                    .any(|n| matches!(n, kv::Notification::DerpLatency(_)))
+                {
+                    let preferred = derp_latency::preferred_region(self.env.kv_store(), KV_OWNER);
+                    self.home_derp_tx.send_if_modified(|x| {
+                        let new_val = preferred == Some(self.runner_state.region_id);
+                        let changed = new_val != *x;
+                        *x = new_val;
+
+                        changed
+                    });
+                }
+            }
             StreamMessage::Finished(()) => {
                 tracing::error!("kv store subscription ended, restarting");
                 ctx.stop();
-                return;
             }
-            _ => return,
+            _ => {}
         }
-
-        let preferred = derp_latency::preferred_region(self.env.kv_store(), KV_OWNER);
-        self.home_derp_tx.send_if_modified(|x| {
-            let new_val = preferred == Some(self.runner_state.region_id);
-            let changed = new_val != *x;
-            *x = new_val;
-
-            changed
-        });
     }
 }
 

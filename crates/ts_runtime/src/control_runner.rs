@@ -527,17 +527,22 @@ impl Message<direct::NewEndpoints> for ControlRunner {
     }
 }
 
-impl Message<StreamMessage<kv::Notification, (), ()>> for ControlRunner {
+impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for ControlRunner {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: StreamMessage<kv::Notification, (), ()>,
+        msg: StreamMessage<Vec<kv::Notification>, (), ()>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
         match msg {
-            StreamMessage::Next(kv::Notification::DerpLatency(_)) => {
-                self.update_map_request().await;
+            StreamMessage::Next(notifications) => {
+                if notifications
+                    .iter()
+                    .any(|n| matches!(n, kv::Notification::DerpLatency(_)))
+                {
+                    self.update_map_request().await;
+                }
             }
             StreamMessage::Finished(()) => {
                 tracing::error!("kv store subscription ended, resubscribing");
