@@ -85,18 +85,14 @@ impl kameo::Actor for Uniderp {
         args.env
             .kv_store()
             .DerpLatency
-            .subscribe(&subscriber)
+            .subscribe_and_notify(&subscriber)
             .unwrap();
         let notifications = futures::stream::unfold(subscriber, async move |mut s| {
             s.recv().await.ok().map(|n| (n, s))
         });
         slf.attach_stream(notifications.boxed(), (), ());
 
-        // Note(nrc): if we had subscribe_and_notify for whole tables, we could skip this and really
-        // on the initial notification (also elsewhere in runtime)
-        let is_home =
-            derp_latency::preferred_region(args.env.kv_store(), KV_OWNER) == Some(args.region_id);
-        let (home_derp_tx, home_derp_rx) = watch::channel(is_home);
+        let (home_derp_tx, home_derp_rx) = watch::channel(false);
 
         let (transport_id, from_dataplane, to_dataplane) = args
             .env

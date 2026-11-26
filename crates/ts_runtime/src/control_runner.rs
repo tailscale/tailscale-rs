@@ -285,7 +285,10 @@ impl ControlRunner {
 impl ControlRunner {
     fn subscribe_derp_latency(env: &Env, slf: &ActorRef<Self>) {
         let subscriber = env.create_store_subscriber(KV_OWNER);
-        env.kv_store().DerpLatency.subscribe(&subscriber).unwrap();
+        env.kv_store()
+            .DerpLatency
+            .subscribe_and_notify(&subscriber)
+            .unwrap();
         let notifications = futures::stream::unfold(subscriber, async move |mut s| {
             s.recv().await.ok().map(|n| (n, s))
         });
@@ -539,8 +542,6 @@ impl Message<StreamMessage<kv::Notification, (), ()>> for ControlRunner {
             StreamMessage::Finished(()) => {
                 tracing::error!("kv store subscription ended, resubscribing");
                 Self::subscribe_derp_latency(&self.params.env, ctx.actor_ref());
-                // Changes may have been missed while unsubscribed.
-                self.update_map_request().await;
             }
             _ => {}
         }

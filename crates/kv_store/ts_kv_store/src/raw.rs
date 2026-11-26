@@ -446,6 +446,26 @@ impl<D: PrimaryTableDesc> Table<D> {
             .create_table_subscription_all::<D>(subscriber.into())
     }
 
+    /// Subscribe to the whole table and send the current state to the subscriber.
+    ///
+    /// This always results in an `Event::TableUpsert` notification. A notification is sent even if
+    /// the table is empty (with an empty set of keys).
+    pub fn subscribe_and_notify(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> SubscriptionResult
+    where
+        D::Key: Send,
+    {
+        let storage = self.store.get_read_lock();
+        let subs = &storage.subscriptions;
+        let id = subs.create_table_subscription_all::<D>(subscriber.into())?;
+
+        crate::pub_sub::send_current_table::<D>(subs, &storage, id);
+
+        Ok(id)
+    }
+
     /// Unsubscribe from the table (whole table or single key).
     pub fn unsubscribe(&self, subscription: Subscription) {
         self.store
@@ -482,7 +502,7 @@ impl<D: PrimaryTableDesc> Table<D> {
         let subs = &storage.subscriptions;
         let id = subs.create_table_subscription::<D>(key.clone(), subscriber.into())?;
 
-        crate::pub_sub::send_current::<D>(subs, &storage, key, id);
+        crate::pub_sub::send_current_key::<D>(subs, &storage, key, id);
 
         Ok(id)
     }
@@ -889,6 +909,20 @@ impl<D: PrimaryTableDesc> TableWithOwner<D> {
         D::Key: Send,
     {
         self.inner.subscribe(subscriber)
+    }
+
+    /// Subscribe to the whole table and send the current state to the subscriber.
+    ///
+    /// This always results in an `Event::TableUpsert` notification. A notification is sent even if
+    /// the table is empty (with an empty set of keys).
+    pub fn subscribe_and_notify(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> SubscriptionResult
+    where
+        D::Key: Send,
+    {
+        self.inner.subscribe_and_notify(subscriber)
     }
 
     /// Unsubscribe from the table (whole table or single key).

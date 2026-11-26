@@ -52,20 +52,20 @@ impl kameo::Actor for Multiderp {
         // Note(nrc): it might be nice to have this functionality directly in something like
         // ts_kv_store_tokio.
         let subscriber = env.create_store_subscriber(KV_OWNER);
-        env.kv_store().DerpMap.subscribe(&subscriber).unwrap();
+        env.kv_store()
+            .DerpMap
+            .subscribe_and_notify(&subscriber)
+            .unwrap();
         let notifications = futures::stream::unfold(subscriber, async move |mut s| {
             s.recv().await.ok().map(|n| (n, s))
         });
         slf.attach_stream(notifications.boxed(), (), ());
 
-        let multiderp = Self {
+        Ok(Self {
             env,
             region_map: Default::default(),
             debounce_state: Default::default(),
-        };
-        multiderp.ensure_all_regions(&slf).await;
-
-        Ok(multiderp)
+        })
     }
 
     async fn on_stop(

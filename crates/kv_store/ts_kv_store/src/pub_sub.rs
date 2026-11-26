@@ -100,7 +100,9 @@ pub enum Event<D: PrimaryTableDesc> {
     /// The table has been cleared.
     TableClear,
     /// Keys have been inserted or mutated, and either more than one key changed or the table was
-    /// empty at the start of the transaction or cleared during it.
+    /// empty at the start of the transaction or cleared during it (also sent as the initial
+    /// notification of `subscribe_and_notify`, in which case the `Vec` may be empty or have a
+    /// single key).
     TableUpsert(Vec<D::Key>),
     /// More than one key has been removed.
     TableRemove(Vec<D::Key>),
@@ -538,8 +540,24 @@ impl<Notif: Clone + 'static> Subscriptions<Notif> {
     }
 }
 
+/// Send a notification for the current state of `D` to `subscription`.
+pub(crate) fn send_current_table<D: PrimaryTableDesc>(
+    subs: &Subscriptions<<D::Storage as GeneratedStorage>::Notification>,
+    storage: &Storage<D::Storage>,
+    subscription: Subscription,
+) {
+    let table = D::get_table(&storage.tables);
+    let notification = D::make_notification(Event::TableUpsert(
+        table
+            .iter(storage.txn_id())
+            .map(|(k, _)| k.clone())
+            .collect(),
+    ));
+    subs.notify(Notifications::<_>::single(notification, subscription));
+}
+
 /// Send a notification for the current value of `key` to `subscription`.
-pub(crate) fn send_current<D: PrimaryTableDesc>(
+pub(crate) fn send_current_key<D: PrimaryTableDesc>(
     subs: &Subscriptions<<D::Storage as GeneratedStorage>::Notification>,
     storage: &Storage<D::Storage>,
     key: D::Key,
@@ -2335,6 +2353,29 @@ mod tests {
 
         assert!(rec.notifications_for(sub).is_empty());
         assert_eq!(rec.total_calls(), 0);
+    }
+
+    #[test]
+    fn e2e_subscribe_and_notify_table_sends_current_keys() {
+        let (notifier, rec) = RecordingNotifier::new();
+        let store = KvStore::from_notifier(Arc::downgrade(&notifier));
+        let subscriber = store.register_subscriber(OWNER);
+        seed_items(&store, &[1, 2, 3]);
+        rec.reset();
+
+        let sub = store.Items.subscribe_and_notify(subscriber).unwrap();
+        store.Items.insert(OWNER, 4, "four".to_owned());
+
+        assert_eq!(
+            rec.notifications_for(sub)
+                .iter()
+                .map(ItemsKind::from)
+                .collect::<Vec<_>>(),
+            vec![
+                ItemsKind::TableUpsert(vec![1, 2, 3]),
+                ItemsKind::KeyUpsert(4, "four".to_owned()),
+            ]
+        );
     }
 
     fn items_snapshot(store: &KvStore) -> Vec<(u32, String)> {

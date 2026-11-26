@@ -31,8 +31,8 @@
 
 ## Checking your work
 
-- `bin/check` runs the same checks as CI. Pass `-p <crate>` to limit it to one crate while
-  iterating, then run it unscoped before you finish.
+- `bin/check` runs the same checks as CI; run it unscoped only when asked. Read it to find how to
+  run individual checks, and pick the ones relevant to your changes.
 - Formatting uses nightly rustfmt (`cargo +nightly fmt`) with the settings in `.rustfmt.toml`.
 - Clippy runs with `-D warnings` and `--all-features`, so code behind features (e.g. `axum`,
   `ssh`) must be warning-free too.
