@@ -9,7 +9,7 @@ use std::{
 use kameo::{
     actor::{ActorRef, Spawn, WeakActorRef},
     error::ActorStopReason,
-    message::{Context, Message},
+    message::{Context, Message, StreamMessage},
 };
 use kameo_actors::scheduler::SetTimeout;
 use ts_control::DerpRegion;
@@ -21,8 +21,8 @@ use crate::{
     Env, Error,
     dataplane::{DataplaneActor, SendUnderlay},
     disco::SendDisco,
+    kv,
     multiderp::uniderp::Uniderp,
-    peer_tracker::{PeerDb, PeerState},
 };
 
 /// Consumes derp map updates and spawns an actor per region that runs an underlay transport.
@@ -36,7 +36,6 @@ pub struct Multiderp {
     region_map: HashMap<RegionId, UnderlayTransportId>,
     env: Env,
     debounce_state: DebounceState,
-    peer_state: Arc<PeerDb>,
 }
 
 impl kameo::Actor for Multiderp {
@@ -44,17 +43,14 @@ impl kameo::Actor for Multiderp {
     type Error = Error;
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
-        env.subscribe::<Arc<PeerState>>(&slf).await?;
         env.subscribe::<SendDisco>(&slf).await?;
-
         env.register(None, &slf).await?;
+        env.subscribe_store::<kv::DerpMap>(&slf, KV_OWNER);
 
         Ok(Self {
             env,
             region_map: Default::default(),
             debounce_state: Default::default(),
-            peer_state: Default::default(),
         })
     }
 
@@ -69,9 +65,24 @@ impl kameo::Actor for Multiderp {
     }
 }
 
+/// Notify other actors that the derp map in the kv store has changed.
+#[derive(Clone)]
+pub struct DerpMapUpdate;
+
 impl Multiderp {
+    async fn ensure_all_regions(&self, slf: &ActorRef<Self>) {
+        let regions: Vec<(RegionId, DerpRegion)> =
+            self.env.kv_store().DerpMap.with_iter(KV_OWNER, |regions| {
+                regions.map(|(id, region)| (*id, region.clone())).collect()
+            });
+
+        for (id, region) in regions {
+            self.ensure_region(slf, id, region).await;
+        }
+    }
+
     #[tracing::instrument(skip_all, fields(region_id = %id))]
-    async fn ensure_region(&mut self, slf: &ActorRef<Self>, id: RegionId, region: &DerpRegion) {
+    async fn ensure_region(&self, slf: &ActorRef<Self>, id: RegionId, region: DerpRegion) {
         if self
             .env
             .lookup_opt::<Uniderp>(Some(Uniderp::name(id)))
@@ -87,7 +98,7 @@ impl Multiderp {
             slf,
             uniderp::Args {
                 env: self.env.clone(),
-                region: region.clone(),
+                region,
                 region_id: id,
             },
         )
@@ -130,21 +141,35 @@ impl Multiderp {
     }
 }
 
-impl Message<Arc<ts_control::StateUpdate>> for Multiderp {
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("multiderp");
+
+impl Message<ts_kv_store_kameo::Message<kv::Notification>> for Multiderp {
     type Reply = ();
 
-    #[tracing::instrument(skip_all, name = "multiderp map update")]
     async fn handle(
         &mut self,
-        msg: Arc<ts_control::StateUpdate>,
+        msg: ts_kv_store_kameo::Message<kv::Notification>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
-        let Some(derp_map) = &msg.derp else {
-            return;
-        };
+        match msg {
+            StreamMessage::Next(notifications) => {
+                if notifications
+                    .iter()
+                    .any(|n| matches!(n, kv::Notification::DerpMap(_)))
+                {
+                    // Handle changes to the derp map and then notify other actors.
+                    self.ensure_all_regions(ctx.actor_ref()).await;
 
-        for (id, region) in derp_map {
-            self.ensure_region(ctx.actor_ref(), *id, region).await;
+                    if let Err(e) = self.env.publish(DerpMapUpdate).await {
+                        tracing::error!(error = %e, "publishing derp map update");
+                    }
+                }
+            }
+            StreamMessage::Finished(()) => {
+                tracing::error!("kv store subscription ended, restarting");
+                ctx.stop();
+            }
+            _ => {}
         }
     }
 }
@@ -202,14 +227,6 @@ impl Message<DebouncedPublish> for Multiderp {
     }
 }
 
-impl Message<Arc<PeerState>> for Multiderp {
-    type Reply = ();
-
-    async fn handle(&mut self, state: Arc<PeerState>, _: &mut Context<Self, Self::Reply>) {
-        self.peer_state = state.peers.clone();
-    }
-}
-
 impl Message<SendDisco> for Multiderp {
     type Reply = ();
 
@@ -218,17 +235,24 @@ impl Message<SendDisco> for Multiderp {
             return;
         };
 
-        let Some((_, peer)) = self.peer_state.get(&nodekey) else {
+        let Some(derp_region) = self
+            .env
+            .kv_store()
+            .Peers
+            .indexes(KV_OWNER)
+            .node_key
+            .with(&nodekey, |_, peer| peer.derp_region)
+        else {
             tracing::trace!(%nodekey, "no known peer");
             return;
         };
 
-        let Some(derp_region) = &peer.derp_region else {
+        let Some(derp_region) = derp_region else {
             tracing::trace!(%nodekey, "peer had no derp region");
             return;
         };
 
-        let Some(transport_id) = self.region_map.get(derp_region) else {
+        let Some(transport_id) = self.region_map.get(&derp_region) else {
             tracing::trace!(%nodekey, ?derp_region, "derp region had no transport");
             return;
         };

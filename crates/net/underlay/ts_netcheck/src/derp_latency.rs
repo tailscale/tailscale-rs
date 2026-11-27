@@ -50,6 +50,11 @@ pub struct RegionResult {
     pub connected_remote: SocketAddr,
 }
 
+/// The key for a region's IPv4 latency in the latency map, submitted to control.
+pub fn latency_map_key(id: RegionId) -> String {
+    format!("{id}-v4")
+}
+
 /// Measure all regions in the supplied [`DerpMap`] and return a binary heap sorted by
 /// mean per-region sample time.
 #[tracing::instrument(skip_all)]
@@ -63,7 +68,7 @@ pub async fn measure_derp_map(map: &DerpMap, config: &Config) -> Vec<RegionResul
         }
 
         let servers = region.servers.clone();
-        let latency_map_key = format!("{id}-v4");
+        let latency_map_key = latency_map_key(id);
 
         let config = config.https;
 

@@ -29,7 +29,7 @@
 //!
 //!     println!(
 //!         "singleton: {}, row 4: {}",
-//!         store.foo.get().unwrap(),
+//!         store.foo.get(),
 //!         store.Nodes.get(&4).unwrap(),
 //!     );
 //! }
@@ -69,8 +69,8 @@
 //!
 //! An index is a table in the store that is derived from its base table and provides direct access
 //! to elements in the base table. Indexes are maintained by the store and are atomically updated
-//! when the base table is modified. Indexes only give immutable access to data (this is not a
-//! requirement for the properties of the store and could be extended in the future).
+//! when the base table is modified. Indexes give mutable access to data via the raw API and in
+//! read/write transactions. In a transaction, both mutable and read-only indexes are available.
 //!
 //! For example, consider a table `Base` which maps `u64` keys to `Foo` values where `Foo` has a
 //! field `bar: Url` (and `bar` is a unique identifier for a `Foo` in `Base`). The schema would look
@@ -80,11 +80,12 @@
 //! `Base` is modified by using the `bar` field of the values in `Base`.
 //!
 //! The index table is itself stored as a table (inside the base tables `indexes` field) with key
-//! type `Url` and value type `u64`.
+//! type `Url` and value type `u64` (or a `SmallVec` of `u64`s for multi-indexes).
 //!
-//! Index fields must uniquely identify a row in the base table. If multiple rows in the base table
-//! have the same key in the index, then either a panic is triggered, or accessing or committing a
-//! non-unique index in a transaction will cause an error. See the schema macro docs for more.
+//! By default, index fields must uniquely identify a row in the base table. If multiple rows in the
+//! base table have the same key in the index, then either a panic is triggered, or accessing or
+//! committing a non-unique index in a transaction will cause an error. There are other non-error
+//! behaviours too, see the schema macro docs for details.
 //!
 //! # Async access
 //!
@@ -137,9 +138,8 @@
 //! The macros also create transaction types with a field for each singleton and table.
 //!
 //! The implementation of storage for tabular data is one HashMap per table (plus several helper data
-//! structures). For singleton data, we store values in fields with the name of the singleton. The
-//! value is stored in an `Option`, unless the singleton is declared with `default`, in which case it
-//! always has a value.
+//! structures). For singleton data, we store values in fields with the name of the singleton. A
+//! singleton always has a value (initially its type's default value).
 //!
 //! The implementation of the storage operations (`get`, `insert`, etc.) is somewhat shared between
 //! the various types which support them (singleton, table, index, and transaction types). These are
@@ -161,9 +161,8 @@
 //! `VersionedValue`, which has these two slots and a version and value in each. Deletes are stored
 //! outside of the main storage in a per-table delete mask.
 //!
-//! Singletons work slightly differently: they still use a `VersionedValue`, but use a tombstone value
-//! for deletes (`None`) rather than a delete mask. Singletons declared with `default` have no
-//! tombstone, a delete just writes the default value.
+//! Singletons work slightly differently: they still use a `VersionedValue`, but have no delete mask.
+//! A delete just writes the default value.
 //!
 //! To commit a transaction, the delete masks are applied to their corresponding tables, the committed
 //! transaction id in the store is set to the committed transaction's, and the pending transaction
@@ -180,6 +179,8 @@
 //! There is no way to time-out a transaction. So if a transaction takes the global lock and
 //! never gives it up (e.g., by panicking without calling destructors, or leaking the transaction
 //! handle), then the KV store cannot be recovered.
+
+#![allow(clippy::type_complexity)]
 
 extern crate alloc;
 #[doc(hidden)]
@@ -202,22 +203,23 @@ pub mod storage;
 pub mod transactions;
 
 #[doc(inline)]
-pub use index::{Index, IndexGuard, IndexTransaction, IndexWithOwner, RoIndexTransaction};
+pub use index::{
+    Index, IndexGuard, IndexTransaction, MultiIndex, MultiIndexGuard, MultiIndexTransaction,
+    RoIndexTransaction, RoMultiIndexTransaction, RoRoIndexTransaction, RoRoMultiIndexTransaction,
+};
+pub use iter::{BaseRows, IndexIter, MultiIndexIter, TableIter};
 #[doc(inline)]
 pub use pub_sub::{
     Event, NoOpNotifier, Notifications, Notifier, SingletonEvent, Subscriber, Subscription,
     SubscriptionError,
 };
 #[doc(inline)]
-pub use raw::{
-    DefaultSingleton, DefaultSingletonWithOwner, Singleton, SingletonWithOwner, Table,
-    TableWithOwner,
-};
+pub use raw::{Singleton, SingletonWithOwner, Table, TableWithOwner};
 pub use schema::{GeneratedStorage, GeneratedStore};
 #[doc(inline)]
 pub use transactions::{
-    DefaultSingletonTransaction, RoDefaultSingletonTransaction, RoSingletonTransaction,
-    RoTableTransaction, RoTransaction, SingletonTransaction, TableTransaction, Transaction,
+    RoSingletonTransaction, RoTableTransaction, RoTransaction, SingletonTransaction,
+    TableTransaction, Transaction, TxnId,
 };
 
 /// A key-value store. See the crate docs for details. Its schema is described by `TableStorage`.
@@ -274,6 +276,39 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
         self.get_read_lock()
             .subscriptions
             .remove_global_subscription(subscription);
+    }
+
+    /// Subscribe to the whole table.
+    pub fn subscribe_table<D: schema::PrimaryTableDesc<Storage = TableStorage>>(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> SubscriptionResult
+    where
+        D::Key: Send,
+    {
+        self.get_read_lock()
+            .subscriptions
+            .create_table_subscription_all::<D>(subscriber.into())
+    }
+
+    /// Subscribe to the whole table and send the current state to the subscriber.
+    ///
+    /// This always results in an `Event::TableUpsert` notification. A notification is sent even if
+    /// the table is empty (with an empty set of keys).
+    pub fn subscribe_table_and_notify<D: schema::PrimaryTableDesc<Storage = TableStorage>>(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> SubscriptionResult
+    where
+        D::Key: Send,
+    {
+        let storage = self.get_read_lock();
+        let subs = &storage.subscriptions;
+        let id = subs.create_table_subscription_all::<D>(subscriber.into())?;
+
+        crate::pub_sub::send_current_table::<D>(subs, &storage, id);
+
+        Ok(id)
     }
 
     /// Might (theoretically) panic, see the note on [`Self::clear_lock_poison`].

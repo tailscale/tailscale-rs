@@ -16,9 +16,10 @@ use ts_control::{
 
 use crate::{
     Task,
-    derp_latency::{DerpLatencyMeasurement, DerpLatencyMeasurer},
+    derp_latency::{self, DerpLatencyMeasurer},
     direct,
     env::Env,
+    kv,
 };
 
 /// Actor responsible for maintaining the connection to control.
@@ -27,8 +28,6 @@ use crate::{
 pub struct ControlRunner {
     params: Params,
     state: RegState,
-
-    derp_latency_measurement: Option<DerpLatencyMeasurement>,
 
     endpoints: Vec<Endpoint>,
 
@@ -87,6 +86,8 @@ pub struct Params {
     /// The [`Env`] for this actor.
     pub(crate) env: Env,
 }
+
+pub(crate) const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("control");
 
 #[doc(hidden)]
 #[derive(Debug, Clone, thiserror::Error)]
@@ -174,8 +175,10 @@ impl kameo::Actor for ControlRunner {
         .spawn()
         .await;
 
-        params.env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
         params.env.subscribe::<direct::NewEndpoints>(&slf).await?;
+        params
+            .env
+            .subscribe_store::<kv::DerpLatency>(&slf, KV_OWNER);
 
         DerpLatencyMeasurer::supervise(&slf, params.env.clone())
             .spawn()
@@ -188,7 +191,6 @@ impl kameo::Actor for ControlRunner {
                 pending_auth_requests: Default::default(),
             },
             params,
-            derp_latency_measurement: None,
             endpoints: Default::default(),
             self_node: None,
             pending_node_requests: Default::default(),
@@ -307,19 +309,18 @@ impl ControlRunner {
             mrb = mrb.hostname(hostname);
         }
 
-        if let Some(latency) = &self.derp_latency_measurement {
-            if let Some(result) = latency.measurement.first() {
-                mrb = mrb.preferred_derp(result.id);
-            };
+        let store = self.params.env.kv_store();
+        if let Some(id) = derp_latency::preferred_region(store, KV_OWNER) {
+            mrb = mrb.preferred_derp(id);
+        }
 
-            let iter = latency.measurement.iter().map(|result| {
-                (
-                    result.latency_map_key.as_str(),
-                    result.latency.as_secs_f64(),
-                )
-            });
-
-            mrb = mrb.derp_latencies(iter);
+        let latencies: Vec<(String, f64)> = store.DerpLatency.with_iter(KV_OWNER, |latencies| {
+            latencies
+                .map(|(id, latency)| (ts_netcheck::latency_map_key(*id), *latency))
+                .collect()
+        });
+        if !latencies.is_empty() {
+            mrb = mrb.derp_latencies(latencies.iter().map(|(k, v)| (k.as_str(), *v)));
         }
 
         let client_name = self.params.config.format_client_name();
@@ -471,6 +472,15 @@ impl Message<StreamMessage<Arc<StateUpdate>, (), ()>> for ControlRunner {
             self.self_node = Some(node.clone());
         }
 
+        if let Some(derp_map) = &msg.derp {
+            let mut txn = self.params.env.kv_store().begin_transaction(KV_OWNER);
+            txn.DerpMap.clear();
+            for (id, region) in derp_map {
+                txn.DerpMap.insert(*id, region.clone());
+            }
+            txn.commit().unwrap();
+        }
+
         if let Err(e) = self.params.env.publish(msg).await {
             tracing::error!(error = %e, "publishing netmap update");
         }
@@ -506,16 +516,31 @@ impl Message<direct::NewEndpoints> for ControlRunner {
     }
 }
 
-impl Message<DerpLatencyMeasurement> for ControlRunner {
+impl Message<ts_kv_store_kameo::Message<kv::Notification>> for ControlRunner {
     type Reply = ();
 
-    async fn handle(&mut self, msg: DerpLatencyMeasurement, _ctx: &mut Context<Self, Self::Reply>) {
-        if self.derp_latency_measurement.as_ref() == Some(&msg) {
-            return;
+    async fn handle(
+        &mut self,
+        msg: ts_kv_store_kameo::Message<kv::Notification>,
+        ctx: &mut Context<Self, Self::Reply>,
+    ) {
+        match msg {
+            StreamMessage::Next(notifications) => {
+                if notifications
+                    .iter()
+                    .any(|n| matches!(n, kv::Notification::DerpLatency(_)))
+                {
+                    self.update_map_request().await;
+                }
+            }
+            StreamMessage::Finished(()) => {
+                tracing::error!("kv store subscription ended, resubscribing");
+                self.params
+                    .env
+                    .subscribe_store::<kv::DerpLatency>(ctx.actor_ref(), KV_OWNER);
+            }
+            _ => {}
         }
-
-        self.derp_latency_measurement = Some(msg);
-        self.update_map_request().await;
     }
 }
 

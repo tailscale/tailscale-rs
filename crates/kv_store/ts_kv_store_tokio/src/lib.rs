@@ -50,9 +50,9 @@ const CHANNEL_CAPACITY: usize = 2;
 /// The generic parameter `Store` links a notifier instance to a specific store.
 pub struct TokioNotifier<Store: GeneratedStore> {
     store: Arc<Store>,
-    senders: Mutex<HashMap<Subscriber, SubscriberSender<StoreNotification<Store>>>>,
+    senders: Mutex<HashMap<Subscriber, SubscriberSender<SentNotification<Store>>>>,
     /// Notifications waiting to be sent, oldest first.
-    queue: Mutex<VecDeque<QueuedNotifications<StoreNotification<Store>>>>,
+    queue: Mutex<VecDeque<QueuedNotifications<SentNotification<Store>>>>,
     /// Signalled whenever `queue` is added to, to wake `task`.
     notify: Arc<Notify>,
     /// Async task which sends queued notifications to subscribers.
@@ -62,11 +62,15 @@ pub struct TokioNotifier<Store: GeneratedStore> {
 /// The notifications from a single transaction, as queued for sending.
 ///
 /// This is a [`Notifications`] in its map form.
-type QueuedNotifications<N> = HashMap<Subscription, Vec<N>>;
+type QueuedNotifications<N> = HashMap<Subscription, N>;
 
 /// The type of notification sent by `Store`.
 type StoreNotification<Store> =
     <<Store as GeneratedStore>::Storage as GeneratedStorage>::Notification;
+
+/// The type of notification sent by the notifier to subscribers; a `Vec` of `StoreNotification`s
+/// which represent all the notifications for a subscriber from a transaction.
+type SentNotification<Store> = Vec<StoreNotification<Store>>;
 
 impl<Store: GeneratedStore> TokioNotifier<Store> {
     /// Create a new `TokioNotifier` and [`KvStore`](ts_kv_store::KvStore).
@@ -155,7 +159,7 @@ pub struct TokioSubscriber<Store: GeneratedStore> {
     /// Reference to our 'parent' notifier.
     notifier: Arc<TokioNotifier<Store>>,
     /// Receiver end of a Tokio channel for receiving notifications from the notifier.
-    receiver: Receiver<StoreNotification<Store>>,
+    receiver: Receiver<SentNotification<Store>>,
     _owner: Owner,
 }
 
@@ -166,19 +170,19 @@ impl<Store: GeneratedStore> From<&'_ TokioSubscriber<Store>> for Subscriber {
 }
 
 impl<Store: GeneratedStore> TokioSubscriber<Store> {
-    /// Wait for the next notification.
+    /// Wait for the next batch of notifications.
     ///
     /// Returns [`Error::ChannelDisconnected`] if the channel is closed. No further notifications will
     /// arrive after that.
-    pub async fn recv(&mut self) -> Result<StoreNotification<Store>> {
+    pub async fn recv(&mut self) -> Result<SentNotification<Store>> {
         self.receiver.recv().await.ok_or(Error::ChannelDisconnected)
     }
 
-    /// Receive the next notification without waiting.
+    /// Receive the next batch of notifications without waiting.
     ///
     /// Returns [`Error::ChannelEmpty`] if there is no notification to receive, or [`Error::ChannelDisconnected`] if the
     /// channel is closed (see [`recv`](Self::recv)).
-    pub fn try_recv(&mut self) -> Result<StoreNotification<Store>> {
+    pub fn try_recv(&mut self) -> Result<SentNotification<Store>> {
         self.receiver.try_recv().map_err(|e| match e {
             TryRecvError::Empty => Error::ChannelEmpty,
             TryRecvError::Disconnected => Error::ChannelDisconnected,
@@ -298,12 +302,14 @@ mod tests {
         }
     }
 
-    /// Wait for the next notification, panicking if none arrives.
+    /// Wait for the next batch of notifications, panicking unless it holds exactly one.
     async fn recv_one(sub: &mut TokioSubscriber<KvStore>) -> Notification {
-        timeout(Duration::from_secs(1), sub.recv())
+        let mut batch = timeout(Duration::from_secs(1), sub.recv())
             .await
             .expect("timed out waiting for a notification")
-            .expect("channel closed unexpectedly")
+            .expect("channel closed unexpectedly");
+        assert_eq!(batch.len(), 1, "expected one notification, got {batch:?}");
+        batch.pop().unwrap()
     }
 
     /// Assert that no notification is delivered. Gives the background task a chance to run first.
@@ -354,6 +360,31 @@ mod tests {
 
         assert_eq!(items_table_upsert(&recv_one(&mut sub).await), vec![1]);
         assert_eq!(count_upsert(&recv_one(&mut sub).await), 9);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transaction_notifications_arrive_in_one_batch() {
+        let notifier = notifier();
+        let mut sub = notifier.create_subscriber(OWNER);
+        notifier.store().subscribe_global(&sub).unwrap();
+
+        let mut txn = notifier.store().begin_transaction(OWNER);
+        txn.Items.insert(1, "a".to_owned());
+        txn.Count.insert(9);
+        txn.commit().unwrap();
+
+        let batch = timeout(Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timed out waiting for a notification")
+            .expect("channel closed unexpectedly");
+        assert_eq!(batch.len(), 2, "expected two notifications, got {batch:?}");
+        let (items, count) = match &batch[0] {
+            Notification::Items(_) => (&batch[0], &batch[1]),
+            _ => (&batch[1], &batch[0]),
+        };
+        assert_eq!(items_table_upsert(items), vec![1]);
+        assert_eq!(count_upsert(count), 9);
+        assert_idle(&mut sub).await;
     }
 
     #[tokio::test(start_paused = true)]

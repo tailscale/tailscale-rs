@@ -10,6 +10,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["tokio-test"]
+
 [dependencies]
 # Our crates.
 ts_bart.workspace = true
@@ -18,6 +21,8 @@ ts_control.workspace = true
 ts_dataplane.workspace = true
 ts_disco_protocol.workspace = true
 ts_keys.workspace = true
+ts_kv_store.workspace = true
+ts_kv_store_kameo.workspace = true
 ts_netcheck.workspace = true
 ts_netmon.workspace = true
 ts_netstack_smoltcp = { workspace = true, features = ["tokio"] }
@@ -33,7 +38,7 @@ ts_util.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 ipnet.workspace = true
-kameo = "0.21"
+kameo.workspace = true
 kameo_actors = "0.6"
 thiserror.workspace = true
 tokio.workspace = true
@@ -50,11 +55,8 @@ itertools.workspace = true
 zerocopy.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
 itertools.workspace = true
-proptest.workspace = true
 tokio-test = "0.4"
-ts_capabilityversion.workspace = true
 
 [features]
 console = ["kameo/console"]
@@ -63,5 +65,3 @@ otel = ["kameo/otel", "kameo/tracing"]
 [lints]
 workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["tokio-test"]

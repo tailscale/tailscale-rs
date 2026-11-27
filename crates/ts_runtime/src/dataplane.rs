@@ -25,6 +25,8 @@ use crate::{
     src_filter::SourceFilterState,
 };
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("dataplane");
+
 pub struct DataplaneActor {
     dataplane: Arc<ts_dataplane::async_tokio::DataPlane>,
     env: Env,
@@ -317,15 +319,16 @@ impl Message<Arc<PeerState>> for DataplaneActor {
         {
             let mut dp = self.dataplane.inner().await;
             let wg = &mut dp.wireguard;
+            let peers = &self.env.kv_store().begin_ro_transaction(KV_OWNER).Peers;
 
             for &upsert in &msg.upserts {
-                let (_, node) = msg.peers.get(&upsert).unwrap();
-
-                wg.upsert_peer(ts_tunnel::PeerConfig::new(
-                    ts_tunnel::PeerId(upsert.0),
-                    node.node_key,
-                    [0u8; 32],
-                ));
+                peers.with(&upsert, |node| {
+                    wg.upsert_peer(ts_tunnel::PeerConfig::new(
+                        ts_tunnel::PeerId(upsert.0),
+                        node.node_key,
+                        [0u8; 32],
+                    ));
+                });
             }
 
             for delete in &msg.deletions {

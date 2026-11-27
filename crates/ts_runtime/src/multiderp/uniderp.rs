@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -7,7 +7,7 @@ use futures::FutureExt;
 use kameo::{
     actor::{ActorRef, Spawn, WeakActorRef},
     error::ActorStopReason,
-    message::{Context, Message},
+    message::{Context, Message, StreamMessage},
 };
 use smol_str::SmolStr;
 use tokio::sync::{Mutex, watch};
@@ -21,10 +21,10 @@ use ts_transport::{BatchRecvIter, DynEndpoint, UnderlayTransport, UnderlayTransp
 use crate::{
     Task,
     dataplane::{DataplaneActor, NewUnderlayTransport},
-    derp_latency::DerpLatencyMeasurement,
+    derp_latency,
     env::Env,
+    kv,
     multiderp::{Multiderp, SetRegionTransportId},
-    peer_tracker::{PeerDb, PeerState},
     task::ErasedTask,
 };
 
@@ -74,11 +74,15 @@ async fn start_runner(mut runner: Runner) {
     }
 }
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("uniderp");
+
 impl kameo::Actor for Uniderp {
     type Args = Args;
     type Error = crate::Error;
 
     async fn on_start(args: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
+        args.env.subscribe_store::<kv::DerpLatency>(&slf, KV_OWNER);
+
         let (home_derp_tx, home_derp_rx) = watch::channel(false);
 
         let (transport_id, from_dataplane, to_dataplane) = args
@@ -98,7 +102,6 @@ impl kameo::Actor for Uniderp {
             region_id: args.region_id,
             region: args.region,
             transport_id,
-            peer_db: Arc::new(RwLock::new(None)),
             home_derp_rx,
             to_dataplane,
             keys: args.env.keys.node_keys.clone(),
@@ -107,11 +110,7 @@ impl kameo::Actor for Uniderp {
 
         let task = Task::spawn_link(&slf, start_runner(runner.clone()).boxed()).await;
 
-        args.env
-            .subscribe::<Arc<ts_control::StateUpdate>>(&slf)
-            .await?;
-        args.env.subscribe::<Arc<PeerState>>(&slf).await?;
-        args.env.subscribe::<DerpLatencyMeasurement>(&slf).await?;
+        args.env.subscribe::<super::DerpMapUpdate>(&slf).await?;
 
         args.env
             .register(Some(Self::name(args.region_id)), &slf)
@@ -142,19 +141,16 @@ impl kameo::Actor for Uniderp {
     }
 }
 
-impl Message<Arc<ts_control::StateUpdate>> for Uniderp {
+impl Message<super::DerpMapUpdate> for Uniderp {
     type Reply = ();
 
-    async fn handle(
-        &mut self,
-        msg: Arc<ts_control::StateUpdate>,
-        ctx: &mut Context<Self, Self::Reply>,
-    ) {
-        let Some(derp) = &msg.derp else {
-            return;
-        };
-
-        let Some(region) = derp.get(&self.runner_state.region_id) else {
+    async fn handle(&mut self, _msg: super::DerpMapUpdate, ctx: &mut Context<Self, Self::Reply>) {
+        let Some(region) = self
+            .env
+            .kv_store()
+            .DerpMap
+            .get(KV_OWNER, &self.runner_state.region_id)
+        else {
             tracing::debug!(
                 region_id = ?self.runner_state.region_id,
                 "derp region disappeared from map, stopping"
@@ -163,12 +159,12 @@ impl Message<Arc<ts_control::StateUpdate>> for Uniderp {
             return;
         };
 
-        if &self.runner_state.region == region {
+        if self.runner_state.region == region {
             return;
         }
 
         tracing::debug!(id = %self.runner_state.region_id, "region changed, restarting task");
-        self.runner_state.region = region.clone();
+        self.runner_state.region = region;
 
         self.task.unlink(ctx.actor_ref()).await;
         self.task.stop_gracefully().await.unwrap();
@@ -188,31 +184,36 @@ impl Message<Arc<ts_control::StateUpdate>> for Uniderp {
     }
 }
 
-impl Message<Arc<PeerState>> for Uniderp {
+impl Message<ts_kv_store_kameo::Message<kv::Notification>> for Uniderp {
     type Reply = ();
 
-    async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
-        let mut db = self.runner_state.peer_db.write().unwrap();
-        *db = Some(msg.peers.clone());
-    }
-}
+    async fn handle(
+        &mut self,
+        msg: ts_kv_store_kameo::Message<kv::Notification>,
+        ctx: &mut Context<Self, Self::Reply>,
+    ) {
+        match msg {
+            StreamMessage::Next(notifications) => {
+                if notifications
+                    .iter()
+                    .any(|n| matches!(n, kv::Notification::DerpLatency(_)))
+                {
+                    let preferred = derp_latency::preferred_region(self.env.kv_store(), KV_OWNER);
+                    self.home_derp_tx.send_if_modified(|x| {
+                        let new_val = preferred == Some(self.runner_state.region_id);
+                        let changed = new_val != *x;
+                        *x = new_val;
 
-impl Message<DerpLatencyMeasurement> for Uniderp {
-    type Reply = ();
-
-    async fn handle(&mut self, msg: DerpLatencyMeasurement, _ctx: &mut Context<Self, Self::Reply>) {
-        let Some(result) = msg.measurement.as_ref().first() else {
-            tracing::trace!("received home derp measurement message but none was set");
-            return;
-        };
-
-        self.home_derp_tx.send_if_modified(|x| {
-            let new_val = result.id == self.runner_state.region_id;
-            let changed = new_val != *x;
-            *x = new_val;
-
-            changed
-        });
+                        changed
+                    });
+                }
+            }
+            StreamMessage::Finished(()) => {
+                tracing::error!("kv store subscription ended, restarting");
+                ctx.stop();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -224,7 +225,6 @@ struct Runner {
     home_derp_rx: watch::Receiver<bool>,
     to_dataplane: Tx<FromUnderlay>,
     from_dataplane: Arc<Mutex<Rx<ToUnderlay>>>,
-    peer_db: Arc<RwLock<Option<Arc<PeerDb>>>>,
     keys: NodeKeyPair,
 }
 

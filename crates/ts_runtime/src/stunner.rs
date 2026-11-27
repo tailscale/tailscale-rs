@@ -1,6 +1,5 @@
 use std::{
     net::SocketAddr,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -13,7 +12,9 @@ use ts_derp::IpUsage;
 use ts_netcheck::stun::TransactionId;
 use zerocopy::IntoBytes;
 
-use crate::{dataplane::IncomingStunMsg, direct::DirectActor, env::Env};
+use crate::{dataplane::IncomingStunMsg, direct::DirectActor, env::Env, multiderp::DerpMapUpdate};
+
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("stunner");
 
 /// Actor that sends STUN requests to DERP servers to get this node's public IPv4.
 pub struct Stunner {
@@ -78,7 +79,7 @@ impl kameo::Actor for Stunner {
     type Error = crate::Error;
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+        env.subscribe::<DerpMapUpdate>(&slf).await?;
 
         env.scheduler
             .tell(
@@ -108,47 +109,52 @@ impl Message<Tick> for Stunner {
     }
 }
 
-impl Message<Arc<ts_control::StateUpdate>> for Stunner {
+impl Message<DerpMapUpdate> for Stunner {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        state_update: Arc<ts_control::StateUpdate>,
+        _: DerpMapUpdate,
         _ctx: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        let Some(derp_map) = &state_update.derp else {
-            return;
-        };
-
         let was_empty = self.servers.is_empty();
         self.servers.clear();
 
-        for region in derp_map.values() {
-            for server in &region.servers {
-                let Some(stun_port) = server.stun_port else {
-                    continue;
-                };
-
-                let addr = match server.ipv4 {
-                    IpUsage::FixedAddr(a) => (a, stun_port).into(),
-                    IpUsage::UseDns => {
-                        let addr = tokio::net::lookup_host((server.hostname.as_str(), stun_port))
-                            .await
-                            .ok()
-                            .and_then(|mut x| x.next());
-
-                        let Some(addr) = addr else {
-                            continue;
-                        };
-
-                        addr
+        let mut use_dns = Vec::new();
+        self.env
+            .kv_store()
+            .DerpMap
+            .with_values(KV_OWNER, |regions| {
+                // Have to use a loop and `push` rather than `filter_map` and `collect` due to lifetimes.
+                for server in regions.flat_map(|region| region.servers.iter()) {
+                    let Some(stun_port) = server.stun_port else {
+                        continue;
+                    };
+                    match server.ipv4 {
+                        IpUsage::FixedAddr(a) => {
+                            let addr = (a, stun_port).into();
+                            tracing::trace!(%addr, "identified stun server (fixed address)");
+                            self.servers.push(addr);
+                        }
+                        IpUsage::UseDns => use_dns.push((server.hostname.to_string(), stun_port)),
+                        _ => {}
                     }
-                    _ => continue,
-                };
+                }
+            });
 
-                tracing::trace!(%addr, "identified stun server");
-                self.servers.push(addr);
-            }
+        // Loop over these servers separately since we can't hold a kv store iterator over an await point.
+        for host in use_dns {
+            let addr = tokio::net::lookup_host(host)
+                .await
+                .ok()
+                .and_then(|mut x| x.next());
+
+            let Some(addr) = addr else {
+                continue;
+            };
+
+            tracing::trace!(%addr, "identified stun server (with dns)");
+            self.servers.push(addr);
         }
 
         tracing::debug!(n_server = self.servers.len(), "updated stun servers");

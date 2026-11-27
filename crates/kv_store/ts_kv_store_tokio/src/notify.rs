@@ -99,8 +99,8 @@ impl<Store: GeneratedStore> TokioNotifier<Store> {
 
 /// A notification could not be sent to its subscriber.
 enum SendError<N> {
-    /// The channel filled up; the field is the notifications which were not sent.
-    Full(Vec<N>),
+    /// The channel filled up; the field is the unsent notification.
+    Full(N),
     /// The subscriber has not taken a notification for [`MAX_RETRIES`] rounds or the channel is
     /// closed.
     Dead,
@@ -138,8 +138,7 @@ impl<N> SubscriberSender<N> {
     }
 }
 
-/// Send one subscription's `notifications` to its subscriber's channel, stopping at the first one
-/// which cannot be sent.
+/// Send one subscription's `notifications` to its subscriber's channel.
 ///
 /// Never awaits, and never blocks on a full channel: a subscriber which is not keeping up is
 /// reported as [`SendError::Full`] so that the caller can retry it later, or as
@@ -147,27 +146,21 @@ impl<N> SubscriberSender<N> {
 /// than [`RETRY_TIME`] does not count towards `MAX_RETRIES`.
 fn send_to_subscriber<N>(
     channel: &mut SubscriberSender<N>,
-    notifications: Vec<N>,
+    notification: N,
 ) -> Result<(), SendError<N>> {
-    let mut notifications = notifications.into_iter();
-    while let Some(notification) = notifications.next() {
-        match channel.sender.try_send(notification) {
-            Ok(()) => channel.failing = None,
-            // Re-queue this notification and everything after it for this subscriber, rather than
-            // sending later notifications out of order. Give up on a subscriber which has not taken
-            // a notification for a while.
-            Err(TrySendError::Full(notification)) => {
-                channel.record_failure()?;
-
-                let mut rest = vec![notification];
-                rest.extend(notifications);
-                return Err(SendError::Full(rest));
-            }
-            Err(TrySendError::Closed(_)) => return Err(SendError::Dead),
+    match channel.sender.try_send(notification) {
+        Ok(()) => {
+            channel.failing = None;
+            Ok(())
         }
+        // Re-queue this notification. Give up on a subscriber which has not taken
+        // a notification for a while.
+        Err(TrySendError::Full(notification)) => {
+            channel.record_failure()?;
+            Err(SendError::Full(notification))
+        }
+        Err(TrySendError::Closed(_)) => Err(SendError::Dead),
     }
-
-    Ok(())
 }
 
 /// The bookkeeping for a single round of sending.

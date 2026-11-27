@@ -23,21 +23,24 @@ pub struct RouteUpdater {
     /// Map of all available DERP regions to the ID of the underlay transport that handles that
     /// region.
     derp_transport_map: DerpTransportMap,
-    peer_state: Arc<PeerState>,
     best_paths: Arc<BestPathMap>,
     env: Env,
 }
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("route updater");
+
 impl RouteUpdater {
     fn build_peer_routes(&self) -> PeerRoutesInner {
+        let peers = &self.env.kv_store().begin_ro_transaction(KV_OWNER).Peers;
+
         tracing::trace!(
-            n_peers = self.peer_state.peers.peers().len(),
+            n_peers = peers.len(),
             "reconstructing routes for peer update"
         );
 
         let mut routes = PeerRoutesInner::default();
 
-        for (id, peer) in self.peer_state.peers.peers() {
+        for (id, peer) in peers {
             let span = tracing::trace_span!(
                 "peer_route_update",
                 peer_key = %peer.node_key,
@@ -116,7 +119,6 @@ impl kameo::Actor for RouteUpdater {
         Ok(Self {
             default_overlay_transport: default_transport,
             derp_transport_map: Default::default(),
-            peer_state: Default::default(),
             best_paths: Default::default(),
             env,
         })
@@ -142,9 +144,7 @@ pub struct PeerRoutesInner {
 impl Message<Arc<PeerState>> for RouteUpdater {
     type Reply = ();
 
-    async fn handle(&mut self, msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
-        self.peer_state = msg;
-
+    async fn handle(&mut self, _msg: Arc<PeerState>, _ctx: &mut Context<Self, Self::Reply>) {
         let new_routes = self.build_peer_routes();
 
         if let Err(e) = self

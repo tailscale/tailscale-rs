@@ -463,6 +463,8 @@ impl Message<ScheduleProbe> for PeerPd {
     }
 }
 
+const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("single-peer path discovery");
+
 impl Message<Arc<PeerState>> for PeerPd {
     type Reply = ();
 
@@ -493,19 +495,27 @@ impl Message<Arc<PeerState>> for PeerPd {
             return;
         }
 
-        let Some((_, node)) = state.peers.get(&self.peer_id) else {
+        let Some((disco_key, (coord_endpoints, endpoints))) =
+            self.env
+                .kv_store()
+                .Peers
+                .with(KV_OWNER, &self.peer_id, |node| {
+                    let endpoints = node
+                        .underlay_addresses
+                        .iter()
+                        .copied()
+                        .map(DynEndpoint::udp)
+                        .chain(core::iter::once(DynEndpoint::derp(node.node_key)))
+                        .partition(|x| x.is_disco_coordinator());
+                    (node.disco_key, endpoints)
+                })
+        else {
             return;
         };
 
-        self.disco_key = node.disco_key;
-
-        (self.coord_endpoints_ctrl, self.endpoints_ctrl) = node
-            .underlay_addresses
-            .iter()
-            .copied()
-            .map(DynEndpoint::udp)
-            .chain(core::iter::once(DynEndpoint::derp(node.node_key)))
-            .partition(|x| x.is_disco_coordinator());
+        self.disco_key = disco_key;
+        self.coord_endpoints_ctrl = coord_endpoints;
+        self.endpoints_ctrl = endpoints;
 
         tracing::trace!(peer_id = ?self.peer_id, endpoints_ctrl = ?self.endpoints_ctrl, disco_endpoints_ctrl = ?self.coord_endpoints_ctrl, "endpoint state updated");
 
