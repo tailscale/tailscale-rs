@@ -278,6 +278,39 @@ impl<TableStorage: schema::GeneratedStorage> KvStore<TableStorage> {
             .remove_global_subscription(subscription);
     }
 
+    /// Subscribe to the whole table.
+    pub fn subscribe_table<D: schema::PrimaryTableDesc<Storage = TableStorage>>(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> SubscriptionResult
+    where
+        D::Key: Send,
+    {
+        self.get_read_lock()
+            .subscriptions
+            .create_table_subscription_all::<D>(subscriber.into())
+    }
+
+    /// Subscribe to the whole table and send the current state to the subscriber.
+    ///
+    /// This always results in an `Event::TableUpsert` notification. A notification is sent even if
+    /// the table is empty (with an empty set of keys).
+    pub fn subscribe_table_and_notify<D: schema::PrimaryTableDesc<Storage = TableStorage>>(
+        &self,
+        subscriber: impl Into<crate::Subscriber>,
+    ) -> SubscriptionResult
+    where
+        D::Key: Send,
+    {
+        let storage = self.get_read_lock();
+        let subs = &storage.subscriptions;
+        let id = subs.create_table_subscription_all::<D>(subscriber.into())?;
+
+        crate::pub_sub::send_current_table::<D>(subs, &storage, id);
+
+        Ok(id)
+    }
+
     /// Might (theoretically) panic, see the note on [`Self::clear_lock_poison`].
     fn get_read_lock(&self) -> RwLockReadGuard<'_, storage::Storage<TableStorage>> {
         self.clear_lock_poison();

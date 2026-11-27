@@ -176,8 +176,9 @@ impl kameo::Actor for ControlRunner {
         .await;
 
         params.env.subscribe::<direct::NewEndpoints>(&slf).await?;
-
-        Self::subscribe_derp_latency(&params.env, &slf);
+        params
+            .env
+            .subscribe_store::<kv::DerpLatency>(&slf, KV_OWNER);
 
         DerpLatencyMeasurer::supervise(&slf, params.env.clone())
             .spawn()
@@ -283,18 +284,6 @@ impl ControlRunner {
 }
 
 impl ControlRunner {
-    fn subscribe_derp_latency(env: &Env, slf: &ActorRef<Self>) {
-        let subscriber = env.create_store_subscriber(KV_OWNER);
-        env.kv_store()
-            .DerpLatency
-            .subscribe_and_notify(&subscriber)
-            .unwrap();
-        let notifications = futures::stream::unfold(subscriber, async move |mut s| {
-            s.recv().await.ok().map(|n| (n, s))
-        });
-        slf.attach_stream(notifications.boxed(), (), ());
-    }
-
     /// Call `f` with a map request built from the current control actor state.
     ///
     /// `stream` dictates whether the request is built for a streaming netmap response or as a
@@ -527,12 +516,12 @@ impl Message<direct::NewEndpoints> for ControlRunner {
     }
 }
 
-impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for ControlRunner {
+impl Message<ts_kv_store_kameo::Message<kv::Notification>> for ControlRunner {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: StreamMessage<Vec<kv::Notification>, (), ()>,
+        msg: ts_kv_store_kameo::Message<kv::Notification>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
         match msg {
@@ -546,7 +535,9 @@ impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for ControlRunner {
             }
             StreamMessage::Finished(()) => {
                 tracing::error!("kv store subscription ended, resubscribing");
-                Self::subscribe_derp_latency(&self.params.env, ctx.actor_ref());
+                self.params
+                    .env
+                    .subscribe_store::<kv::DerpLatency>(ctx.actor_ref(), KV_OWNER);
             }
             _ => {}
         }

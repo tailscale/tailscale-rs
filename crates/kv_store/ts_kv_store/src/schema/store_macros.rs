@@ -565,7 +565,6 @@ macro_rules! store {
                     __store: store,
                 }
             }
-
         }
 
         /// A key-value store with a fixed owner.

@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt;
 use kameo::{
     actor::{ActorRef, Spawn, WeakActorRef},
     error::ActorStopReason,
@@ -81,16 +81,7 @@ impl kameo::Actor for Uniderp {
     type Error = crate::Error;
 
     async fn on_start(args: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
-        let subscriber = args.env.create_store_subscriber(KV_OWNER);
-        args.env
-            .kv_store()
-            .DerpLatency
-            .subscribe_and_notify(&subscriber)
-            .unwrap();
-        let notifications = futures::stream::unfold(subscriber, async move |mut s| {
-            s.recv().await.ok().map(|n| (n, s))
-        });
-        slf.attach_stream(notifications.boxed(), (), ());
+        args.env.subscribe_store::<kv::DerpLatency>(&slf, KV_OWNER);
 
         let (home_derp_tx, home_derp_rx) = watch::channel(false);
 
@@ -193,12 +184,12 @@ impl Message<super::DerpMapUpdate> for Uniderp {
     }
 }
 
-impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for Uniderp {
+impl Message<ts_kv_store_kameo::Message<kv::Notification>> for Uniderp {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: StreamMessage<Vec<kv::Notification>, (), ()>,
+        msg: ts_kv_store_kameo::Message<kv::Notification>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
         match msg {

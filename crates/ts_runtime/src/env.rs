@@ -11,7 +11,6 @@ use kameo::{
 use kameo_actors::scheduler::Scheduler;
 use smol_str::SmolStr;
 use ts_kv_store::Owner;
-use ts_kv_store_tokio::TokioSubscriber;
 
 use crate::{
     Error, ErrorKind,
@@ -29,12 +28,12 @@ pub struct Env {
 
     pub keys: Arc<ts_keys::NodeState>,
 
-    notifier: Arc<ts_kv_store_tokio::TokioNotifier<kv::KvStore>>,
+    notifier: ts_kv_store_kameo::Notifier<kv::KvStore>,
 }
 
 impl Env {
     pub fn new(keys: ts_keys::NodeState) -> Self {
-        let notifier = ts_kv_store_tokio::TokioNotifier::new();
+        let notifier = ts_kv_store_kameo::Notifier::new();
         Self {
             bus: RetainedBus::spawn_default(),
             scheduler: Scheduler::spawn_default(),
@@ -48,8 +47,12 @@ impl Env {
         self.notifier.store()
     }
 
-    pub fn create_store_subscriber(&self, owner: Owner) -> TokioSubscriber<kv::KvStore> {
-        self.notifier.create_subscriber(owner)
+    pub fn subscribe_store<D: ts_kv_store_kameo::TableBound<kv::KvStore>>(
+        &self,
+        actor: &ActorRef<impl ts_kv_store_kameo::MessageBound<kv::Notification>>,
+        owner: Owner,
+    ) {
+        self.notifier.subscribe_and_notify::<D>(actor, owner)
     }
 
     pub async fn subscribe<M>(&self, slf: &ActorRef<impl Message<M>>) -> Result<(), Error>

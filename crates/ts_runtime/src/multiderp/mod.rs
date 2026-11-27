@@ -6,7 +6,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::StreamExt;
 use kameo::{
     actor::{ActorRef, Spawn, WeakActorRef},
     error::ActorStopReason,
@@ -45,21 +44,8 @@ impl kameo::Actor for Multiderp {
 
     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
         env.subscribe::<SendDisco>(&slf).await?;
-
         env.register(None, &slf).await?;
-
-        // Subscribe to changes in the derp map in the kv store and turn them into Kameo messages.
-        // Note(nrc): it might be nice to have this functionality directly in something like
-        // ts_kv_store_tokio.
-        let subscriber = env.create_store_subscriber(KV_OWNER);
-        env.kv_store()
-            .DerpMap
-            .subscribe_and_notify(&subscriber)
-            .unwrap();
-        let notifications = futures::stream::unfold(subscriber, async move |mut s| {
-            s.recv().await.ok().map(|n| (n, s))
-        });
-        slf.attach_stream(notifications.boxed(), (), ());
+        env.subscribe_store::<kv::DerpMap>(&slf, KV_OWNER);
 
         Ok(Self {
             env,
@@ -157,12 +143,12 @@ impl Multiderp {
 
 const KV_OWNER: ts_kv_store::Owner = ts_kv_store::Owner("multiderp");
 
-impl Message<StreamMessage<Vec<kv::Notification>, (), ()>> for Multiderp {
+impl Message<ts_kv_store_kameo::Message<kv::Notification>> for Multiderp {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: StreamMessage<Vec<kv::Notification>, (), ()>,
+        msg: ts_kv_store_kameo::Message<kv::Notification>,
         ctx: &mut Context<Self, Self::Reply>,
     ) {
         match msg {

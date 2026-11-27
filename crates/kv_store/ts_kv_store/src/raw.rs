@@ -440,10 +440,7 @@ impl<D: PrimaryTableDesc> Table<D> {
     where
         D::Key: Send,
     {
-        self.store
-            .get_read_lock()
-            .subscriptions
-            .create_table_subscription_all::<D>(subscriber.into())
+        self.store.subscribe_table::<D>(subscriber)
     }
 
     /// Subscribe to the whole table and send the current state to the subscriber.
@@ -457,13 +454,7 @@ impl<D: PrimaryTableDesc> Table<D> {
     where
         D::Key: Send,
     {
-        let storage = self.store.get_read_lock();
-        let subs = &storage.subscriptions;
-        let id = subs.create_table_subscription_all::<D>(subscriber.into())?;
-
-        crate::pub_sub::send_current_table::<D>(subs, &storage, id);
-
-        Ok(id)
+        self.store.subscribe_table_and_notify::<D>(subscriber)
     }
 
     /// Unsubscribe from the table (whole table or single key).
